@@ -1,0 +1,394 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 全局基础样式 */
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  html, body, #root {
+    @apply h-full w-full m-0 p-0 overflow-hidden;
+  }
+
+  body {
+    @apply font-sans text-base antialiased;
+  }
+
+  /* 暗色主题 */
+  .dark {
+    @apply bg-dark-bg-primary text-dark-text-primary;
+  }
+
+  /* 亮色主题 */
+  .light {
+    @apply bg-light-bg-primary text-light-text-primary;
+  }
+
+  /* 滚动条样式 - 暗色 */
+  .dark ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  .dark ::-webkit-scrollbar-track {
+    @apply bg-dark-bg-primary;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-dark-border rounded-full;
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    @apply bg-dark-text-disabled;
+  }
+
+  /* 滚动条样式 - 亮色 */
+  .light ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  .light ::-webkit-scrollbar-track {
+    @apply bg-light-bg-primary;
+  }
+
+  .light ::-webkit-scrollbar-thumb {
+    @apply bg-light-border rounded-full;
+  }
+
+  .light ::-webkit-scrollbar-thumb:hover {
+    @apply bg-light-text-disabled;
+  }
+
+  /* 选中文本样式 */
+  ::selection {
+    @apply bg-accent-primary/30;
+  }
+}
+
+/* 组件层样式 */
+@layer components {
+  /* 主内容区样式 */
+  .main-content {
+    @apply flex flex-col h-full;
+  }
+
+  .dark .main-content {
+    @apply bg-dark-bg-primary text-dark-text-primary;
+  }
+
+  .light .main-content {
+    @apply bg-light-bg-primary text-light-text-primary;
+  }
+
+  /* 侧边栏基础样式 */
+  .sidebar {
+    @apply flex flex-col h-full;
+  }
+
+  .dark .sidebar {
+    @apply bg-dark-bg-sidebar border-r border-dark-border;
+  }
+
+  .light .sidebar {
+    @apply bg-light-bg-sidebar border-r border-light-border;
+  }
+
+  /* 文本颜色工具类 */
+  .text-secondary {
+    @apply text-dark-text-secondary;
+  }
+
+  .light .text-secondary {
+    @apply text-light-text-secondary;
+  }
+
+  .text-disabled {
+    @apply text-dark-text-disabled;
+  }
+
+  .light .text-disabled {
+    @apply text-light-text-disabled;
+  }
+
+  /* 快速操作卡片 */
+  .quick-action-card {
+    @apply border-dark-border hover:bg-dark-bg-hover;
+  }
+
+  .light .quick-action-card {
+    @apply border-light-border hover:bg-light-bg-hover;
+  }
+
+  /* 树形列表项 */
+  .tree-item {
+    @apply flex items-center px-2 py-1 cursor-pointer rounded-sm transition-colors;
+  }
+
+  .dark .tree-item:hover {
+    @apply bg-dark-bg-hover;
+  }
+
+  .dark .tree-item.selected {
+    @apply bg-dark-bg-selected;
+  }
+
+  .light .tree-item:hover {
+    @apply bg-light-bg-hover;
+  }
+
+  .light .tree-item.selected {
+    @apply bg-light-bg-selected;
+  }
+
+  /* 标签页栏 */
+  .tabbar {
+    @apply border-b;
+  }
+
+  .dark .tabbar {
+    @apply bg-dark-bg-primary border-dark-border;
+  }
+
+  .light .tabbar {
+    @apply bg-light-bg-primary border-light-border;
+  }
+
+  /* 标签页 */
+  .tab {
+    @apply flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors border-b-2 border-transparent;
+  }
+
+  .dark .tab {
+    @apply border-r border-dark-border;
+  }
+
+  .dark .tab:hover {
+    @apply bg-dark-bg-hover;
+  }
+
+  .dark .tab.active {
+    @apply border-b-accent-primary bg-dark-bg-hover;
+  }
+
+  .light .tab {
+    @apply border-r border-light-border;
+  }
+
+  .light .tab:hover {
+    @apply bg-light-bg-hover;
+  }
+
+  .light .tab.active {
+    @apply border-b-accent-dark bg-light-bg-hover;
+  }
+
+  /* 标签页添加按钮 */
+  .dark .tab-add-btn:hover {
+    @apply bg-dark-bg-hover;
+  }
+
+  .light .tab-add-btn:hover {
+    @apply bg-light-bg-hover;
+  }
+
+  /* 标签页关闭按钮 */
+  .dark .tab-close-btn:hover {
+    @apply bg-dark-bg-hover;
+  }
+
+  .light .tab-close-btn:hover {
+    @apply bg-light-bg-hover;
+  }
+
+  /* 右键菜单 */
+  .context-menu {
+    @apply border;
+  }
+
+  .dark .context-menu {
+    @apply bg-dark-bg-hover border-dark-border;
+  }
+
+  .light .context-menu {
+    @apply bg-light-bg-primary border-light-border;
+  }
+
+  .dark .context-menu-item:hover {
+    @apply bg-dark-bg-selected;
+  }
+
+  .light .context-menu-item:hover {
+    @apply bg-light-bg-selected;
+  }
+
+  .dark .context-menu-separator {
+    @apply bg-dark-border;
+  }
+
+  .light .context-menu-separator {
+    @apply bg-light-border;
+  }
+
+  /* 状态断开连接 */
+  .dark .status-disconnected {
+    @apply bg-dark-text-disabled;
+  }
+
+  .light .status-disconnected {
+    @apply bg-light-text-disabled;
+  }
+
+  /* 按钮基础样式 */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md font-medium transition-colors;
+  }
+
+  .btn-primary {
+    @apply bg-accent-primary text-white hover:bg-accent-hover;
+  }
+
+  .btn-ghost {
+    @apply bg-transparent;
+  }
+
+  .dark .btn-ghost {
+    @apply text-dark-text-primary hover:bg-dark-bg-hover;
+  }
+
+  .light .btn-ghost {
+    @apply text-light-text-primary hover:bg-light-bg-hover;
+  }
+
+  /* 输入框 */
+  .input {
+    @apply w-full px-3 py-2 rounded-md outline-none transition-colors;
+  }
+
+  .dark .input {
+    @apply bg-dark-bg-hover border border-dark-border text-dark-text-primary placeholder-dark-text-disabled;
+    @apply focus:border-accent-primary;
+  }
+
+  .light .input {
+    @apply bg-light-bg-primary border border-light-border text-light-text-primary placeholder-light-text-disabled;
+    @apply focus:border-accent-dark;
+  }
+
+  /* 状态指示点 */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-dot.connected {
+    @apply bg-status-success;
+  }
+
+  .dark .status-dot.disconnected {
+    @apply bg-dark-text-disabled;
+  }
+
+  .light .status-dot.disconnected {
+    @apply bg-light-text-disabled;
+  }
+
+  .status-dot.warning {
+    @apply bg-status-warning;
+  }
+
+  .status-dot.error {
+    @apply bg-status-error;
+  }
+
+  /* 次要按钮 */
+  .btn-secondary {
+    @apply bg-transparent;
+  }
+
+  .dark .btn-secondary {
+    @apply border border-dark-border text-dark-text-primary hover:bg-dark-bg-hover;
+  }
+
+  .light .btn-secondary {
+    @apply border border-light-border text-light-text-primary hover:bg-light-bg-hover;
+  }
+
+  /* 对话框 */
+  .dialog-content {
+    @apply fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50;
+    @apply p-6 rounded-lg shadow-2xl max-h-[85vh] overflow-y-auto;
+  }
+
+  .dark .dialog-content {
+    @apply bg-dark-bg-primary border border-dark-border;
+  }
+
+  .light .dialog-content {
+    @apply bg-light-bg-primary border border-light-border;
+  }
+
+  /* 下拉菜单 */
+  .dropdown-content {
+    @apply z-50 py-1 rounded-md shadow-lg;
+    animation: dropdownIn 0.15s ease-out;
+  }
+
+  @keyframes dropdownIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .dark .dropdown-content {
+    @apply bg-dark-bg-primary border border-dark-border;
+  }
+
+  .light .dropdown-content {
+    @apply bg-light-bg-primary border border-light-border;
+  }
+
+  .dropdown-item {
+    @apply flex items-center px-3 py-2 text-sm cursor-pointer outline-none;
+  }
+
+  .dark .dropdown-item {
+    @apply text-dark-text-primary hover:bg-dark-bg-hover focus:bg-dark-bg-hover;
+  }
+
+  .light .dropdown-item {
+    @apply text-light-text-primary hover:bg-light-bg-hover focus:bg-light-bg-hover;
+  }
+}
+
+/* 工具层样式 */
+@layer utilities {
+  /* Tauri 窗口拖拽区域 */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  /* 文本不可选中 */
+  .select-none {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* 禁用状态 */
+  .disabled {
+    @apply opacity-50 cursor-not-allowed pointer-events-none;
+  }
+
+  /* 截断文本 */
+  .truncate-text {
+    @apply truncate;
+  }
+}
