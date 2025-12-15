@@ -214,7 +214,13 @@
     "edit": "编辑",
     "unsaved": "未保存",
     "lines": "行",
-    "chars": "字符"
+    "chars": "字符",
+    "cancelTransfer": "取消传输",
+    "transferCancelled": "传输已取消",
+    "fileExists": "文件已存在",
+    "fileExistsMessage": "服务器上已存在文件 \"{{name}}\" ({{size}})。是否从断点续传？",
+    "resume": "续传",
+    "overwrite": "覆盖"
   },
   "database": {
     "newConnection": "新建数据库连接",

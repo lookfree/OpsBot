@@ -13,9 +13,16 @@ import {
   UploadIcon,
   DownloadIcon,
   Loader2Icon,
+  XCircleIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { TransferTask, formatFileSize, sftpGetTransfers, sftpCleanupTransfers } from '@/services/sftp'
+import {
+  TransferTask,
+  formatFileSize,
+  sftpGetTransfers,
+  sftpCleanupTransfers,
+  sftpCancelTransfer,
+} from '@/services/sftp'
 import { useTranslation } from 'react-i18next'
 
 interface TransferProgress {
@@ -46,6 +53,19 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
       // Ignore errors
     }
   }, [sessionId])
+
+  // Cancel a transfer
+  const handleCancel = useCallback(
+    async (taskId: string) => {
+      if (!sessionId) return
+      try {
+        await sftpCancelTransfer(sessionId, taskId)
+      } catch {
+        // Ignore errors, the event will update the UI
+      }
+    },
+    [sessionId]
+  )
 
   // Listen for transfer progress events
   useEffect(() => {
@@ -142,7 +162,7 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
         ) : (
           <div className="divide-y divide-zinc-800">
             {transfers.map((task) => (
-              <TransferItem key={task.id} task={task} />
+              <TransferItem key={task.id} task={task} onCancel={handleCancel} />
             ))}
           </div>
         )}
@@ -153,11 +173,14 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
 
 interface TransferItemProps {
   task: TransferTask
+  onCancel: (taskId: string) => void
 }
 
-function TransferItem({ task }: TransferItemProps) {
+function TransferItem({ task, onCancel }: TransferItemProps) {
+  const { t } = useTranslation()
   const progress = task.total > 0 ? (task.transferred / task.total) * 100 : 0
   const isUploading = task.direction === 'Upload'
+  const canCancel = task.status === 'InProgress' || task.status === 'Pending'
 
   const StatusIcon = () => {
     switch (task.status) {
@@ -165,6 +188,8 @@ function TransferItem({ task }: TransferItemProps) {
         return <CheckCircleIcon className="w-4 h-4 text-green-500" />
       case 'Failed':
         return <AlertCircleIcon className="w-4 h-4 text-red-500" />
+      case 'Cancelled':
+        return <XCircleIcon className="w-4 h-4 text-zinc-500" />
       case 'InProgress':
         return <Loader2Icon className="w-4 h-4 text-blue-500 animate-spin" />
       default:
@@ -184,6 +209,15 @@ function TransferItem({ task }: TransferItemProps) {
         <span className="text-xs text-zinc-500">
           {formatFileSize(task.transferred)} / {formatFileSize(task.total)}
         </span>
+        {canCancel && (
+          <button
+            onClick={() => onCancel(task.id)}
+            className="p-0.5 hover:bg-zinc-700 rounded"
+            title={t('sftp.cancelTransfer')}
+          >
+            <XIcon className="w-3 h-3 text-zinc-400 hover:text-red-400" />
+          </button>
+        )}
       </div>
 
       {task.status === 'InProgress' && (
@@ -202,6 +236,10 @@ function TransferItem({ task }: TransferItemProps) {
         <div className="text-xs text-zinc-500 mt-1">
           {formatFileSize(task.speed)}/s
         </div>
+      )}
+
+      {task.status === 'Cancelled' && (
+        <div className="text-xs text-zinc-500 mt-1">{t('sftp.transferCancelled')}</div>
       )}
 
       {task.status === 'Failed' && task.error && (

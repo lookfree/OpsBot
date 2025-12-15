@@ -150,13 +150,25 @@ export async function sftpDownload(
 
 /**
  * Upload file from local to remote
+ * @param resume - If true, will resume from existing partial file on server
  */
 export async function sftpUpload(
   sessionId: string,
   localPath: string,
-  remotePath: string
+  remotePath: string,
+  resume: boolean = false
 ): Promise<string> {
-  return invoke('sftp_upload', { sessionId, localPath, remotePath })
+  return invoke('sftp_upload', { sessionId, localPath, remotePath, resume })
+}
+
+/**
+ * Cancel a transfer task
+ */
+export async function sftpCancelTransfer(
+  sessionId: string,
+  taskId: string
+): Promise<void> {
+  await invoke('sftp_cancel_transfer', { sessionId, taskId })
 }
 
 /**

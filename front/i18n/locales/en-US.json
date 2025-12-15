@@ -214,7 +214,13 @@
     "edit": "Edit",
     "unsaved": "unsaved",
     "lines": "lines",
-    "chars": "chars"
+    "chars": "chars",
+    "cancelTransfer": "Cancel transfer",
+    "transferCancelled": "Transfer cancelled",
+    "fileExists": "File exists",
+    "fileExistsMessage": "File \"{{name}}\" already exists on server ({{size}}). Resume upload from where it left off?",
+    "resume": "Resume",
+    "overwrite": "Overwrite"
   },
   "database": {
     "newConnection": "New Database Connection",

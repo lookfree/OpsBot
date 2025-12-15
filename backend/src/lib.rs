@@ -55,6 +55,7 @@ pub fn run() {
             commands::sftp_cleanup_transfers,
             commands::sftp_download,
             commands::sftp_upload,
+            commands::sftp_cancel_transfer,
             // Database commands
             commands::db_connect,
             commands::db_disconnect,

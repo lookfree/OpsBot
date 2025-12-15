@@ -242,8 +242,8 @@ pub async fn sftp_download(
 
     let total_size = file_info.size;
 
-    // Create transfer task
-    let task_id = sftp_service
+    // Create transfer task with cancellation token
+    let (task_id, _cancel_token) = sftp_service
         .create_transfer_task(
             &session_id,
             &local_path,
@@ -277,6 +277,7 @@ pub async fn sftp_download(
             sftp_service
                 .update_transfer(&task_id, 0, 0, TransferStatus::Failed)
                 .await;
+            sftp_service.remove_cancel_token(&task_id).await;
             return Err(e.to_string());
         }
     };
@@ -295,6 +296,9 @@ pub async fn sftp_download(
 
     file.write_all(&data).await.map_err(|e| e.to_string())?;
     file.flush().await.map_err(|e| e.to_string())?;
+
+    // Clean up cancellation token
+    sftp_service.remove_cancel_token(&task_id).await;
 
     // Update status to completed
     sftp_service
@@ -316,7 +320,37 @@ pub async fn sftp_download(
     Ok(task_id)
 }
 
-/// Upload file from local to remote
+/// Cancel a transfer task
+#[tauri::command]
+pub async fn sftp_cancel_transfer(
+    app: AppHandle,
+    sftp_state: State<'_, SftpServiceState>,
+    session_id: String,
+    task_id: String,
+) -> Result<(), String> {
+    let sftp_service = &sftp_state.0;
+
+    sftp_service
+        .cancel_transfer(&task_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Emit cancellation event
+    let _ = app.emit(
+        &format!("sftp-transfer-{}", session_id),
+        TransferProgress {
+            task_id,
+            transferred: 0,
+            total: 0,
+            speed: 0,
+            status: TransferStatus::Cancelled,
+        },
+    );
+
+    Ok(())
+}
+
+/// Upload file from local to remote with optional resume support
 #[tauri::command]
 pub async fn sftp_upload(
     app: AppHandle,
@@ -324,6 +358,7 @@ pub async fn sftp_upload(
     session_id: String,
     local_path: String,
     remote_path: String,
+    resume: Option<bool>,
 ) -> Result<String, String> {
     let sftp_service = &sftp_state.0;
 
@@ -334,8 +369,23 @@ pub async fn sftp_upload(
 
     let total_size = data.len() as u64;
 
-    // Create transfer task
-    let task_id = sftp_service
+    // Check if we should resume from existing file
+    let start_offset = if resume.unwrap_or(false) {
+        let remote_size = sftp_service
+            .get_remote_file_size(&session_id, &remote_path)
+            .await;
+        // Only resume if remote file is smaller than local file
+        if remote_size > 0 && remote_size < total_size {
+            remote_size
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    // Create transfer task with cancellation token
+    let (task_id, cancel_token) = sftp_service
         .create_transfer_task(
             &session_id,
             &local_path,
@@ -345,9 +395,9 @@ pub async fn sftp_upload(
         )
         .await;
 
-    // Update status to in progress
+    // Update status to in progress with initial offset
     sftp_service
-        .update_transfer(&task_id, 0, 0, TransferStatus::InProgress)
+        .update_transfer(&task_id, start_offset, 0, TransferStatus::InProgress)
         .await;
 
     // Emit initial progress
@@ -355,43 +405,136 @@ pub async fn sftp_upload(
         &format!("sftp-transfer-{}", session_id),
         TransferProgress {
             task_id: task_id.clone(),
-            transferred: 0,
+            transferred: start_offset,
             total: total_size,
             speed: 0,
             status: TransferStatus::InProgress,
         },
     );
 
-    // Write to SFTP
-    match sftp_service
-        .write_file(&session_id, &remote_path, &data)
-        .await
-    {
-        Ok(_) => {}
+    // Chunk size: 64KB for progress updates
+    const CHUNK_SIZE: usize = 64 * 1024;
+    let app_clone = app.clone();
+    let task_id_clone = task_id.clone();
+    let session_id_clone = session_id.clone();
+    let sftp_service_clone = sftp_service.clone();
+    let start_time = std::time::Instant::now();
+    let mut last_emit_time = start_time;
+
+    // Write to SFTP with progress and cancellation support
+    let result = sftp_service
+        .write_file_chunked_resume(
+            &session_id,
+            &remote_path,
+            &data,
+            CHUNK_SIZE,
+            start_offset,
+            cancel_token,
+            |transferred| {
+                let now = std::time::Instant::now();
+                let elapsed = now.duration_since(start_time).as_secs_f64();
+                let bytes_since_start = transferred - start_offset;
+                let speed = if elapsed > 0.0 {
+                    (bytes_since_start as f64 / elapsed) as u64
+                } else {
+                    0
+                };
+
+                // Emit progress every 100ms to avoid flooding
+                if now.duration_since(last_emit_time).as_millis() >= 100 {
+                    last_emit_time = now;
+
+                    // Update transfer state
+                    let sftp_service = sftp_service_clone.clone();
+                    let task_id = task_id_clone.clone();
+                    tokio::spawn(async move {
+                        sftp_service
+                            .update_transfer(
+                                &task_id,
+                                transferred,
+                                speed,
+                                TransferStatus::InProgress,
+                            )
+                            .await;
+                    });
+
+                    // Emit progress event
+                    let _ = app_clone.emit(
+                        &format!("sftp-transfer-{}", session_id_clone),
+                        TransferProgress {
+                            task_id: task_id_clone.clone(),
+                            transferred,
+                            total: total_size,
+                            speed,
+                            status: TransferStatus::InProgress,
+                        },
+                    );
+                }
+            },
+        )
+        .await;
+
+    // Clean up cancellation token
+    sftp_service.remove_cancel_token(&task_id).await;
+
+    match result {
+        Ok(completed) => {
+            if completed {
+                // Update status to completed
+                sftp_service
+                    .update_transfer(&task_id, total_size, 0, TransferStatus::Completed)
+                    .await;
+
+                // Emit completion
+                let _ = app.emit(
+                    &format!("sftp-transfer-{}", session_id),
+                    TransferProgress {
+                        task_id: task_id.clone(),
+                        transferred: total_size,
+                        total: total_size,
+                        speed: 0,
+                        status: TransferStatus::Completed,
+                    },
+                );
+            } else {
+                // Transfer was cancelled - keep partial file for resume
+                sftp_service
+                    .update_transfer(&task_id, 0, 0, TransferStatus::Cancelled)
+                    .await;
+
+                let _ = app.emit(
+                    &format!("sftp-transfer-{}", session_id),
+                    TransferProgress {
+                        task_id: task_id.clone(),
+                        transferred: 0,
+                        total: total_size,
+                        speed: 0,
+                        status: TransferStatus::Cancelled,
+                    },
+                );
+
+                // Note: We don't remove partial file to allow resume
+            }
+
+            Ok(task_id)
+        }
         Err(e) => {
             sftp_service
                 .update_transfer(&task_id, 0, 0, TransferStatus::Failed)
                 .await;
-            return Err(e.to_string());
+
+            let _ = app.emit(
+                &format!("sftp-transfer-{}", session_id),
+                TransferProgress {
+                    task_id: task_id.clone(),
+                    transferred: 0,
+                    total: total_size,
+                    speed: 0,
+                    status: TransferStatus::Failed,
+                },
+            );
+
+            Err(e.to_string())
         }
     }
-
-    // Update status to completed
-    sftp_service
-        .update_transfer(&task_id, total_size, 0, TransferStatus::Completed)
-        .await;
-
-    // Emit completion
-    let _ = app.emit(
-        &format!("sftp-transfer-{}", session_id),
-        TransferProgress {
-            task_id: task_id.clone(),
-            transferred: total_size,
-            total: total_size,
-            speed: 0,
-            status: TransferStatus::Completed,
-        },
-    );
-
-    Ok(task_id)
 }

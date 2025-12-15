@@ -212,7 +212,13 @@
     "edit": "編輯",
     "unsaved": "未儲存",
     "lines": "行",
-    "chars": "字元"
+    "chars": "字元",
+    "cancelTransfer": "取消傳輸",
+    "transferCancelled": "傳輸已取消",
+    "fileExists": "檔案已存在",
+    "fileExistsMessage": "伺服器上已存在檔案 \"{{name}}\" ({{size}})。是否從斷點續傳？",
+    "resume": "續傳",
+    "overwrite": "覆蓋"
   },
   "database": {
     "newConnection": "新增資料庫連線",

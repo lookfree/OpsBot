@@ -34,6 +34,7 @@ import {
   sftpRename,
   sftpDownload,
   sftpUpload,
+  sftpStat,
   FileEntry,
   formatFileSize,
 } from '@/services/sftp'
@@ -270,13 +271,43 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
       const fileName = localPath.split('/').pop() || localPath.split('\\').pop() || 'file'
       const remotePath = `${currentPath}/${fileName}`.replace('//', '/')
 
-      setLoading(true)
-      await sftpUpload(sessionId, localPath, remotePath)
+      // Check if remote file already exists
+      let shouldResume = false
+      try {
+        const existingFile = await sftpStat(sessionId, remotePath)
+        if (!existingFile.is_dir && existingFile.size > 0) {
+          // File exists, ask user if they want to resume
+          setConfirmDialog({
+            open: true,
+            title: t('sftp.fileExists'),
+            message: t('sftp.fileExistsMessage', {
+              name: fileName,
+              size: formatFileSize(existingFile.size),
+            }),
+            onConfirm: async () => {
+              // Resume upload
+              setShowTransfers(true)
+              try {
+                await sftpUpload(sessionId, localPath, remotePath, true)
+                refresh()
+              } catch (err) {
+                setError(String(err))
+              }
+            },
+          })
+          return
+        }
+      } catch {
+        // File doesn't exist, proceed with normal upload
+      }
+
+      // Auto-show transfer queue when upload starts
+      setShowTransfers(true)
+
+      await sftpUpload(sessionId, localPath, remotePath, shouldResume)
       refresh()
     } catch (err) {
       setError(String(err))
-    } finally {
-      setLoading(false)
     }
   }, [sessionId, currentPath, refresh, t])
 

@@ -212,7 +212,13 @@
     "edit": "編集",
     "unsaved": "未保存",
     "lines": "行",
-    "chars": "文字"
+    "chars": "文字",
+    "cancelTransfer": "転送をキャンセル",
+    "transferCancelled": "転送がキャンセルされました",
+    "fileExists": "ファイルが存在します",
+    "fileExistsMessage": "サーバーにファイル \"{{name}}\" ({{size}}) が既に存在します。中断したところから再開しますか？",
+    "resume": "再開",
+    "overwrite": "上書き"
   },
   "database": {
     "newConnection": "新規データベース接続",

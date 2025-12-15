@@ -64,6 +64,8 @@ impl SshSession {
 pub struct SshClientHandler {
     pub session_id: String,
     pub data_tx: mpsc::UnboundedSender<Vec<u8>>,
+    /// Terminal channel ID - only data from this channel will be forwarded to terminal
+    pub terminal_channel_id: Arc<RwLock<Option<ChannelId>>>,
 }
 
 #[async_trait]
@@ -81,22 +83,32 @@ impl client::Handler for SshClientHandler {
 
     async fn data(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         data: &[u8],
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        let _ = self.data_tx.unbounded_send(data.to_vec());
+        // Only forward data from terminal channel to avoid SFTP binary data in terminal
+        if let Some(term_ch) = *self.terminal_channel_id.read().await {
+            if channel == term_ch {
+                let _ = self.data_tx.unbounded_send(data.to_vec());
+            }
+        }
         Ok(())
     }
 
     async fn extended_data(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         _ext: u32,
         data: &[u8],
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        let _ = self.data_tx.unbounded_send(data.to_vec());
+        // Only forward data from terminal channel
+        if let Some(term_ch) = *self.terminal_channel_id.read().await {
+            if channel == term_ch {
+                let _ = self.data_tx.unbounded_send(data.to_vec());
+            }
+        }
         Ok(())
     }
 }
@@ -145,9 +157,14 @@ impl SshService {
         };
         let config = Arc::new(config);
 
+        // Create shared terminal channel ID for filtering data
+        let terminal_channel_id = Arc::new(RwLock::new(None));
+        let terminal_channel_id_clone = terminal_channel_id.clone();
+
         let handler = SshClientHandler {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
+            terminal_channel_id: terminal_channel_id_clone,
         };
 
         // Connect to server
@@ -165,6 +182,9 @@ impl SshService {
 
         // Open a shell channel
         let channel = handle.channel_open_session().await?;
+
+        // Store terminal channel ID for filtering data
+        *terminal_channel_id.write().await = Some(channel.id());
 
         // Request PTY
         channel
@@ -230,9 +250,14 @@ impl SshService {
         };
         let config = Arc::new(config);
 
+        // Create shared terminal channel ID for filtering data
+        let terminal_channel_id = Arc::new(RwLock::new(None));
+        let terminal_channel_id_clone = terminal_channel_id.clone();
+
         let handler = SshClientHandler {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
+            terminal_channel_id: terminal_channel_id_clone,
         };
 
         // Connect to server
@@ -250,6 +275,9 @@ impl SshService {
 
         // Open a shell channel
         let channel = handle.channel_open_session().await?;
+
+        // Store terminal channel ID for filtering data
+        *terminal_channel_id.write().await = Some(channel.id());
 
         // Request PTY
         channel
@@ -304,6 +332,7 @@ impl SshService {
         let jump_handler = SshClientHandler {
             session_id: format!("{}-jump", session_id),
             data_tx: dummy_tx,
+            terminal_channel_id: Arc::new(RwLock::new(None)),
         };
 
         let jump_addr = format!("{}:{}", jump.host, jump.port);
@@ -363,9 +392,10 @@ impl SshService {
         };
         let target_config = Arc::new(target_config);
 
-        let target_handler = SshClientHandler {
+        let _target_handler = SshClientHandler {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
+            terminal_channel_id: Arc::new(RwLock::new(None)),
         };
 
         // Create a stream from the channel for the second SSH connection
@@ -581,6 +611,7 @@ impl SshService {
         let handler = SshClientHandler {
             session_id: "test".to_string(),
             data_tx: dummy_tx,
+            terminal_channel_id: Arc::new(RwLock::new(None)),
         };
 
         // Connect to server

@@ -12,6 +12,7 @@ use russh::Channel;
 use russh_sftp::client::SftpSession;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::models::{FileEntry, TransferDirection, TransferStatus, TransferTask};
@@ -29,6 +30,8 @@ pub struct SftpService {
     sessions: Arc<RwLock<HashMap<String, SftpSessionWrapper>>>,
     /// Transfer tasks
     transfers: Arc<RwLock<HashMap<String, TransferTask>>>,
+    /// Cancellation tokens for transfer tasks
+    cancel_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
 }
 
 impl Default for SftpService {
@@ -42,6 +45,7 @@ impl SftpService {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             transfers: Arc::new(RwLock::new(HashMap::new())),
+            cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -213,6 +217,100 @@ impl SftpService {
         Ok(())
     }
 
+    /// Write file contents with chunked upload (for progress reporting)
+    /// Returns Ok(true) if completed, Ok(false) if cancelled
+    pub async fn write_file_chunked<F>(
+        &self,
+        session_id: &str,
+        path: &str,
+        data: &[u8],
+        chunk_size: usize,
+        cancel_token: CancellationToken,
+        mut progress_callback: F,
+    ) -> Result<bool>
+    where
+        F: FnMut(u64) + Send,
+    {
+        let sessions = self.sessions.read().await;
+        let wrapper = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow!("SFTP session not found"))?;
+
+        let mut file = wrapper.sftp.create(path).await?;
+        let mut written: u64 = 0;
+
+        for chunk in data.chunks(chunk_size) {
+            // Check for cancellation before each chunk
+            if cancel_token.is_cancelled() {
+                // File will be partially written, clean up handled by caller
+                return Ok(false);
+            }
+
+            file.write_all(chunk).await?;
+            written += chunk.len() as u64;
+            progress_callback(written);
+        }
+
+        file.sync_all().await?;
+        Ok(true)
+    }
+
+    /// Write file contents with chunked upload supporting resume
+    /// Returns Ok(true) if completed, Ok(false) if cancelled
+    pub async fn write_file_chunked_resume<F>(
+        &self,
+        session_id: &str,
+        path: &str,
+        data: &[u8],
+        chunk_size: usize,
+        start_offset: u64,
+        cancel_token: CancellationToken,
+        mut progress_callback: F,
+    ) -> Result<bool>
+    where
+        F: FnMut(u64) + Send,
+    {
+        let sessions = self.sessions.read().await;
+        let wrapper = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow!("SFTP session not found"))?;
+
+        // Open file for writing with append/write mode
+        let mut file = if start_offset > 0 {
+            // Open existing file for appending
+            let options = russh_sftp::protocol::OpenFlags::WRITE | russh_sftp::protocol::OpenFlags::APPEND;
+            wrapper.sftp.open_with_flags(path, options).await?
+        } else {
+            // Create new file
+            wrapper.sftp.create(path).await?
+        };
+
+        let mut written: u64 = start_offset;
+        let data_to_write = &data[start_offset as usize..];
+
+        for chunk in data_to_write.chunks(chunk_size) {
+            // Check for cancellation before each chunk
+            if cancel_token.is_cancelled() {
+                return Ok(false);
+            }
+
+            file.write_all(chunk).await?;
+            written += chunk.len() as u64;
+            progress_callback(written);
+        }
+
+        file.sync_all().await?;
+        Ok(true)
+    }
+
+    /// Get remote file size, returns 0 if file doesn't exist
+    pub async fn get_remote_file_size(&self, session_id: &str, path: &str) -> u64 {
+        match self.stat(session_id, path).await {
+            Ok(entry) if !entry.is_dir => entry.size,
+            _ => 0,
+        }
+    }
+
     /// Get file/directory metadata
     pub async fn stat(&self, session_id: &str, path: &str) -> Result<FileEntry> {
         let sessions = self.sessions.read().await;
@@ -243,7 +341,7 @@ impl SftpService {
         })
     }
 
-    /// Create a new transfer task
+    /// Create a new transfer task with cancellation token
     pub async fn create_transfer_task(
         &self,
         session_id: &str,
@@ -251,7 +349,7 @@ impl SftpService {
         remote_path: &str,
         direction: TransferDirection,
         total: u64,
-    ) -> String {
+    ) -> (String, CancellationToken) {
         let task_id = Uuid::new_v4().to_string();
         let filename = Path::new(if direction == TransferDirection::Upload {
             local_path
@@ -277,8 +375,34 @@ impl SftpService {
             error: None,
         };
 
+        let cancel_token = CancellationToken::new();
         self.transfers.write().await.insert(task_id.clone(), task);
-        task_id
+        self.cancel_tokens
+            .write()
+            .await
+            .insert(task_id.clone(), cancel_token.clone());
+
+        (task_id, cancel_token)
+    }
+
+    /// Cancel a transfer task
+    pub async fn cancel_transfer(&self, task_id: &str) -> Result<()> {
+        // Get and trigger the cancellation token
+        if let Some(token) = self.cancel_tokens.read().await.get(task_id) {
+            token.cancel();
+        }
+
+        // Update task status to cancelled
+        if let Some(task) = self.transfers.write().await.get_mut(task_id) {
+            task.status = TransferStatus::Cancelled;
+        }
+
+        Ok(())
+    }
+
+    /// Remove cancellation token for a task
+    pub async fn remove_cancel_token(&self, task_id: &str) {
+        self.cancel_tokens.write().await.remove(task_id);
     }
 
     /// Get all transfer tasks for a session
