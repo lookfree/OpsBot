@@ -179,6 +179,10 @@ impl SshService {
             )
             .await?;
 
+        // Set UTF-8 locale environment variables
+        let _ = channel.set_env(false, "LANG", "en_US.UTF-8").await;
+        let _ = channel.set_env(false, "LC_ALL", "en_US.UTF-8").await;
+
         // Request shell
         channel.request_shell(false).await?;
 
@@ -259,6 +263,10 @@ impl SshService {
                 &[],
             )
             .await?;
+
+        // Set UTF-8 locale environment variables
+        let _ = channel.set_env(false, "LANG", "en_US.UTF-8").await;
+        let _ = channel.set_env(false, "LC_ALL", "en_US.UTF-8").await;
 
         // Request shell
         channel.request_shell(false).await?;

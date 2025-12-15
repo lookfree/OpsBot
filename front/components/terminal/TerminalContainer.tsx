@@ -29,6 +29,17 @@ import { TerminalToolbar } from './TerminalToolbar'
 import { FilePanel } from '@/components/sftp/FilePanel'
 import '@xterm/xterm/css/xterm.css'
 
+// UTF-8 safe base64 decoding
+function base64ToUtf8(base64: string): string {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  const decoder = new TextDecoder('utf-8')
+  return decoder.decode(bytes)
+}
+
 interface TerminalContainerProps {
   sessionId?: string
   className?: string
@@ -167,7 +178,7 @@ export function TerminalContainer({
       // 设置数据监听
       const dataListener = await listen<string>(`ssh-data-${sessionId}`, (event) => {
         if (terminalRef.current && isMounted) {
-          const data = atob(event.payload)
+          const data = base64ToUtf8(event.payload)
           terminalRef.current.write(data)
         }
       })
@@ -368,7 +379,7 @@ export function TerminalContainer({
     }
 
     const unsubscribe = listen<string>(`ssh-data-${sessionId}`, (event) => {
-      const data = atob(event.payload)
+      const data = base64ToUtf8(event.payload)
       buffer += data
 
       // 清除旧定时器，设置新定时器（500ms 后写入）

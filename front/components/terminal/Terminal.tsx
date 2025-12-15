@@ -15,6 +15,27 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { cn } from '@/lib/utils'
 import '@xterm/xterm/css/xterm.css'
 
+// UTF-8 safe base64 encoding/decoding
+function utf8ToBase64(str: string): string {
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(str)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+function base64ToUtf8(base64: string): string {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  const decoder = new TextDecoder('utf-8')
+  return decoder.decode(bytes)
+}
+
 export interface TerminalProps {
   sessionId?: string
   className?: string
@@ -132,7 +153,7 @@ export function Terminal({
     // Handle user input
     terminal.onData((data) => {
       if (currentSessionId.current) {
-        const base64Data = btoa(data)
+        const base64Data = utf8ToBase64(data)
         invoke('ssh_send_data', {
           sessionId: currentSessionId.current,
           data: base64Data,
@@ -162,7 +183,7 @@ export function Terminal({
       // Listen for data events
       const dataListener = await listen<string>(`ssh-data-${sessionId}`, (event) => {
         if (terminalRef.current && isMounted) {
-          const data = atob(event.payload)
+          const data = base64ToUtf8(event.payload)
           terminalRef.current.write(data)
         }
       })
@@ -229,7 +250,7 @@ export function Terminal({
     try {
       const text = await navigator.clipboard.readText()
       if (text && currentSessionId.current) {
-        const base64Data = btoa(text)
+        const base64Data = utf8ToBase64(text)
         await invoke('ssh_send_data', {
           sessionId: currentSessionId.current,
           data: base64Data,
