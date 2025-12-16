@@ -7,6 +7,7 @@ pub mod models;
 pub mod services;
 
 use std::sync::Arc;
+#[cfg(debug_assertions)]
 use tauri::Manager;
 
 use commands::{DatabaseServiceState, SftpServiceState, SshServiceState};
@@ -80,7 +81,11 @@ pub fn run() {
             commands::append_to_file,
         ])
         .setup(|app| {
-            if cfg!(debug_assertions) {
+            // Silence unused variable warning in release mode
+            #[cfg(not(debug_assertions))]
+            let _ = &app;
+            #[cfg(debug_assertions)]
+            {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
