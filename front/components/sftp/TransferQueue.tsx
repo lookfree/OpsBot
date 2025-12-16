@@ -24,6 +24,7 @@ import {
   sftpCancelTransfer,
 } from '@/services/sftp'
 import { useTranslation } from 'react-i18next'
+import { useThemeStore } from '@/stores'
 
 interface TransferProgress {
   task_id: string
@@ -41,6 +42,8 @@ interface TransferQueueProps {
 
 export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProps) {
   const { t } = useTranslation()
+  const { theme } = useThemeStore()
+  const isDark = theme === 'dark'
   const [transfers, setTransfers] = useState<TransferTask[]>([])
 
   // Load initial transfers
@@ -128,27 +131,39 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
   )
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-700 max-h-48 overflow-hidden flex flex-col">
+    <div className={cn(
+      "absolute bottom-0 left-0 right-0 max-h-48 overflow-hidden flex flex-col border-t",
+      isDark ? "bg-dark-bg-tertiary border-dark-border" : "bg-light-bg-secondary border-light-border"
+    )}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700">
-        <span className="text-xs font-medium text-zinc-300">
+      <div className={cn(
+        "flex items-center justify-between px-3 py-2 border-b",
+        isDark ? "border-dark-border" : "border-light-border"
+      )}>
+        <span className={cn(
+          "text-xs font-medium",
+          isDark ? "text-dark-text-primary" : "text-light-text-primary"
+        )}>
           {t('sftp.transfers')} ({transfers.length})
         </span>
         <div className="flex items-center gap-1">
           {hasCompletedOrFailed && (
             <button
               onClick={handleCleanup}
-              className="text-xs text-zinc-400 hover:text-zinc-300 px-2 py-0.5"
+              className={cn(
+                "text-xs px-2 py-0.5",
+                isDark ? "text-dark-text-secondary hover:text-dark-text-primary" : "text-light-text-secondary hover:text-light-text-primary"
+              )}
             >
               {t('sftp.clearCompleted')}
             </button>
           )}
           <button
             onClick={onClose}
-            className="p-1 hover:bg-zinc-700 rounded"
+            className={cn("p-1 rounded", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
             title={t('common.close')}
           >
-            <XIcon className="w-3 h-3 text-zinc-400" />
+            <XIcon className={cn("w-3 h-3", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
           </button>
         </div>
       </div>
@@ -156,13 +171,16 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
       {/* Transfer list */}
       <div className="flex-1 overflow-auto">
         {transfers.length === 0 ? (
-          <div className="flex items-center justify-center h-16 text-zinc-500 text-xs">
+          <div className={cn(
+            "flex items-center justify-center h-16 text-xs",
+            isDark ? "text-dark-text-secondary" : "text-light-text-secondary"
+          )}>
             {t('sftp.noTransfers')}
           </div>
         ) : (
-          <div className="divide-y divide-zinc-800">
+          <div className={cn("divide-y", isDark ? "divide-dark-border" : "divide-light-border")}>
             {transfers.map((task) => (
-              <TransferItem key={task.id} task={task} onCancel={handleCancel} />
+              <TransferItem key={task.id} task={task} onCancel={handleCancel} isDark={isDark} />
             ))}
           </div>
         )}
@@ -174,9 +192,10 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
 interface TransferItemProps {
   task: TransferTask
   onCancel: (taskId: string) => void
+  isDark: boolean
 }
 
-function TransferItem({ task, onCancel }: TransferItemProps) {
+function TransferItem({ task, onCancel, isDark }: TransferItemProps) {
   const { t } = useTranslation()
   const progress = task.total > 0 ? (task.transferred / task.total) * 100 : 0
   const isUploading = task.direction === 'Upload'
@@ -189,14 +208,14 @@ function TransferItem({ task, onCancel }: TransferItemProps) {
       case 'Failed':
         return <AlertCircleIcon className="w-4 h-4 text-red-500" />
       case 'Cancelled':
-        return <XCircleIcon className="w-4 h-4 text-zinc-500" />
+        return <XCircleIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
       case 'InProgress':
         return <Loader2Icon className="w-4 h-4 text-blue-500 animate-spin" />
       default:
         return isUploading ? (
-          <UploadIcon className="w-4 h-4 text-zinc-400" />
+          <UploadIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         ) : (
-          <DownloadIcon className="w-4 h-4 text-zinc-400" />
+          <DownloadIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         )
     }
   }
@@ -205,23 +224,23 @@ function TransferItem({ task, onCancel }: TransferItemProps) {
     <div className="px-3 py-2">
       <div className="flex items-center gap-2 mb-1">
         <StatusIcon />
-        <span className="text-xs text-zinc-300 truncate flex-1">{task.filename}</span>
-        <span className="text-xs text-zinc-500">
+        <span className={cn("text-xs truncate flex-1", isDark ? "text-dark-text-primary" : "text-light-text-primary")}>{task.filename}</span>
+        <span className={cn("text-xs", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")}>
           {formatFileSize(task.transferred)} / {formatFileSize(task.total)}
         </span>
         {canCancel && (
           <button
             onClick={() => onCancel(task.id)}
-            className="p-0.5 hover:bg-zinc-700 rounded"
+            className={cn("p-0.5 rounded", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
             title={t('sftp.cancelTransfer')}
           >
-            <XIcon className="w-3 h-3 text-zinc-400 hover:text-red-400" />
+            <XIcon className={cn("w-3 h-3 hover:text-red-400", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
           </button>
         )}
       </div>
 
       {task.status === 'InProgress' && (
-        <div className="relative h-1 bg-zinc-700 rounded overflow-hidden">
+        <div className={cn("relative h-1 rounded overflow-hidden", isDark ? "bg-dark-bg-hover" : "bg-light-bg-hover")}>
           <div
             className={cn(
               'absolute inset-y-0 left-0 rounded transition-all duration-300',
@@ -233,13 +252,13 @@ function TransferItem({ task, onCancel }: TransferItemProps) {
       )}
 
       {task.status === 'InProgress' && task.speed > 0 && (
-        <div className="text-xs text-zinc-500 mt-1">
+        <div className={cn("text-xs mt-1", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")}>
           {formatFileSize(task.speed)}/s
         </div>
       )}
 
       {task.status === 'Cancelled' && (
-        <div className="text-xs text-zinc-500 mt-1">{t('sftp.transferCancelled')}</div>
+        <div className={cn("text-xs mt-1", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")}>{t('sftp.transferCancelled')}</div>
       )}
 
       {task.status === 'Failed' && task.error && (

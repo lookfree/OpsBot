@@ -220,7 +220,8 @@
     "fileExists": "文件已存在",
     "fileExistsMessage": "服务器上已存在文件 \"{{name}}\" ({{size}})。是否从断点续传？",
     "resume": "续传",
-    "overwrite": "覆盖"
+    "overwrite": "覆盖",
+    "stats": "共 {{files}} 个文件，{{folders}} 个文件夹，{{size}}"
   },
   "database": {
     "newConnection": "新建数据库连接",

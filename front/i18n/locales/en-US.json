@@ -220,7 +220,8 @@
     "fileExists": "File exists",
     "fileExistsMessage": "File \"{{name}}\" already exists on server ({{size}}). Resume upload from where it left off?",
     "resume": "Resume",
-    "overwrite": "Overwrite"
+    "overwrite": "Overwrite",
+    "stats": "{{files}} files, {{folders}} folders, {{size}}"
   },
   "database": {
     "newConnection": "New Database Connection",

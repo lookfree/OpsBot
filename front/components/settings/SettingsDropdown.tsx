@@ -33,6 +33,7 @@ export function SettingsDropdown({ className }: SettingsDropdownProps) {
   const { language, setLanguage } = useLanguageStore()
   const [exportOpen, setExportOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const isDark = theme === 'dark'
 
   return (
     <>
@@ -41,8 +42,7 @@ export function SettingsDropdown({ className }: SettingsDropdownProps) {
           <button
             className={cn(
               'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors',
-              'hover:bg-dark-bg-hover dark:hover:bg-dark-bg-hover',
-              'light:hover:bg-light-bg-hover',
+              isDark ? 'hover:bg-dark-bg-hover' : 'hover:bg-light-bg-hover',
               className
             )}
           >

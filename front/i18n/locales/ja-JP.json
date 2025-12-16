@@ -218,7 +218,8 @@
     "fileExists": "ファイルが存在します",
     "fileExistsMessage": "サーバーにファイル \"{{name}}\" ({{size}}) が既に存在します。中断したところから再開しますか？",
     "resume": "再開",
-    "overwrite": "上書き"
+    "overwrite": "上書き",
+    "stats": "{{files}} ファイル、{{folders}} フォルダ、{{size}}"
   },
   "database": {
     "newConnection": "新規データベース接続",

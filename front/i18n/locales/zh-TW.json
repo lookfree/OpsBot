@@ -218,7 +218,8 @@
     "fileExists": "檔案已存在",
     "fileExistsMessage": "伺服器上已存在檔案 \"{{name}}\" ({{size}})。是否從斷點續傳？",
     "resume": "續傳",
-    "overwrite": "覆蓋"
+    "overwrite": "覆蓋",
+    "stats": "共 {{files}} 個檔案，{{folders}} 個資料夾，{{size}}"
   },
   "database": {
     "newConnection": "新增資料庫連線",

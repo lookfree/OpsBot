@@ -25,9 +25,61 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
+import { useThemeStore } from '@/stores'
 import { TerminalToolbar } from './TerminalToolbar'
 import { FilePanel } from '@/components/sftp/FilePanel'
 import '@xterm/xterm/css/xterm.css'
+
+// Terminal theme configurations
+const darkTheme = {
+  background: '#1a1a1a',
+  foreground: '#ffffff',
+  cursor: '#ffffff',
+  cursorAccent: '#1a1a1a',
+  selectionBackground: '#3b82f6',
+  selectionForeground: '#ffffff',
+  black: '#000000',
+  red: '#ef4444',
+  green: '#22c55e',
+  yellow: '#eab308',
+  blue: '#3b82f6',
+  magenta: '#a855f7',
+  cyan: '#06b6d4',
+  white: '#ffffff',
+  brightBlack: '#666666',
+  brightRed: '#f87171',
+  brightGreen: '#4ade80',
+  brightYellow: '#facc15',
+  brightBlue: '#60a5fa',
+  brightMagenta: '#c084fc',
+  brightCyan: '#22d3ee',
+  brightWhite: '#ffffff',
+}
+
+const lightTheme = {
+  background: '#ffffff',
+  foreground: '#1a1a1a',
+  cursor: '#1a1a1a',
+  cursorAccent: '#ffffff',
+  selectionBackground: '#3b82f6',
+  selectionForeground: '#ffffff',
+  black: '#000000',
+  red: '#dc2626',
+  green: '#16a34a',
+  yellow: '#ca8a04',
+  blue: '#2563eb',
+  magenta: '#9333ea',
+  cyan: '#0891b2',
+  white: '#f5f5f5',
+  brightBlack: '#737373',
+  brightRed: '#ef4444',
+  brightGreen: '#22c55e',
+  brightYellow: '#eab308',
+  brightBlue: '#3b82f6',
+  brightMagenta: '#a855f7',
+  brightCyan: '#06b6d4',
+  brightWhite: '#ffffff',
+}
 
 // UTF-8 safe base64 decoding
 function base64ToUtf8(base64: string): string {
@@ -56,6 +108,8 @@ export function TerminalContainer({
   onError,
 }: TerminalContainerProps) {
   const { t } = useTranslation()
+  const { theme } = useThemeStore()
+  const isDark = theme === 'dark'
   const [fontSize, setFontSize] = useState(14)
   const [filePanelVisible, setFilePanelVisible] = useState(false)
   const [isLogging, setIsLogging] = useState(false)
@@ -74,30 +128,7 @@ export function TerminalContainer({
     const terminal = new XTerm({
       fontSize,
       fontFamily: 'JetBrains Mono, Fira Code, monospace',
-      theme: {
-        background: '#1a1a1a',
-        foreground: '#ffffff',
-        cursor: '#ffffff',
-        cursorAccent: '#1a1a1a',
-        selectionBackground: '#3b82f6',
-        selectionForeground: '#ffffff',
-        black: '#000000',
-        red: '#ef4444',
-        green: '#22c55e',
-        yellow: '#eab308',
-        blue: '#3b82f6',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: '#ffffff',
-        brightBlack: '#666666',
-        brightRed: '#f87171',
-        brightGreen: '#4ade80',
-        brightYellow: '#facc15',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee',
-        brightWhite: '#ffffff',
-      },
+      theme: isDark ? darkTheme : lightTheme,
       cursorBlink: true,
       cursorStyle: 'block',
       scrollback: 10000,
@@ -164,6 +195,15 @@ export function TerminalContainer({
       terminal.dispose()
     }
   }, [])
+
+  // Update theme when it changes
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = isDark ? darkTheme : lightTheme
+      // Force refresh to apply new theme colors
+      terminalRef.current.refresh(0, terminalRef.current.rows - 1)
+    }
+  }, [isDark])
 
   // Listen for SSH events
   useEffect(() => {
@@ -247,19 +287,6 @@ export function TerminalContainer({
     const container = containerRef.current?.parentElement
     container?.addEventListener('keydown', handleKeyDown)
     return () => container?.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  // Search functions
-  const handleSearch = useCallback((text: string) => {
-    return searchAddonRef.current?.findNext(text) ?? false
-  }, [])
-
-  const handleSearchNext = useCallback(() => {
-    return searchAddonRef.current?.findNext('') ?? false
-  }, [])
-
-  const handleSearchPrevious = useCallback(() => {
-    return searchAddonRef.current?.findPrevious('') ?? false
   }, [])
 
   // 清屏
@@ -404,56 +431,71 @@ export function TerminalContainer({
         <TerminalToolbar
           fontSize={fontSize}
           onFontSizeChange={setFontSize}
-          onSearch={handleSearch}
-          onSearchNext={handleSearchNext}
-          onSearchPrevious={handleSearchPrevious}
           filePanelVisible={filePanelVisible}
           onToggleFilePanel={() => setFilePanelVisible(!filePanelVisible)}
         />
         {/* Terminal with context menu */}
         <ContextMenu.Root>
           <ContextMenu.Trigger asChild>
-            <div ref={containerRef} className="flex-1 bg-[#1a1a1a] overflow-hidden" />
+            <div ref={containerRef} className={cn("flex-1 overflow-hidden", isDark ? "bg-[#1a1a1a]" : "bg-white")} />
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
-            <ContextMenu.Content className="min-w-[180px] bg-zinc-800 border border-zinc-700 rounded-md p-1 shadow-lg z-50">
+            <ContextMenu.Content className={cn(
+              "min-w-[180px] rounded-md p-1 shadow-lg z-50",
+              isDark ? "bg-dark-bg-tertiary border border-dark-border" : "bg-light-bg-primary border border-light-border"
+            )}>
               <ContextMenu.Item
                 onSelect={handleClear}
-                className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                  isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                )}
               >
                 <TrashIcon className="w-4 h-4" />
                 {t('terminal.clear')}
               </ContextMenu.Item>
 
-              <ContextMenu.Separator className="h-px bg-zinc-700 my-1" />
+              <ContextMenu.Separator className={cn("h-px my-1", isDark ? "bg-dark-border" : "bg-light-border")} />
 
               <ContextMenu.Item
                 onSelect={handleDisconnect}
-                className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                  isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                )}
               >
                 <UnplugIcon className="w-4 h-4" />
                 {t('terminal.disconnect')}
               </ContextMenu.Item>
               <ContextMenu.Item
                 onSelect={handleReconnect}
-                className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                  isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                )}
               >
                 <RefreshCwIcon className="w-4 h-4" />
                 {t('terminal.reconnect')}
               </ContextMenu.Item>
 
-              <ContextMenu.Separator className="h-px bg-zinc-700 my-1" />
+              <ContextMenu.Separator className={cn("h-px my-1", isDark ? "bg-dark-border" : "bg-light-border")} />
 
               <ContextMenu.Item
                 onSelect={handleSaveLog}
-                className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                  isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                )}
               >
                 <SaveIcon className="w-4 h-4" />
                 {t('terminal.saveLog')}
               </ContextMenu.Item>
               <ContextMenu.Item
                 onSelect={handleStartLogging}
-                className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                  isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                )}
               >
                 {isLogging ? (
                   <>

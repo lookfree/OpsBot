@@ -43,6 +43,7 @@ import { InputDialog } from '@/components/common/InputDialog'
 import { TransferQueue } from './TransferQueue'
 import { FileEditor } from './FileEditor'
 import { useTranslation } from 'react-i18next'
+import { useThemeStore } from '@/stores'
 
 interface FilePanelProps {
   sessionId: string
@@ -52,6 +53,8 @@ interface FilePanelProps {
 
 export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
   const { t } = useTranslation()
+  const { theme } = useThemeStore()
+  const isDark = theme === 'dark'
   const [currentPath, setCurrentPath] = useState('/')
   const [files, setFiles] = useState<FileEntry[]>([])
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null)
@@ -314,73 +317,103 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
   if (!visible) return null
 
   return (
-    <div className="w-80 border-l border-zinc-700 bg-zinc-900 flex flex-col relative">
+    <div className={cn(
+      "w-80 border-l flex flex-col relative",
+      isDark ? "bg-dark-bg-secondary border-dark-border" : "bg-light-bg-secondary border-light-border"
+    )}>
       {/* Header */}
-      <div className="flex items-center justify-between p-2 border-b border-zinc-700">
-        <span className="text-sm font-medium text-zinc-300 truncate flex-1">
+      <div className={cn(
+        "flex items-center justify-between p-2 border-b",
+        isDark ? "border-dark-border" : "border-light-border"
+      )}>
+        <span className={cn(
+          "text-sm font-medium truncate flex-1",
+          isDark ? "text-dark-text-primary" : "text-light-text-primary"
+        )}>
           {currentPath}
         </span>
         <button
           onClick={onClose}
-          className="p-1 hover:bg-zinc-700 rounded"
+          className={cn("p-1 rounded", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
           title={t('common.close')}
         >
-          <XIcon className="w-4 h-4 text-zinc-400" />
+          <XIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         </button>
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-1 p-2 border-b border-zinc-700">
+      <div className={cn(
+        "flex items-center gap-1 p-2 border-b",
+        isDark ? "border-dark-border" : "border-light-border"
+      )}>
         <button
           onClick={goUp}
           disabled={currentPath === '/'}
-          className="p-1.5 hover:bg-zinc-700 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+          className={cn(
+            "p-1.5 rounded disabled:opacity-50 disabled:cursor-not-allowed",
+            isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover"
+          )}
           title={t('sftp.goUp')}
         >
-          <ChevronUpIcon className="w-4 h-4 text-zinc-400" />
+          <ChevronUpIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         </button>
         <button
           onClick={goHome}
-          className="p-1.5 hover:bg-zinc-700 rounded"
+          className={cn("p-1.5 rounded", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
           title={t('sftp.goHome')}
         >
-          <HomeIcon className="w-4 h-4 text-zinc-400" />
+          <HomeIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         </button>
         <button
           onClick={refresh}
           disabled={loading}
-          className="p-1.5 hover:bg-zinc-700 rounded disabled:opacity-50"
+          className={cn("p-1.5 rounded disabled:opacity-50", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
           title={t('sftp.refresh')}
         >
-          <RefreshCwIcon className={cn('w-4 h-4 text-zinc-400', loading && 'animate-spin')} />
+          <RefreshCwIcon className={cn('w-4 h-4', isDark ? "text-dark-text-secondary" : "text-light-text-secondary", loading && 'animate-spin')} />
         </button>
         <div className="flex-1" />
         <button
           onClick={handleUpload}
           disabled={loading}
-          className="p-1.5 hover:bg-zinc-700 rounded disabled:opacity-50"
+          className={cn("p-1.5 rounded disabled:opacity-50", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
           title={t('sftp.upload')}
         >
-          <UploadIcon className="w-4 h-4 text-zinc-400" />
+          <UploadIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         </button>
         <button
           onClick={handleCreateFolder}
-          className="p-1.5 hover:bg-zinc-700 rounded"
+          className={cn("p-1.5 rounded", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
           title={t('sftp.newFolder')}
         >
-          <PlusIcon className="w-4 h-4 text-zinc-400" />
+          <PlusIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         </button>
         <button
           onClick={() => setShowTransfers(!showTransfers)}
           className={cn(
-            'p-1.5 hover:bg-zinc-700 rounded',
-            showTransfers && 'bg-zinc-700'
+            'p-1.5 rounded',
+            isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover",
+            showTransfers && (isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-hover')
           )}
           title={t('sftp.transfers')}
         >
-          <ListIcon className="w-4 h-4 text-zinc-400" />
+          <ListIcon className={cn("w-4 h-4", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
         </button>
       </div>
+
+      {/* Statistics Bar */}
+      {files.length > 0 && (
+        <div className={cn(
+          "px-3 py-1 border-b text-xs text-center",
+          isDark ? "border-dark-border text-dark-text-secondary" : "border-light-border text-light-text-secondary"
+        )}>
+          {t('sftp.stats', {
+            files: files.filter((f) => !f.is_dir).length,
+            folders: files.filter((f) => f.is_dir).length,
+            size: formatFileSize(files.filter((f) => !f.is_dir).reduce((sum, f) => sum + f.size, 0)),
+          })}
+        </div>
+      )}
 
       {/* Error message */}
       {error && (
@@ -419,22 +452,29 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
             }}
           >
             {loading && files.length === 0 ? (
-              <div className="flex items-center justify-center h-32 text-zinc-500">
+              <div className={cn(
+                "flex items-center justify-center h-32",
+                isDark ? "text-dark-text-secondary" : "text-light-text-secondary"
+              )}>
                 {t('common.loading')}
               </div>
             ) : files.length === 0 ? (
-              <div className="flex items-center justify-center h-32 text-zinc-500">
+              <div className={cn(
+                "flex items-center justify-center h-32",
+                isDark ? "text-dark-text-secondary" : "text-light-text-secondary"
+              )}>
                 {t('sftp.emptyDirectory')}
               </div>
             ) : (
-              <div className="divide-y divide-zinc-800">
+              <div className={cn("divide-y", isDark ? "divide-dark-border" : "divide-light-border")}>
                 {files.map((entry) => (
                   <div
                     key={entry.path}
                     data-file-item
                     className={cn(
-                      'flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-zinc-800',
-                      selectedFile?.path === entry.path && 'bg-zinc-700'
+                      'flex items-center gap-2 px-2 py-1.5 cursor-pointer',
+                      isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover",
+                      selectedFile?.path === entry.path && (isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-hover')
                     )}
                     onClick={() => handleItemClick(entry)}
                     onDoubleClick={() => entry.is_dir && loadDirectory(entry.path)}
@@ -447,11 +487,11 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
                     {entry.is_dir ? (
                       <FolderIcon className="w-4 h-4 text-yellow-500 flex-shrink-0" />
                     ) : (
-                      <FileIcon className="w-4 h-4 text-zinc-400 flex-shrink-0" />
+                      <FileIcon className={cn("w-4 h-4 flex-shrink-0", isDark ? "text-blue-400" : "text-blue-500")} />
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm text-zinc-300 truncate">{entry.name}</div>
-                      <div className="text-xs text-zinc-500 flex gap-2">
+                      <div className={cn("text-sm truncate", isDark ? "text-dark-text-primary" : "text-light-text-primary")}>{entry.name}</div>
+                      <div className={cn("text-xs flex gap-2", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")}>
                         <span>{entry.modified}</span>
                         {!entry.is_dir && <span>{formatFileSize(entry.size)}</span>}
                       </div>
@@ -464,29 +504,41 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
         </ContextMenu.Trigger>
 
         <ContextMenu.Portal>
-          <ContextMenu.Content className="min-w-[180px] bg-zinc-800 border border-zinc-700 rounded-md p-1 shadow-lg z-50">
+          <ContextMenu.Content className={cn(
+            "min-w-[180px] rounded-md p-1 shadow-lg z-50",
+            isDark ? "bg-dark-bg-tertiary border border-dark-border" : "bg-light-bg-primary border border-light-border"
+          )}>
             {/* 通用操作 - 始终显示 */}
             <ContextMenu.Item
               onSelect={refresh}
-              className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+              className={cn(
+                "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+              )}
             >
               <RefreshCwIcon className="w-4 h-4" />
               {t('sftp.refresh')}
             </ContextMenu.Item>
 
-            <ContextMenu.Separator className="h-px bg-zinc-700 my-1" />
+            <ContextMenu.Separator className={cn("h-px my-1", isDark ? "bg-dark-border" : "bg-light-border")} />
 
             {/* 上传/新建 - 始终显示 */}
             <ContextMenu.Item
               onSelect={handleUpload}
-              className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+              className={cn(
+                "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+              )}
             >
               <UploadIcon className="w-4 h-4" />
               {t('sftp.upload')}
             </ContextMenu.Item>
             <ContextMenu.Item
               onSelect={handleCreateFolder}
-              className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+              className={cn(
+                "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+              )}
             >
               <FolderPlusIcon className="w-4 h-4" />
               {t('sftp.newFolder')}
@@ -495,21 +547,27 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
             {/* 文件/文件夹特定操作 - 仅在选中项目时显示 */}
             {contextTarget && (
               <>
-                <ContextMenu.Separator className="h-px bg-zinc-700 my-1" />
+                <ContextMenu.Separator className={cn("h-px my-1", isDark ? "bg-dark-border" : "bg-light-border")} />
 
                 {/* 文件特定操作 */}
                 {!contextTarget.is_dir && (
                   <>
                     <ContextMenu.Item
                       onSelect={() => setEditingFile(contextTarget)}
-                      className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                      className={cn(
+                        "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                        isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                      )}
                     >
                       <FileEditIcon className="w-4 h-4" />
                       {t('sftp.edit')}
                     </ContextMenu.Item>
                     <ContextMenu.Item
                       onSelect={() => handleDownload(contextTarget)}
-                      className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                      className={cn(
+                        "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                        isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                      )}
                     >
                       <DownloadIcon className="w-4 h-4" />
                       {t('sftp.download')}
@@ -521,7 +579,10 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
                 {contextTarget.is_dir && (
                   <ContextMenu.Item
                     onSelect={() => loadDirectory(contextTarget.path)}
-                    className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                    className={cn(
+                      "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                      isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                    )}
                   >
                     <FolderIcon className="w-4 h-4" />
                     {t('sftp.open')}
@@ -531,18 +592,24 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
                 {/* 重命名 - 文件和文件夹都可以 */}
                 <ContextMenu.Item
                   onSelect={() => handleRename(contextTarget)}
-                  className="flex items-center gap-2 px-2 py-1.5 text-sm text-zinc-300 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                  className={cn(
+                    "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                    isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                  )}
                 >
                   <PencilIcon className="w-4 h-4" />
                   {t('sftp.rename')}
                 </ContextMenu.Item>
 
-                <ContextMenu.Separator className="h-px bg-zinc-700 my-1" />
+                <ContextMenu.Separator className={cn("h-px my-1", isDark ? "bg-dark-border" : "bg-light-border")} />
 
                 {/* 删除 - 文件和文件夹都可以 */}
                 <ContextMenu.Item
                   onSelect={() => handleDelete(contextTarget)}
-                  className="flex items-center gap-2 px-2 py-1.5 text-sm text-red-400 rounded cursor-pointer hover:bg-zinc-700 outline-none"
+                  className={cn(
+                    "flex items-center gap-2 px-2 py-1.5 text-sm text-red-400 rounded cursor-pointer outline-none",
+                    isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover"
+                  )}
                 >
                   <Trash2Icon className="w-4 h-4" />
                   {t('sftp.delete')}

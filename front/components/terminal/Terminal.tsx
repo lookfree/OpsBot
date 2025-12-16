@@ -13,7 +13,59 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { cn } from '@/lib/utils'
+import { useThemeStore } from '@/stores'
 import '@xterm/xterm/css/xterm.css'
+
+// Terminal theme configurations
+const darkTheme = {
+  background: '#1a1a1a',
+  foreground: '#ffffff',
+  cursor: '#ffffff',
+  cursorAccent: '#1a1a1a',
+  selectionBackground: '#3b82f6',
+  selectionForeground: '#ffffff',
+  black: '#000000',
+  red: '#ef4444',
+  green: '#22c55e',
+  yellow: '#eab308',
+  blue: '#3b82f6',
+  magenta: '#a855f7',
+  cyan: '#06b6d4',
+  white: '#ffffff',
+  brightBlack: '#666666',
+  brightRed: '#f87171',
+  brightGreen: '#4ade80',
+  brightYellow: '#facc15',
+  brightBlue: '#60a5fa',
+  brightMagenta: '#c084fc',
+  brightCyan: '#22d3ee',
+  brightWhite: '#ffffff',
+}
+
+const lightTheme = {
+  background: '#ffffff',
+  foreground: '#1a1a1a',
+  cursor: '#1a1a1a',
+  cursorAccent: '#ffffff',
+  selectionBackground: '#3b82f6',
+  selectionForeground: '#ffffff',
+  black: '#000000',
+  red: '#dc2626',
+  green: '#16a34a',
+  yellow: '#ca8a04',
+  blue: '#2563eb',
+  magenta: '#9333ea',
+  cyan: '#0891b2',
+  white: '#f5f5f5',
+  brightBlack: '#737373',
+  brightRed: '#ef4444',
+  brightGreen: '#22c55e',
+  brightYellow: '#eab308',
+  brightBlue: '#3b82f6',
+  brightMagenta: '#a855f7',
+  brightCyan: '#06b6d4',
+  brightWhite: '#ffffff',
+}
 
 // UTF-8 safe base64 encoding/decoding
 function utf8ToBase64(str: string): string {
@@ -70,6 +122,8 @@ export function Terminal({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const currentSessionId = useRef<string | null>(sessionId || null)
+  const { theme } = useThemeStore()
+  const isDark = theme === 'dark'
 
   // Initialize terminal
   useEffect(() => {
@@ -78,30 +132,7 @@ export function Terminal({
     const terminal = new XTerm({
       fontSize,
       fontFamily,
-      theme: {
-        background: '#1a1a1a',
-        foreground: '#ffffff',
-        cursor: '#ffffff',
-        cursorAccent: '#1a1a1a',
-        selectionBackground: '#3b82f6',
-        selectionForeground: '#ffffff',
-        black: '#000000',
-        red: '#ef4444',
-        green: '#22c55e',
-        yellow: '#eab308',
-        blue: '#3b82f6',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: '#ffffff',
-        brightBlack: '#666666',
-        brightRed: '#f87171',
-        brightGreen: '#4ade80',
-        brightYellow: '#facc15',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee',
-        brightWhite: '#ffffff',
-      },
+      theme: isDark ? darkTheme : lightTheme,
       cursorBlink: true,
       cursorStyle: 'block',
       scrollback: 10000,
@@ -168,7 +199,18 @@ export function Terminal({
       resizeObserver.disconnect()
       terminal.dispose()
     }
+    // Note: isDark is intentionally not in deps - theme changes are handled by separate useEffect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fontSize, fontFamily, onError])
+
+  // Update theme when it changes
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = isDark ? darkTheme : lightTheme
+      // Force refresh to apply new theme colors
+      terminalRef.current.refresh(0, terminalRef.current.rows - 1)
+    }
+  }, [isDark])
 
   // Listen for SSH data events
   useEffect(() => {
@@ -291,7 +333,8 @@ export function Terminal({
     <div
       ref={containerRef}
       className={cn(
-        'terminal-container w-full h-full bg-[#1a1a1a] overflow-hidden',
+        'terminal-container w-full h-full overflow-hidden',
+        isDark ? 'bg-[#1a1a1a]' : 'bg-white',
         className
       )}
     />
