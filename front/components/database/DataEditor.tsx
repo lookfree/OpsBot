@@ -7,8 +7,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   RefreshCw, Plus, Minus, Save, Undo, Filter, ArrowUpDown,
-  FileCode, Settings, ChevronUp, ChevronDown, ArrowUp, ArrowDown,
-  Loader2, X, Play, RotateCcw, ChevronLeft, ChevronRight,
+  Settings, ChevronDown, ArrowUp, ArrowDown,
+  Loader2, X, Play, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -62,7 +62,7 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
   const [currentRowIndex, setCurrentRowIndex] = useState<number | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
   const [editValue, setEditValue] = useState<string>('')
-  const [edits, setEdits] = useState<CellEdit[]>([])
+  const [, setEdits] = useState<CellEdit[]>([])
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null)
   const [filters, setFilters] = useState<FilterConfig[]>([])
   const [showFilterPanel, setShowFilterPanel] = useState(false)
@@ -251,7 +251,7 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
       })
 
       // Update statements
-      rows.filter(r => r._isModified && !r._isNew && !r._isDeleted).forEach((r, idx) => {
+      rows.filter(r => r._isModified && !r._isNew && !r._isDeleted).forEach((r) => {
         const orig = originalRows.find(o => o._rowId === r._rowId)
         if (!orig) return
         const updates: string[] = []
