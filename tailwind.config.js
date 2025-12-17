@@ -12,7 +12,7 @@ export default {
         dark: {
           bg: {
             primary: '#1e1e1e',
-            secondary: '#1e1e1e',
+            secondary: '#252525',
             sidebar: '#1e1e1e',
             hover: '#2a2a2a',
             selected: '#1e3a5f',

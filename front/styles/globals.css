@@ -141,6 +141,19 @@
     @apply bg-light-bg-selected;
   }
 
+  /* 路径栏 */
+  .path-bar {
+    @apply flex items-center h-8 px-3 text-sm;
+  }
+
+  .dark .path-bar {
+    @apply bg-dark-bg-primary;
+  }
+
+  .light .path-bar {
+    @apply bg-light-bg-secondary;
+  }
+
   /* 标签页栏 */
   .tabbar {
     @apply border-b;

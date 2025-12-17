@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { useTabStore, useConnectionStore } from '@/stores'
 import { TabBar } from './TabBar'
-import { Server, Database, Container, Settings2, AlertTriangle, Globe, Table2, Layers } from 'lucide-react'
+import { Server, Database, Container, Settings2, AlertTriangle, Table2, Layers } from 'lucide-react'
 import { getDatabaseIcon } from '@/components/icons/DatabaseIcons'
 import { TerminalContainer } from '@/components/terminal'
 import { DatabaseContainer } from '@/components/database'
@@ -213,7 +213,7 @@ export function MainContent({ className }: MainContentProps) {
     <div className={cn('main-content flex flex-col flex-1 overflow-hidden', className)}>
       {/* 路径栏 - 显示当前 tab 的完整路径 */}
       {pathSegments.length > 0 && (
-        <div className="path-bar flex items-center h-8 px-3 text-sm border-b border-dark-border bg-dark-bg-secondary">
+        <div className="path-bar">
           <span className="text-accent-primary mr-1">/</span>
           {pathSegments.map((segment, index) => (
             <div key={index} className="flex items-center">

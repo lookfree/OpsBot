@@ -105,7 +105,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
 
   // Dialog states (only for modal dialogs like rename, drop)
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
-  const [renameTableInfo, setRenameTableInfo] = useState<{ db: string; table: string } | null>(null)
+  const [renameTableInfo, _setRenameTableInfo] = useState<{ db: string; table: string } | null>(null)
   const [createTableDb, setCreateTableDb] = useState('')
   const [editStructureTableInfo, setEditStructureTableInfo] = useState<{ db: string; table: string } | null>(null)
   const [dropConfirmOpen, setDropConfirmOpen] = useState(false)

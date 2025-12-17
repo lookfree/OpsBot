@@ -83,7 +83,7 @@ export function CreateTableInline({
   connectionId,
   database,
   onSuccess,
-  onClose,
+  onClose: _onClose,
 }: CreateTableInlineProps) {
   const { t } = useTranslation()
   const { theme } = useThemeStore()

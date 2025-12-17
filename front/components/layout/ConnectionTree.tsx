@@ -337,7 +337,7 @@ function TreeNodeItem({
   onCopy,
   onMoveTo,
   onOpenInNewWindow,
-  onDbTableAction,
+  onDbTableAction: _onDbTableAction,
 }: TreeNodeItemProps) {
   const { t } = useTranslation()
   const { setConnectionStatus } = useConnectionStore()
