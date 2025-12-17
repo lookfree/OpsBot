@@ -13,8 +13,10 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { useConnectionStore } from '@/stores'
 import { dbExecuteSql, dbGetTableDdl } from '@/services/database'
 import type { QueryResult, QueryColumn } from '@/services/database'
+import type { DatabaseConnection } from '@/types'
 
 interface DataEditorProps {
   connectionId: string
@@ -52,6 +54,25 @@ interface FilterConfig {
 
 export function DataEditor({ connectionId, database, tableName, onClose, isDark }: DataEditorProps) {
   const { t } = useTranslation()
+  const { connections } = useConnectionStore()
+  const connection = connections.find((c) => c.id === connectionId) as DatabaseConnection | undefined
+  const dbType = connection?.dbType || 'mysql'
+
+  // Quote identifier based on database type
+  const q = useCallback((identifier: string) => {
+    if (dbType === 'postgresql') {
+      return `"${identifier}"`
+    }
+    return `\`${identifier}\``
+  }, [dbType])
+
+  // Quote table with schema/database prefix
+  const qTable = useCallback((db: string, table: string) => {
+    if (dbType === 'postgresql') {
+      return `"${db}"."${table}"`
+    }
+    return `\`${db}\`.\`${table}\``
+  }, [dbType])
 
   const [columns, setColumns] = useState<QueryColumn[]>([])
   const [rows, setRows] = useState<RowData[]>([])
@@ -80,24 +101,24 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
   const buildWhereClause = useCallback(() => {
     if (filters.length === 0) return ''
     const conditions = filters.map(f => {
-      if (f.operator === 'IS NULL') return `\`${f.column}\` IS NULL`
-      if (f.operator === 'IS NOT NULL') return `\`${f.column}\` IS NOT NULL`
-      if (f.operator === 'LIKE') return `\`${f.column}\` LIKE '%${f.value}%'`
-      return `\`${f.column}\` ${f.operator} '${f.value}'`
+      if (f.operator === 'IS NULL') return `${q(f.column)} IS NULL`
+      if (f.operator === 'IS NOT NULL') return `${q(f.column)} IS NOT NULL`
+      if (f.operator === 'LIKE') return `${q(f.column)} LIKE '%${f.value}%'`
+      return `${q(f.column)} ${f.operator} '${f.value}'`
     }).join(' AND ')
     return ` WHERE ${conditions}`
-  }, [filters])
+  }, [filters, q])
 
   // Build SQL query
   const buildQuery = useCallback(() => {
-    let sql = `SELECT * FROM \`${database}\`.\`${tableName}\``
+    let sql = `SELECT * FROM ${qTable(database, tableName)}`
     sql += buildWhereClause()
     if (sortConfig) {
-      sql += ` ORDER BY \`${sortConfig.column}\` ${sortConfig.direction.toUpperCase()}`
+      sql += ` ORDER BY ${q(sortConfig.column)} ${sortConfig.direction.toUpperCase()}`
     }
     sql += ` LIMIT ${limit} OFFSET ${offset}`
     return sql
-  }, [database, tableName, buildWhereClause, sortConfig, limit, offset])
+  }, [database, tableName, buildWhereClause, sortConfig, limit, offset, q, qTable])
 
   const currentSql = useMemo(() => buildQuery(), [buildQuery])
 
@@ -111,7 +132,7 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
     setError(null)
     try {
       // First get total count
-      const countSql = `SELECT COUNT(*) as cnt FROM \`${database}\`.\`${tableName}\`${buildWhereClause()}`
+      const countSql = `SELECT COUNT(*) as cnt FROM ${qTable(database, tableName)}${buildWhereClause()}`
       const countResult = await dbExecuteSql({ connectionId, sql: countSql, database })
       const total = Number(countResult.rows[0]?.[0] || 0)
       setTotalRows(total)
@@ -240,14 +261,14 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
       // Delete statements
       rows.filter(r => r._isDeleted && !r._isNew).forEach(r => {
         const pkValue = r.values[0]
-        statements.push(`DELETE FROM \`${database}\`.\`${tableName}\` WHERE \`${pkCol}\` = '${pkValue}';`)
+        statements.push(`DELETE FROM ${qTable(database, tableName)} WHERE ${q(pkCol)} = '${pkValue}';`)
       })
 
       // Insert statements
       rows.filter(r => r._isNew && !r._isDeleted).forEach(r => {
-        const cols = columns.map(c => `\`${c.name}\``).join(', ')
+        const cols = columns.map(c => q(c.name)).join(', ')
         const vals = r.values.map(v => v === null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`).join(', ')
-        statements.push(`INSERT INTO \`${database}\`.\`${tableName}\` (${cols}) VALUES (${vals});`)
+        statements.push(`INSERT INTO ${qTable(database, tableName)} (${cols}) VALUES (${vals});`)
       })
 
       // Update statements
@@ -257,12 +278,12 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
         const updates: string[] = []
         r.values.forEach((v, i) => {
           if (String(v ?? '') !== String(orig.values[i] ?? '')) {
-            updates.push(`\`${columns[i].name}\` = ${v === null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`}`)
+            updates.push(`${q(columns[i].name)} = ${v === null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`}`)
           }
         })
         if (updates.length > 0) {
           const pkValue = orig.values[0]
-          statements.push(`UPDATE \`${database}\`.\`${tableName}\` SET ${updates.join(', ')} WHERE \`${pkCol}\` = '${pkValue}';`)
+          statements.push(`UPDATE ${qTable(database, tableName)} SET ${updates.join(', ')} WHERE ${q(pkCol)} = '${pkValue}';`)
         }
       })
 

@@ -34,7 +34,7 @@ function App() {
           </Panel>
 
           {/* 调整手柄 */}
-          <PanelResizeHandle className="w-1 bg-dark-border hover:bg-accent-primary transition-colors cursor-col-resize" />
+          <PanelResizeHandle className="w-1 bg-[#f0f0f0] dark:bg-[#2a2a2a] hover:bg-[#e0e0e0] dark:hover:bg-[#3a3a3a] transition-colors cursor-col-resize" />
 
           {/* 主内容区 */}
           <Panel minSize={40} className="flex">

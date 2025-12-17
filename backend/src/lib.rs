@@ -64,6 +64,7 @@ pub fn run() {
             commands::db_is_connected,
             commands::db_execute_sql,
             commands::db_get_databases,
+            commands::db_get_schemas,
             commands::db_get_tables,
             commands::db_get_table_structure,
             commands::db_get_views,

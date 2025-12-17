@@ -36,6 +36,8 @@ import {
 import type { SchemaNode, ThemeStyles } from './types'
 
 interface SchemaTreeProps {
+  connectionName: string
+  isConnected: boolean
   schemaTree: SchemaNode[]
   expandedNodes: Set<string>
   selectedNode: SchemaNode | null
@@ -55,6 +57,8 @@ interface SchemaTreeProps {
 }
 
 export function SchemaTree({
+  connectionName,
+  isConnected,
   schemaTree,
   expandedNodes,
   selectedNode,
@@ -229,16 +233,37 @@ export function SchemaTree({
     )
   }
 
+  // Connection status color
+  const statusColor = isConnected ? 'bg-status-success' : 'bg-gray-400'
+
   return (
     <div className={cn('w-64 shrink-0 flex flex-col border-r', borderColor, bgSecondary)}>
-      <div className={cn('flex items-center justify-between px-3 py-2 border-b', borderColor)}>
-        <span className={cn('text-sm font-medium', textPrimary)}>{t('database.databases')}</span>
-        <button onClick={onRefresh} className={cn('p-1 rounded', hoverBg)} title={t('common.refresh')}>
-          <RefreshCw className={cn('w-4 h-4', textSecondary)} />
-        </button>
-      </div>
       <div className="flex-1 overflow-auto py-1">
-        {schemaTree.map((node) => renderNode(node))}
+        {/* Connection root node */}
+        <div
+          className={cn(
+            'flex items-center gap-2 px-2 py-1.5 cursor-pointer rounded text-sm',
+            hoverBg
+          )}
+        >
+          <span className={cn('w-2 h-2 rounded-full flex-shrink-0', statusColor)} />
+          <Database className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+          <span className={cn('truncate font-medium', textPrimary)}>{connectionName}</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onRefresh()
+            }}
+            className={cn('p-0.5 rounded ml-auto', hoverBg)}
+            title={t('common.refresh')}
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', textSecondary)} />
+          </button>
+        </div>
+        {/* Categories under connection */}
+        <div className="pl-2">
+          {schemaTree.map((node) => renderNode(node))}
+        </div>
       </div>
     </div>
   )

@@ -1,5 +1,5 @@
 /**
- * Database service for MySQL connections
+ * Database service for MySQL and PostgreSQL connections
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -197,10 +197,19 @@ export async function dbGetDatabases(connectionId: string): Promise<string[]> {
 }
 
 /**
+ * Get all schemas (PostgreSQL only)
+ * For PostgreSQL, returns schemas like 'public', 'pg_catalog', etc.
+ * For MySQL, returns empty array (MySQL doesn't have schema concept)
+ */
+export async function dbGetSchemas(connectionId: string, database?: string): Promise<string[]> {
+  return invoke<string[]>('db_get_schemas', { connectionId, database })
+}
+
+/**
  * Get tables in a database
  */
-export async function dbGetTables(connectionId: string, database: string): Promise<TableInfo[]> {
-  return invoke<TableInfo[]>('db_get_tables', { connectionId, database })
+export async function dbGetTables(connectionId: string, database: string, schema?: string): Promise<TableInfo[]> {
+  return invoke<TableInfo[]>('db_get_tables', { connectionId, database, schema })
 }
 
 /**
@@ -217,15 +226,15 @@ export async function dbGetTableStructure(
 /**
  * Get views in a database
  */
-export async function dbGetViews(connectionId: string, database: string): Promise<ViewInfo[]> {
-  return invoke<ViewInfo[]>('db_get_views', { connectionId, database })
+export async function dbGetViews(connectionId: string, database: string, schema?: string): Promise<ViewInfo[]> {
+  return invoke<ViewInfo[]>('db_get_views', { connectionId, database, schema })
 }
 
 /**
  * Get functions and procedures in a database
  */
-export async function dbGetRoutines(connectionId: string, database: string): Promise<RoutineInfo[]> {
-  return invoke<RoutineInfo[]>('db_get_routines', { connectionId, database })
+export async function dbGetRoutines(connectionId: string, database: string, schema?: string): Promise<RoutineInfo[]> {
+  return invoke<RoutineInfo[]>('db_get_routines', { connectionId, database, schema })
 }
 
 /**
@@ -233,9 +242,10 @@ export async function dbGetRoutines(connectionId: string, database: string): Pro
  */
 export async function dbGetObjectsCount(
   connectionId: string,
-  database: string
+  database: string,
+  schema?: string
 ): Promise<DatabaseObjectsCount> {
-  return invoke<DatabaseObjectsCount>('db_get_objects_count', { connectionId, database })
+  return invoke<DatabaseObjectsCount>('db_get_objects_count', { connectionId, database, schema })
 }
 
 /**

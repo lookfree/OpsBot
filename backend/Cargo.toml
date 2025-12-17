@@ -37,7 +37,7 @@ russh-keys = "0.46"
 russh-sftp = "2.0"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "chrono", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "postgres", "chrono", "json"] }
 
 # Error handling
 anyhow = "1.0"
@@ -54,6 +54,7 @@ chrono = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
+urlencoding = "2.1"
 
 # Encryption (for storing credentials)
 ring = "0.17"

@@ -4,13 +4,14 @@
  * Dialog for renaming a database table.
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, AlertTriangle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import { useThemeStore } from '@/stores'
+import { useThemeStore, useConnectionStore } from '@/stores'
 import { dbRenameTable } from '@/services/database'
+import type { DatabaseConnection } from '@/types'
 
 interface RenameTableDialogProps {
   open: boolean
@@ -32,10 +33,21 @@ export function RenameTableDialog({
   const { t } = useTranslation()
   const { theme } = useThemeStore()
   const isDark = theme === 'dark'
+  const { connections } = useConnectionStore()
+  const connection = connections.find((c) => c.id === connectionId) as DatabaseConnection | undefined
+  const dbType = connection?.dbType || 'mysql'
   const [newName, setNewName] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Quote identifier based on database type
+  const q = useMemo(() => (identifier: string) => {
+    if (dbType === 'postgresql') {
+      return `"${identifier}"`
+    }
+    return `\`${identifier}\``
+  }, [dbType])
 
   useEffect(() => {
     if (open) {
@@ -72,7 +84,10 @@ export function RenameTableDialog({
     }
   }
 
-  const previewSql = `RENAME TABLE \`${tableName}\` TO \`${newName}\`;`
+  // PostgreSQL uses ALTER TABLE ... RENAME TO, MySQL uses RENAME TABLE
+  const previewSql = dbType === 'postgresql'
+    ? `ALTER TABLE ${q(tableName)} RENAME TO ${q(newName)};`
+    : `RENAME TABLE ${q(tableName)} TO ${q(newName)};`
 
   // Theme styles
   const dialogBg = isDark ? 'bg-dark-bg-primary' : 'bg-light-bg-primary'

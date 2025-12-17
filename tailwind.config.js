@@ -11,8 +11,9 @@ export default {
         // 暗色主题
         dark: {
           bg: {
-            primary: '#1a1a1a',
-            sidebar: '#141414',
+            primary: '#1e1e1e',
+            secondary: '#1e1e1e',
+            sidebar: '#1e1e1e',
             hover: '#2a2a2a',
             selected: '#1e3a5f',
           },
@@ -21,13 +22,14 @@ export default {
             secondary: '#a0a0a0',
             disabled: '#666666',
           },
-          border: '#333333',
+          border: '#2a2a2a',
         },
         // 亮色主题
         light: {
           bg: {
             primary: '#ffffff',
-            sidebar: '#f5f5f5',
+            secondary: '#ffffff',
+            sidebar: '#ffffff',
             hover: '#eeeeee',
             selected: '#e0f2fe',
           },

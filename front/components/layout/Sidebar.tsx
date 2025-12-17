@@ -148,7 +148,7 @@ export function Sidebar({ className }: SidebarProps) {
   return (
     <div className={cn('sidebar w-64 flex flex-col', className)}>
       {/* 顶部标题栏 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-dark-border dark:border-dark-border">
+      <div className="flex items-center justify-between px-4 py-3">
         <h1 className="text-lg font-semibold">{t('sidebar.connections')}</h1>
         <div className="flex items-center gap-1">
           <DropdownMenu.Root>
@@ -383,7 +383,7 @@ export function Sidebar({ className }: SidebarProps) {
       </div>
 
       {/* 底部设置区域 - 参考Claude风格 */}
-      <div className="border-t border-dark-border dark:border-dark-border p-2">
+      <div className="p-2">
         <SettingsDropdown />
       </div>
 

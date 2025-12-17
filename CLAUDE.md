@@ -85,3 +85,4 @@ The project has an official resource site (`resources.zwd-opsbot.com`) maintaine
 ## 开发规范
 每个函数不超过80行
 单个代码文件不超过800行，超过就要拆分
+使用策略模式解偶多数据库的实现，方便扩展和维护（前端和后端）

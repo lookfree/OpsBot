@@ -25,7 +25,10 @@
     "optional": "optional",
     "processing": "Processing...",
     "restore": "Restore",
-    "undo": "Undo"
+    "undo": "Undo",
+    "next": "Next",
+    "back": "Back",
+    "comingSoon": "Coming Soon"
   },
   "sidebar": {
     "connections": "Connections",
@@ -224,6 +227,7 @@
     "stats": "{{files}} files, {{folders}} folders, {{size}}"
   },
   "database": {
+    "selectDatabaseType": "Select Database Type",
     "newConnection": "New Database Connection",
     "editConnection": "Edit Database Connection",
     "connectionName": "Connection Name",
@@ -345,6 +349,7 @@
     "prevPage": "Previous Page",
     "nextPage": "Next Page",
     "lastPage": "Last Page",
+    "pgNeedReconnect": "PostgreSQL requires a new connection to access database \"{{database}}\". Please create a new connection with that database specified.",
     "errors": {
       "nameRequired": "Connection name is required",
       "hostRequired": "Host is required",

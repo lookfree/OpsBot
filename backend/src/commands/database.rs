@@ -68,14 +68,25 @@ pub async fn db_get_databases(
     state.0.get_databases(&connection_id).await
 }
 
+/// Get all schemas (PostgreSQL only)
+#[tauri::command]
+pub async fn db_get_schemas(
+    state: State<'_, DatabaseServiceState>,
+    connection_id: String,
+    database: Option<String>,
+) -> Result<Vec<String>, String> {
+    state.0.get_schemas(&connection_id, database.as_deref()).await
+}
+
 /// Get tables in a database
 #[tauri::command]
 pub async fn db_get_tables(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
 ) -> Result<Vec<TableInfo>, String> {
-    state.0.get_tables(&connection_id, &database).await
+    state.0.get_tables(&connection_id, &database, schema.as_deref()).await
 }
 
 /// Get table structure
@@ -95,8 +106,9 @@ pub async fn db_get_views(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
 ) -> Result<Vec<ViewInfo>, String> {
-    state.0.get_views(&connection_id, &database).await
+    state.0.get_views(&connection_id, &database, schema.as_deref()).await
 }
 
 /// Get functions and procedures in a database
@@ -105,8 +117,9 @@ pub async fn db_get_routines(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
 ) -> Result<Vec<RoutineInfo>, String> {
-    state.0.get_routines(&connection_id, &database).await
+    state.0.get_routines(&connection_id, &database, schema.as_deref()).await
 }
 
 /// Get database objects count
@@ -115,8 +128,9 @@ pub async fn db_get_objects_count(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
 ) -> Result<DatabaseObjectsCount, String> {
-    state.0.get_objects_count(&connection_id, &database).await
+    state.0.get_objects_count(&connection_id, &database, schema.as_deref()).await
 }
 
 /// Get table DDL

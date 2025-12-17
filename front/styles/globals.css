@@ -87,11 +87,11 @@
   }
 
   .dark .sidebar {
-    @apply bg-dark-bg-sidebar border-r border-dark-border;
+    @apply bg-dark-bg-sidebar;
   }
 
   .light .sidebar {
-    @apply bg-light-bg-sidebar border-r border-light-border;
+    @apply bg-light-bg-sidebar;
   }
 
   /* 文本颜色工具类 */
