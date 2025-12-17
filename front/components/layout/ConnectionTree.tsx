@@ -393,6 +393,7 @@ function TreeNodeItem({
     setConnectionStatus(node.id, 'connecting')
 
     try {
+      console.log('[DB] Connecting to database:', conn.id, conn.host, conn.dbType)
       await dbConnect({
         connectionId: conn.id,
         dbType: conn.dbType || 'mysql',
@@ -403,10 +404,16 @@ function TreeNodeItem({
         database: conn.database,
       })
 
+      console.log('[DB] Connected successfully, fetching databases...')
       setConnectionStatus(node.id, 'connected')
 
       // Get all databases
       const dbs = await dbGetDatabases(conn.id)
+      console.log('[DB] Databases fetched:', dbs)
+
+      if (!dbs || dbs.length === 0) {
+        console.warn('[DB] No databases returned from server')
+      }
 
       // Build tree - all databases can be expanded
       const tree: DbTreeNode[] = dbs.map((dbName) => ({
@@ -416,10 +423,11 @@ function TreeNodeItem({
         children: [],
       }))
 
+      console.log('[DB] Database tree built:', tree.length, 'items')
       setDbTree(tree)
       setDbExpanded(true)
     } catch (err) {
-      console.error('Failed to connect:', err)
+      console.error('[DB] Failed to connect or fetch databases:', err)
       setConnectionStatus(node.id, 'error')
     } finally {
       setDbLoading(false)

@@ -30,18 +30,25 @@ impl MySqlDriver {
         database: &str,
     ) -> Result<Self, String> {
         // URL encode username and password to handle special characters
+        // Add ssl-mode=disabled to allow connections to servers without SSL
         let url = format!(
-            "mysql://{}:{}@{}:{}/{}",
+            "mysql://{}:{}@{}:{}/{}?ssl-mode=disabled",
             encode(username), encode(password), host, port, database
         );
+
+        log::info!("Connecting to MySQL: {}:{}/{}", host, port, database);
 
         let pool = MySqlPoolOptions::new()
             .max_connections(10)
             .min_connections(2)
             .connect(&url)
             .await
-            .map_err(|e| format!("Failed to connect to MySQL: {}", e))?;
+            .map_err(|e| {
+                log::error!("Failed to connect to MySQL: {}", e);
+                format!("Failed to connect to MySQL: {}", e)
+            })?;
 
+        log::info!("MySQL connection established successfully");
         Ok(Self { pool })
     }
 
@@ -54,8 +61,9 @@ impl MySqlDriver {
         database: &str,
     ) -> Result<(), String> {
         // URL encode username and password to handle special characters
+        // Add ssl-mode=disabled to allow connections to servers without SSL
         let url = format!(
-            "mysql://{}:{}@{}:{}/{}",
+            "mysql://{}:{}@{}:{}/{}?ssl-mode=disabled",
             encode(username), encode(password), host, port, database
         );
 
@@ -162,15 +170,22 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn get_databases(&self) -> Result<Vec<String>, String> {
+        log::info!("Fetching databases list...");
         let rows: Vec<MySqlRow> = sqlx::query("SHOW DATABASES")
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| format!("Failed to get databases: {}", e))?;
+            .map_err(|e| {
+                log::error!("Failed to get databases: {}", e);
+                format!("Failed to get databases: {}", e)
+            })?;
 
-        Ok(rows
+        let databases: Vec<String> = rows
             .iter()
             .filter_map(|row| row.try_get::<String, _>(0).ok())
-            .collect())
+            .collect();
+
+        log::info!("Found {} databases", databases.len());
+        Ok(databases)
     }
 
     async fn get_schemas(&self, _database: Option<&str>) -> Result<Vec<String>, String> {
