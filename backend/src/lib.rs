@@ -10,8 +10,8 @@ use std::sync::Arc;
 #[cfg(debug_assertions)]
 use tauri::Manager;
 
-use commands::{DatabaseServiceState, SftpServiceState, SshServiceState};
-use services::{DatabaseService, SftpService, SshService};
+use commands::{CryptoServiceState, DatabaseServiceState, SftpServiceState, SshServiceState};
+use services::{CryptoService, DatabaseService, SftpService, SshService};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,6 +19,7 @@ pub fn run() {
     let ssh_service = Arc::new(SshService::new());
     let sftp_service = Arc::new(SftpService::new());
     let database_service = Arc::new(DatabaseService::new());
+    let crypto_service = Arc::new(CryptoService::new());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -27,6 +28,7 @@ pub fn run() {
         .manage(SshServiceState(ssh_service))
         .manage(SftpServiceState(sftp_service))
         .manage(DatabaseServiceState(database_service))
+        .manage(CryptoServiceState(crypto_service))
         .invoke_handler(tauri::generate_handler![
             // SSH commands
             commands::ssh_connect,
@@ -80,6 +82,14 @@ pub fn run() {
             commands::db_get_table_structure_ext,
             // Utility commands
             commands::append_to_file,
+            // Crypto commands (password-based for export/import)
+            commands::encrypt_config,
+            commands::decrypt_config,
+            commands::is_config_encrypted,
+            // Storage crypto commands (fixed key for local storage)
+            commands::encrypt_storage,
+            commands::decrypt_storage,
+            commands::is_storage_encrypted,
         ])
         .setup(|app| {
             // Silence unused variable warning in release mode

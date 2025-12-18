@@ -12,7 +12,6 @@ import {
   Container,
   Settings2,
   Plus,
-  Search,
   ChevronRight,
   ChevronDown,
   FolderPlus,
@@ -49,7 +48,6 @@ export function Sidebar({ className }: SidebarProps) {
   const connectionStatus = useConnectionStore((state) => state.connectionStatus)
   const getTreeNodes = useConnectionStore((state) => state.getTreeNodes)
   const createFolder = useConnectionStore((state) => state.createFolder)
-  const [searchQuery, setSearchQuery] = useState('')
   const [expandedModules, setExpandedModules] = useState<Record<ModuleType, boolean>>({
     [ModuleType.SSH]: true,
     [ModuleType.Database]: true,
@@ -250,20 +248,6 @@ export function Sidebar({ className }: SidebarProps) {
         </div>
       </div>
 
-      {/* 搜索框 */}
-      <div className="px-3 py-2">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-text-disabled" />
-          <input
-            type="text"
-            placeholder={t('sidebar.searchConnections')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="input pl-8 py-1.5 text-sm"
-          />
-        </div>
-      </div>
-
       {/* 连接树 */}
       <div className="flex-1 overflow-y-auto px-2 py-1">
         {treeNodes.map((moduleNode) => {
@@ -372,7 +356,6 @@ export function Sidebar({ className }: SidebarProps) {
                   nodes={moduleNode.children}
                   moduleType={moduleNode.moduleType}
                   level={1}
-                  searchQuery={searchQuery}
                   onEditConnection={handleEditConnection}
                   onCreateConnection={(folderId) => openNewConnectionDialog(moduleNode.moduleType, folderId)}
                 />

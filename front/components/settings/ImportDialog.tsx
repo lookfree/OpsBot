@@ -1,5 +1,6 @@
 /**
  * 配置导入对话框组件
+ * 支持自动解密（固定密钥）和手动输入密码解密
  */
 
 import { useState, useRef, useCallback } from 'react'
@@ -12,6 +13,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
+  Lock,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore } from '@/stores'
@@ -22,13 +25,18 @@ import {
   ValidationResult,
   Connection,
   Folder,
+  ENCRYPTED_FILE_EXTENSION,
 } from '@/types'
 import {
   readFileContent,
   validateImportConfig,
   importConfig,
   getImportPreview,
+  isEncryptedFile,
+  isStorageEncrypted,
+  autoDecryptConfig,
 } from '@/services'
+import { useTranslation } from 'react-i18next'
 
 interface ImportDialogProps {
   open: boolean
@@ -38,6 +46,7 @@ interface ImportDialogProps {
 type ImportStep = 'select' | 'preview' | 'result'
 
 export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
+  const { t } = useTranslation()
   const { folders, connections } = useConnectionStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -45,6 +54,9 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
   const [step, setStep] = useState<ImportStep>('select')
   const [isDragging, setIsDragging] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [isEncrypted, setIsEncrypted] = useState(false)
+  const [isDecrypting, setIsDecrypting] = useState(false)
+  const [decryptError, setDecryptError] = useState<string | null>(null)
   const [validation, setValidation] = useState<ValidationResult | null>(null)
   const [importOptions, setImportOptions] = useState<ImportOptions>({
     mode: 'merge',
@@ -61,6 +73,8 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
   const resetState = () => {
     setStep('select')
     setSelectedFile(null)
+    setIsEncrypted(false)
+    setDecryptError(null)
     setValidation(null)
     setImportResult(null)
     setImportOptions({
@@ -72,19 +86,39 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 
   // 处理文件选择
   const handleFileSelect = useCallback(async (file: File) => {
-    if (!file.name.endsWith('.json')) {
+    const isValidExt = file.name.endsWith('.json') || file.name.endsWith(ENCRYPTED_FILE_EXTENSION)
+    if (!isValidExt) {
       setValidation({
         valid: false,
-        errors: ['请选择 .json 格式的配置文件'],
+        errors: [t('import.invalidConfig')],
         warnings: [],
       })
       return
     }
 
     setSelectedFile(file)
+    setDecryptError(null)
+    setIsDecrypting(true)
 
     try {
-      const content = await readFileContent(file)
+      let content = await readFileContent(file)
+
+      // 检查是否为加密文件（固定密钥加密格式）
+      const encrypted = isEncryptedFile(file.name) || await isStorageEncrypted(content)
+      setIsEncrypted(encrypted)
+
+      if (encrypted) {
+        // 尝试使用固定密钥自动解密
+        try {
+          content = await autoDecryptConfig(content)
+        } catch (error) {
+          setIsDecrypting(false)
+          setDecryptError(error instanceof Error ? error.message : t('import.readError'))
+          return
+        }
+      }
+
+      // 验证配置
       const result = validateImportConfig(content)
       setValidation(result)
 
@@ -94,11 +128,13 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
     } catch {
       setValidation({
         valid: false,
-        errors: ['文件读取失败'],
+        errors: [t('import.readError')],
         warnings: [],
       })
+    } finally {
+      setIsDecrypting(false)
     }
-  }, [])
+  }, [t])
 
   // 拖拽事件处理
   const handleDragOver = (e: React.DragEvent) => {
@@ -189,7 +225,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
           {/* 标题栏 */}
           <div className="flex items-center justify-between mb-4">
             <Dialog.Title className="text-lg font-semibold">
-              导入配置
+              {t('import.title')}
             </Dialog.Title>
             <Dialog.Close asChild>
               <button className="btn-ghost p-1 rounded-md">
@@ -206,34 +242,57 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => !isDecrypting && fileInputRef.current?.click()}
                 className={cn(
-                  'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors',
-                  isDragging
-                    ? 'border-accent-primary bg-accent-primary/10'
-                    : 'border-dark-border hover:border-accent-primary'
+                  'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
+                  isDecrypting
+                    ? 'border-accent-primary bg-accent-primary/10 cursor-wait'
+                    : isDragging
+                      ? 'border-accent-primary bg-accent-primary/10 cursor-pointer'
+                      : 'border-dark-border hover:border-accent-primary cursor-pointer'
                 )}
               >
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".json"
+                  accept=".json,.enc"
                   onChange={handleInputChange}
                   className="hidden"
+                  disabled={isDecrypting}
                 />
-                <FileJson className="w-12 h-12 mx-auto mb-3 text-dark-text-disabled" />
-                <p className="text-sm">拖拽配置文件到此处，或点击选择文件</p>
-                <p className="text-xs text-dark-text-secondary mt-1">
-                  支持 .zwd-config.json 或 .json 格式
-                </p>
+                {isDecrypting ? (
+                  <>
+                    <Loader2 className="w-12 h-12 mx-auto mb-3 text-accent-primary animate-spin" />
+                    <p className="text-sm">{t('common.processing')}</p>
+                    <p className="text-xs text-secondary mt-1">{selectedFile?.name}</p>
+                  </>
+                ) : (
+                  <>
+                    <FileJson className="w-12 h-12 mx-auto mb-3 text-disabled" />
+                    <p className="text-sm">{t('import.dropHint')}</p>
+                    <p className="text-xs text-secondary mt-1">
+                      {t('import.formatHint')}
+                    </p>
+                  </>
+                )}
               </div>
+
+              {/* 解密错误 */}
+              {decryptError && (
+                <div className="mt-4 p-3 bg-status-error/10 border border-status-error/20 rounded-md">
+                  <div className="flex items-center gap-2 text-status-error">
+                    <AlertCircle className="w-4 h-4" />
+                    <span className="text-sm">{decryptError}</span>
+                  </div>
+                </div>
+              )}
 
               {/* 验证错误 */}
               {validation && !validation.valid && (
                 <div className="mt-4 p-3 bg-status-error/10 border border-status-error/20 rounded-md">
                   <div className="flex items-center gap-2 text-status-error mb-2">
                     <AlertCircle className="w-4 h-4" />
-                    <span className="font-medium">配置文件无效</span>
+                    <span className="font-medium">{t('import.invalidConfig')}</span>
                   </div>
                   <ul className="text-sm text-status-error space-y-1">
                     {validation.errors.map((error, i) => (
@@ -249,17 +308,21 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
           {step === 'preview' && validation?.config && (
             <>
               {/* 文件信息 */}
-              <div className="bg-dark-bg-sidebar p-3 rounded-md mb-4">
+              <div className="dialog-card mb-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <FileJson className="w-4 h-4 text-accent-primary" />
+                  {isEncrypted ? (
+                    <Lock className="w-4 h-4 text-status-success" />
+                  ) : (
+                    <FileJson className="w-4 h-4 text-accent-primary" />
+                  )}
                   <span className="text-sm font-medium">{selectedFile?.name}</span>
                 </div>
-                <div className="text-xs text-dark-text-secondary">
-                  <p>版本：{validation.config.version}</p>
-                  <p>导出时间：{new Date(validation.config.exportedAt).toLocaleString()}</p>
+                <div className="text-xs text-secondary">
+                  <p>{t('common.version')}：{validation.config.version}</p>
+                  <p>{new Date(validation.config.exportedAt).toLocaleString()}</p>
                   <p>
-                    包含：{validation.config.folders.length} 个目录，
-                    {validation.config.connections.length} 个连接
+                    {validation.config.folders.length} {t('import.newFolders')}，
+                    {validation.config.connections.length} {t('import.newConnections')}
                   </p>
                 </div>
               </div>
@@ -269,7 +332,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                 <div className="mb-4 p-3 bg-status-warning/10 border border-status-warning/20 rounded-md">
                   <div className="flex items-center gap-2 text-status-warning mb-2">
                     <AlertTriangle className="w-4 h-4" />
-                    <span className="font-medium">注意</span>
+                    <span className="font-medium">{t('import.notice')}</span>
                   </div>
                   <ul className="text-sm text-status-warning space-y-1">
                     {validation.warnings.map((warning, i) => (
@@ -281,7 +344,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 
               {/* 导入模式 */}
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">导入模式</label>
+                <label className="block text-sm font-medium mb-2">{t('import.importMode')}</label>
                 <div className="flex gap-4">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -293,7 +356,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                       }
                       className="w-4 h-4"
                     />
-                    <span className="text-sm">合并（保留现有配置）</span>
+                    <span className="text-sm">{t('import.mergeMode')}</span>
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -305,7 +368,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                       }
                       className="w-4 h-4"
                     />
-                    <span className="text-sm">替换（清空现有配置）</span>
+                    <span className="text-sm">{t('import.replaceMode')}</span>
                   </label>
                 </div>
               </div>
@@ -325,7 +388,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                       }
                       className="w-4 h-4 rounded border-dark-border"
                     />
-                    <span className="text-sm">覆盖同名连接</span>
+                    <span className="text-sm">{t('import.overwriteExisting')}</span>
                   </label>
                 </div>
               )}
@@ -333,9 +396,9 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
               {/* 模块过滤 */}
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-2">
-                  选择导入模块
-                  <span className="text-dark-text-secondary font-normal ml-2">
-                    (不选择则导入全部)
+                  {t('import.selectModules')}
+                  <span className="text-secondary font-normal ml-2">
+                    {t('export.selectModulesHint')}
                   </span>
                 </label>
                 <div className="flex flex-wrap gap-2">
@@ -368,17 +431,16 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 
               {/* 导入预览 */}
               {preview && (
-                <div className="bg-dark-bg-sidebar p-3 rounded-md mb-4">
-                  <h4 className="text-sm font-medium mb-2">导入预览</h4>
-                  <div className="text-sm text-dark-text-secondary space-y-1">
-                    <p>新增目录：{preview.newFolders}</p>
-                    <p>新增连接：{preview.newConnections}</p>
+                <div className="dialog-card mb-4">
+                  <h4 className="text-sm font-medium mb-2">{t('import.preview')}</h4>
+                  <div className="text-sm text-secondary space-y-1">
+                    <p>{t('import.newFolders')}：{preview.newFolders}</p>
+                    <p>{t('import.newConnections')}：{preview.newConnections}</p>
                     {importOptions.mode === 'merge' && (
                       <>
-                        <p>重复目录（跳过）：{preview.duplicateFolders}</p>
+                        <p>{t('import.duplicateFolders')}：{preview.duplicateFolders}</p>
                         <p>
-                          重复连接（{importOptions.overwriteExisting ? '覆盖' : '跳过'}
-                          ）：{preview.duplicateConnections}
+                          {t('import.duplicateConnections')}（{importOptions.overwriteExisting ? t('import.overwrite') : t('import.skip')}）：{preview.duplicateConnections}
                         </p>
                       </>
                     )}
@@ -396,18 +458,18 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                   }}
                   className="btn-secondary px-4 py-2"
                 >
-                  重新选择
+                  {t('import.reselect')}
                 </button>
                 <div className="flex gap-2">
                   <Dialog.Close asChild>
-                    <button className="btn-secondary px-4 py-2">取消</button>
+                    <button className="btn-secondary px-4 py-2">{t('common.cancel')}</button>
                   </Dialog.Close>
                   <button
                     onClick={handleImport}
                     className="btn-primary px-4 py-2 flex items-center gap-2"
                   >
                     <Upload className="w-4 h-4" />
-                    确认导入
+                    {t('import.confirmImport')}
                   </button>
                 </div>
               </div>
@@ -421,29 +483,29 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                 {importResult.success ? (
                   <>
                     <CheckCircle2 className="w-16 h-16 mx-auto mb-4 text-status-success" />
-                    <h3 className="text-lg font-medium mb-2">导入成功</h3>
+                    <h3 className="text-lg font-medium mb-2">{t('import.importSuccess')}</h3>
                   </>
                 ) : (
                   <>
                     <AlertCircle className="w-16 h-16 mx-auto mb-4 text-status-error" />
-                    <h3 className="text-lg font-medium mb-2">导入失败</h3>
+                    <h3 className="text-lg font-medium mb-2">{t('import.importFailed')}</h3>
                   </>
                 )}
-                <p className="text-dark-text-secondary">{importResult.message}</p>
+                <p className="text-secondary">{importResult.message}</p>
               </div>
 
               {/* 统计信息 */}
               {importResult.success && (
-                <div className="bg-dark-bg-sidebar p-3 rounded-md mb-4">
-                  <h4 className="text-sm font-medium mb-2">导入统计</h4>
-                  <div className="grid grid-cols-2 gap-2 text-sm text-dark-text-secondary">
-                    <p>导入目录：{importResult.stats.foldersImported}</p>
-                    <p>跳过目录：{importResult.stats.foldersSkipped}</p>
-                    <p>导入连接：{importResult.stats.connectionsImported}</p>
-                    <p>跳过连接：{importResult.stats.connectionsSkipped}</p>
+                <div className="dialog-card mb-4">
+                  <h4 className="text-sm font-medium mb-2">{t('import.importStats')}</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-secondary">
+                    <p>{t('import.foldersImported')}：{importResult.stats.foldersImported}</p>
+                    <p>{t('import.foldersSkipped')}：{importResult.stats.foldersSkipped}</p>
+                    <p>{t('import.connectionsImported')}：{importResult.stats.connectionsImported}</p>
+                    <p>{t('import.connectionsSkipped')}：{importResult.stats.connectionsSkipped}</p>
                     {importResult.stats.connectionsOverwritten > 0 && (
                       <p className="col-span-2">
-                        覆盖连接：{importResult.stats.connectionsOverwritten}
+                        {t('import.connectionsOverwritten')}：{importResult.stats.connectionsOverwritten}
                       </p>
                     )}
                   </div>
@@ -458,11 +520,11 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
                     className="btn-secondary px-4 py-2 flex items-center gap-2"
                   >
                     <RefreshCw className="w-4 h-4" />
-                    重试
+                    {t('import.retry')}
                   </button>
                 )}
                 <Dialog.Close asChild>
-                  <button className="btn-primary px-4 py-2">完成</button>
+                  <button className="btn-primary px-4 py-2">{t('import.done')}</button>
                 </Dialog.Close>
               </div>
             </>

@@ -1,9 +1,10 @@
 /**
  * 连接与目录状态管理
+ * 使用加密存储保护敏感信息
  */
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import { v4 as uuidv4 } from 'uuid'
 import {
   ModuleType,
@@ -13,6 +14,7 @@ import {
   TreeNode,
   TreeNodeType,
 } from '@/types'
+import { createEncryptedStorage } from '@/services/secureStorage'
 
 interface ConnectionStatusMap {
   [connectionId: string]: ConnectionStatus
@@ -349,6 +351,7 @@ export const useConnectionStore = create<ConnectionState>()(
     }),
     {
       name: 'zwd-opsbot-connections',
+      storage: createJSONStorage(() => createEncryptedStorage()),
       partialize: (state) => ({
         folders: state.folders,
         connections: state.connections,

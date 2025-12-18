@@ -1,8 +1,9 @@
 /**
  * 配置导入服务
- * 从JSON文件导入连接和目录配置
+ * 从JSON文件导入连接和目录配置，支持解密
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { v4 as uuidv4 } from 'uuid'
 import {
   ExportConfig,
@@ -10,6 +11,7 @@ import {
   ImportResult,
   ValidationResult,
   EXPORT_VERSION,
+  ENCRYPTED_FILE_EXTENSION,
   Folder,
   Connection,
   ModuleType,
@@ -25,6 +27,38 @@ export const readFileContent = (file: File): Promise<string> => {
     reader.onerror = () => reject(new Error('文件读取失败'))
     reader.readAsText(file)
   })
+}
+
+/**
+ * 检查文件是否为加密文件
+ */
+export const isEncryptedFile = (fileName: string): boolean => {
+  return fileName.endsWith(ENCRYPTED_FILE_EXTENSION)
+}
+
+/**
+ * 检查内容是否已加密
+ */
+export const isContentEncrypted = async (content: string): Promise<boolean> => {
+  try {
+    return await invoke<boolean>('is_config_encrypted', { data: content })
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 解密配置内容（使用用户密码）
+ */
+export const decryptConfig = async (encrypted: string, password: string): Promise<string> => {
+  return await invoke<string>('decrypt_config', { data: encrypted, password })
+}
+
+/**
+ * 使用固定密钥自动解密配置（用于新版加密格式）
+ */
+export const autoDecryptConfig = async (encrypted: string): Promise<string> => {
+  return await invoke<string>('decrypt_storage', { data: encrypted })
 }
 
 /**

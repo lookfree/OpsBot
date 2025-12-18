@@ -1,14 +1,16 @@
 /**
  * 配置导出对话框组件
+ * 始终使用固定密钥加密，简化用户操作
  */
 
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { X, Download, Shield, ShieldOff, FolderCheck } from 'lucide-react'
+import { X, Download, Shield, ShieldOff, FolderCheck, Lock, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore } from '@/stores'
 import { ModuleType, ModuleTypeLabels, ExportOptions } from '@/types'
 import { exportConfigToFile, getExportStats } from '@/services'
+import { useTranslation } from 'react-i18next'
 
 interface ExportDialogProps {
   open: boolean
@@ -16,17 +18,21 @@ interface ExportDialogProps {
 }
 
 export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
+  const { t } = useTranslation()
   const { folders, connections } = useConnectionStore()
 
   // 导出选项
   const [includeSensitiveData, setIncludeSensitiveData] = useState(false)
   const [selectedModules, setSelectedModules] = useState<ModuleType[]>([])
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
-  // 获取导出统计
+  // 获取导出统计 - 始终加密
   const options: ExportOptions = {
     includeSensitiveData,
     moduleTypes: selectedModules,
     folderIds: [],
+    encrypt: true, // 始终加密
   }
 
   const stats = getExportStats(folders, connections, options)
@@ -39,9 +45,18 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
     )
   }
 
-  const handleExport = () => {
-    exportConfigToFile(folders, connections, options)
-    onOpenChange(false)
+  const handleExport = async () => {
+    setIsExporting(true)
+    setExportError(null)
+
+    try {
+      await exportConfigToFile(folders, connections, options)
+      onOpenChange(false)
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : t('common.error'))
+    } finally {
+      setIsExporting(false)
+    }
   }
 
   const hasData = folders.length > 0 || connections.length > 0
@@ -54,7 +69,7 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
           {/* 标题栏 */}
           <div className="flex items-center justify-between mb-4">
             <Dialog.Title className="text-lg font-semibold">
-              导出配置
+              {t('export.title')}
             </Dialog.Title>
             <Dialog.Close asChild>
               <button className="btn-ghost p-1 rounded-md">
@@ -64,19 +79,19 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
           </div>
 
           {!hasData ? (
-            <div className="text-center py-8 text-dark-text-secondary">
-              <FolderCheck className="w-12 h-12 mx-auto mb-3 text-dark-text-disabled" />
-              <p>暂无可导出的配置</p>
-              <p className="text-sm mt-1">请先添加连接或目录</p>
+            <div className="text-center py-8 text-secondary">
+              <FolderCheck className="w-12 h-12 mx-auto mb-3 text-disabled" />
+              <p>{t('export.noData')}</p>
+              <p className="text-sm mt-1">{t('export.noDataHint')}</p>
             </div>
           ) : (
             <>
               {/* 模块选择 */}
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-2">
-                  选择导出模块
-                  <span className="text-dark-text-secondary font-normal ml-2">
-                    (不选择则导出全部)
+                  {t('export.selectModules')}
+                  <span className="text-secondary font-normal ml-2">
+                    {t('export.selectModulesHint')}
                   </span>
                 </label>
                 <div className="flex flex-wrap gap-2">
@@ -120,47 +135,70 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
                     onChange={(e) => setIncludeSensitiveData(e.target.checked)}
                     className="w-4 h-4 rounded border-dark-border"
                   />
-                  <span className="text-sm">包含敏感信息（密码、密钥等）</span>
+                  <span className="text-sm">{t('export.includeSensitive')}</span>
                   {includeSensitiveData ? (
                     <ShieldOff className="w-4 h-4 text-status-warning" />
                   ) : (
                     <Shield className="w-4 h-4 text-status-success" />
                   )}
                 </label>
-                {includeSensitiveData && (
-                  <p className="text-xs text-status-warning mt-1 ml-6">
-                    警告：导出文件将包含明文密码和密钥，请妥善保管
-                  </p>
-                )}
+                <p className="text-xs text-secondary mt-1 ml-6">
+                  {includeSensitiveData
+                    ? t('export.sensitiveWarning')
+                    : t('export.sensitiveHint')
+                  }
+                </p>
+              </div>
+
+              {/* 加密说明 */}
+              <div className="mb-4 dialog-card">
+                <div className="flex items-center gap-2 text-sm">
+                  <Lock className="w-4 h-4 text-status-success" />
+                  <span>{t('export.encryptionNote')}</span>
+                </div>
               </div>
 
               {/* 导出预览 */}
-              <div className="bg-dark-bg-sidebar p-3 rounded-md mb-4">
-                <h4 className="text-sm font-medium mb-2">导出预览</h4>
-                <div className="text-sm text-dark-text-secondary space-y-1">
-                  <p>目录数量：{stats.folderCount}</p>
-                  <p>连接数量：{stats.connectionCount}</p>
+              <div className="dialog-card mb-4">
+                <h4 className="text-sm font-medium mb-2">{t('export.preview')}</h4>
+                <div className="text-sm text-secondary space-y-1">
+                  <p>{t('export.folderCount')}：{stats.folderCount}</p>
+                  <p>{t('export.connectionCount')}：{stats.connectionCount}</p>
                   {stats.moduleTypes.length > 0 && (
                     <p>
-                      包含模块：
+                      {t('export.includesModules')}：
                       {stats.moduleTypes.map((m) => ModuleTypeLabels[m]).join('、')}
                     </p>
                   )}
+                  <p>
+                    {t('export.fileFormat')}：{t('export.encrypted')}
+                  </p>
                 </div>
               </div>
+
+              {/* 错误提示 */}
+              {exportError && (
+                <div className="mb-4 p-3 bg-status-error/10 border border-status-error/20 rounded-md">
+                  <p className="text-sm text-status-error">{exportError}</p>
+                </div>
+              )}
 
               {/* 操作按钮 */}
               <div className="flex justify-end gap-2">
                 <Dialog.Close asChild>
-                  <button className="btn-secondary px-4 py-2">取消</button>
+                  <button className="btn-secondary px-4 py-2" disabled={isExporting}>{t('common.cancel')}</button>
                 </Dialog.Close>
                 <button
                   onClick={handleExport}
-                  disabled={stats.connectionCount === 0 && stats.folderCount === 0}
+                  disabled={(stats.connectionCount === 0 && stats.folderCount === 0) || isExporting}
                   className="btn-primary px-4 py-2 flex items-center gap-2"
                 >
-                  <Download className="w-4 h-4" />
-                  导出配置
+                  {isExporting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  {isExporting ? t('export.exporting') : t('export.exportButton')}
                 </button>
               </div>
             </>

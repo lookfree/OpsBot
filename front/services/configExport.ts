@@ -1,14 +1,18 @@
 /**
  * 配置导出服务
- * 将连接和目录配置导出为JSON文件
+ * 将连接和目录配置导出为JSON文件，支持加密
  */
 
+import { invoke } from '@tauri-apps/api/core'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 import {
   ExportConfig,
   ExportOptions,
   ExportedConnection,
   EXPORT_VERSION,
   EXPORT_FILE_EXTENSION,
+  ENCRYPTED_FILE_EXTENSION,
   Folder,
   Connection,
   ModuleType,
@@ -136,33 +140,51 @@ export const generateExportConfig = (
 /**
  * 生成导出文件名
  */
-export const generateExportFileName = (): string => {
+export const generateExportFileName = (encrypted: boolean = false): string => {
   const date = new Date()
   const dateStr = date.toISOString().split('T')[0]
   const timeStr = date.toTimeString().split(' ')[0].replace(/:/g, '-')
-  return `zwd-opsbot-config-${dateStr}-${timeStr}${EXPORT_FILE_EXTENSION}`
+  const extension = encrypted ? ENCRYPTED_FILE_EXTENSION : EXPORT_FILE_EXTENSION
+  return `zwd-opsbot-config-${dateStr}-${timeStr}${extension}`
 }
 
 /**
- * 导出配置到文件（浏览器下载）
+ * 使用固定密钥加密数据（用于导出）
  */
-export const exportConfigToFile = (
+export const encryptConfigForExport = async (data: string): Promise<string> => {
+  return await invoke<string>('encrypt_storage', { data })
+}
+
+/**
+ * 导出配置到文件
+ * 使用 Tauri 文件对话框让用户选择保存位置
+ * 始终使用固定密钥加密，简化用户操作
+ */
+export const exportConfigToFile = async (
   folders: Folder[],
   connections: Connection[],
   options: ExportOptions
-): void => {
+): Promise<void> => {
   const config = generateExportConfig(folders, connections, options)
   const jsonStr = JSON.stringify(config, null, 2)
-  const blob = new Blob([jsonStr], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
 
-  const link = document.createElement('a')
-  link.href = url
-  link.download = generateExportFileName()
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  // 始终加密导出
+  const content = await encryptConfigForExport(jsonStr)
+
+  // 使用 Tauri 文件保存对话框
+  const filePath = await save({
+    defaultPath: generateExportFileName(true),
+    filters: [
+      {
+        name: 'ZWD-OpsBot Config',
+        extensions: ['zwd-config.enc'],
+      },
+    ],
+  })
+
+  if (filePath) {
+    await writeTextFile(filePath, content)
+  }
 }
 
 /**

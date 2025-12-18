@@ -10,6 +10,9 @@ export const EXPORT_VERSION = '1.0'
 // 导出文件扩展名
 export const EXPORT_FILE_EXTENSION = '.zwd-config.json'
 
+// 加密导出文件扩展名
+export const ENCRYPTED_FILE_EXTENSION = '.zwd-config.enc'
+
 // 导出配置格式
 export interface ExportConfig {
   version: string
@@ -36,6 +39,10 @@ export interface ExportOptions {
   moduleTypes: string[]
   // 导出的目录ID（空数组表示全部）
   folderIds: string[]
+  // 是否加密导出文件
+  encrypt: boolean
+  // 加密密码（encrypt为true时必填）
+  password?: string
 }
 
 // 导入选项
@@ -46,6 +53,8 @@ export interface ImportOptions {
   overwriteExisting: boolean
   // 导入的模块类型（空数组表示全部）
   moduleTypes: string[]
+  // 解密密码（加密文件时需要）
+  password?: string
 }
 
 // 导入结果
