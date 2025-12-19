@@ -5,7 +5,7 @@
  * Supports both light and dark themes.
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, Eye, EyeOff, FileKey } from 'lucide-react'
@@ -59,6 +59,38 @@ export function SshConnectionDialog({
   const [showPassphrase, setShowPassphrase] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  // 重置对话框状态
+  useEffect(() => {
+    if (open) {
+      if (connection) {
+        setFormData({
+          name: connection.name,
+          host: connection.host,
+          port: connection.port,
+          username: connection.username,
+          authType: connection.authType || 'password',
+          password: connection.password || '',
+          privateKey: connection.privateKey || '',
+          passphrase: connection.passphrase || '',
+        })
+      } else {
+        setFormData({
+          name: '',
+          host: '',
+          port: 22,
+          username: 'root',
+          authType: 'password',
+          password: '',
+          privateKey: '',
+          passphrase: '',
+        })
+      }
+      setErrors({})
+      setTestResult(null)
+    }
+  }, [open, connection])
 
   const handleChange = useCallback(
     (field: keyof typeof formData, value: string | number) => {
@@ -140,8 +172,6 @@ export function SshConnectionDialog({
     onSave,
     onOpenChange,
   ])
-
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
   const handleTestConnection = useCallback(async () => {
     if (!validate()) return
