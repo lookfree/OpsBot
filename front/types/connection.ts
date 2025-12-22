@@ -79,7 +79,7 @@ export interface SSHConnection extends ConnectionBase {
 }
 
 // 数据库类型
-export type DatabaseType = 'mysql' | 'postgresql' | 'sqlite'
+export type DatabaseType = 'mysql' | 'postgresql' | 'mariadb' | 'sqlite' | 'oracle'
 
 // 数据库连接配置
 export interface DatabaseConnection extends ConnectionBase {

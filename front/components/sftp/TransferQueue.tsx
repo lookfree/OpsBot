@@ -133,7 +133,7 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
   return (
     <div className={cn(
       "absolute bottom-0 left-0 right-0 max-h-48 overflow-hidden flex flex-col border-t",
-      isDark ? "bg-dark-bg-tertiary border-dark-border" : "bg-light-bg-secondary border-light-border"
+      isDark ? "bg-dark-bg-hover border-dark-border" : "bg-light-bg-secondary border-light-border"
     )}>
       {/* Header */}
       <div className={cn(

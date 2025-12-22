@@ -104,10 +104,14 @@ export function DatabaseConnectionDialog({
 
   const handleDbTypeSelect = useCallback((dbType: DatabaseTypeConfig) => {
     setSelectedDbType(dbType)
+    // 根据数据库类型设置默认值
+    const defaultUsername = dbType.id === 'oracle' ? 'SYSTEM' :
+                           dbType.id === 'postgresql' ? 'postgres' : 'root'
     setFormData(prev => ({
       ...prev,
       dbType: dbType.id as DatabaseType,
       port: dbType.defaultPort || prev.port,
+      username: defaultUsername,
     }))
   }, [])
 
@@ -444,17 +448,19 @@ export function DatabaseConnectionDialog({
                   </div>
                 </div>
 
-                {/* Database */}
+                {/* Database / Service Name (Oracle) */}
                 <div>
                   <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
-                    {t('database.database')}
+                    {formData.dbType === 'oracle'
+                      ? t('database.serviceName', 'Service Name')
+                      : t('database.database')}
                     <span className={cn('ml-1 text-xs', textSecondary)}>({t('common.optional')})</span>
                   </label>
                   <input
                     type="text"
                     value={formData.database}
                     onChange={(e) => handleChange('database', e.target.value)}
-                    placeholder="mysql"
+                    placeholder={formData.dbType === 'oracle' ? 'ORCL' : 'mysql'}
                     className={cn(
                       'w-full px-3 py-2 rounded border text-sm',
                       'focus:outline-none focus:border-accent-primary',

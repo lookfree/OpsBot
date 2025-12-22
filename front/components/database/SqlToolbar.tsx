@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   Download,
   ClipboardList,
+  Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -42,6 +43,7 @@ interface SqlToolbarProps {
   onExportCsv: () => void
   onExportJson: () => void
   onClear: () => void
+  onOpenERDesigner?: () => void
 }
 
 export function SqlToolbar({
@@ -59,6 +61,7 @@ export function SqlToolbar({
   onExportCsv,
   onExportJson,
   onClear,
+  onOpenERDesigner,
 }: SqlToolbarProps) {
   const { t } = useTranslation()
   const { borderColor, hoverBg } = styles
@@ -173,6 +176,12 @@ export function SqlToolbar({
         </DropdownMenuTrigger>
         <DropdownMenuContent>
           <DropdownMenuItem onSelect={onClear}>{t('database.clearEditor')}</DropdownMenuItem>
+          {onOpenERDesigner && (
+            <DropdownMenuItem onSelect={onOpenERDesigner}>
+              <Workflow className="w-4 h-4 mr-2" />
+              {t('database.erDesigner.title')}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

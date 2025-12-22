@@ -25,6 +25,7 @@ import { RenameTableDialog } from './RenameTableDialog'
 import { CreateTableInline } from './CreateTableInline'
 import { EditTableStructureInline } from './EditTableStructureInline'
 import { DataEditor } from './DataEditor'
+import { ERDiagramDesigner } from './designer'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useDatabaseQuery } from './useDatabaseQuery'
 import type { ThemeStyles } from './types'
@@ -99,8 +100,8 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
   const [databases, setDatabases] = useState<string[]>([])
   const [selectedDatabase, setSelectedDatabase] = useState<string>('')
 
-  // View mode: 'query' | 'createTable' | 'editStructure' | 'dataEditor'
-  type ViewMode = 'query' | 'createTable' | 'editStructure' | 'dataEditor'
+  // View mode: 'query' | 'createTable' | 'editStructure' | 'dataEditor' | 'erDesigner'
+  type ViewMode = 'query' | 'createTable' | 'editStructure' | 'dataEditor' | 'erDesigner'
   const [viewMode, setViewMode] = useState<ViewMode>('query')
 
   // Dialog states (only for modal dialogs like rename, drop)
@@ -324,6 +325,17 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
       })
       return
     }
+
+    // Handle erDesigner - open ER Diagram Designer
+    if (tabData.erDesigner) {
+      ensureConnection().then(() => {
+        setViewMode('erDesigner')
+        if (database) {
+          setSelectedDatabase(database)
+        }
+      })
+      return
+    }
   }, [isConnected, tabData, activeTabId, selectedDatabase, setSql, connection])
 
   // Handle back to query mode - MUST be before any conditional returns (React hooks rule)
@@ -332,6 +344,11 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
     setDataEditorInfo(null)
     setCreateTableDb('')
     setEditStructureTableInfo(null)
+  }, [])
+
+  // Handle open ER designer
+  const handleOpenERDesigner = useCallback(() => {
+    setViewMode('erDesigner')
   }, [])
 
   // Not connected - show connect prompt
@@ -397,6 +414,8 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
             }}
             onClose={handleBackToQuery}
           />
+        ) : viewMode === 'erDesigner' ? (
+          <ERDiagramDesigner onClose={handleBackToQuery} className="h-full" />
         ) : (
           <PanelGroup direction="vertical" className="flex-1">
             {/* SQL Editor Panel */}
@@ -418,6 +437,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
                   onExportCsv={handleExportCsv}
                   onExportJson={handleExportJson}
                   onClear={handleClear}
+                  onOpenERDesigner={handleOpenERDesigner}
                 />
 
                 {/* SQL Editor with Monaco */}

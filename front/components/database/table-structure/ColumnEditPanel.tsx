@@ -3,24 +3,11 @@
  * Right panel for editing column details in the table structure dialog.
  */
 
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-
-const COLUMN_TYPES = [
-  'INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'MEDIUMINT',
-  'VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'TINYTEXT',
-  'DATETIME', 'DATE', 'TIME', 'TIMESTAMP', 'YEAR',
-  'DECIMAL', 'FLOAT', 'DOUBLE', 'NUMERIC',
-  'BOOLEAN', 'BIT',
-  'BLOB', 'MEDIUMBLOB', 'LONGBLOB', 'TINYBLOB',
-  'JSON', 'ENUM', 'SET',
-  'BINARY', 'VARBINARY',
-]
-
-const AUTO_GENERATE_OPTIONS = [
-  { value: '', label: '无' },
-  { value: 'AUTO_INCREMENT', label: 'AUTO_INCREMENT' },
-]
+import { getDataTypeNames, type DatabaseType } from '@/config/datatypes'
+import { getDialect } from '@/config/dbDialects'
 
 export interface ColumnEdit {
   id: string
@@ -45,10 +32,24 @@ interface ColumnEditPanelProps {
   column: ColumnEdit
   onUpdate: (id: string, updates: Partial<ColumnEdit>) => void
   isDark: boolean
+  dbType?: DatabaseType
 }
 
-export function ColumnEditPanel({ column, onUpdate, isDark }: ColumnEditPanelProps) {
+export function ColumnEditPanel({ column, onUpdate, isDark, dbType = 'mysql' }: ColumnEditPanelProps) {
   const { t } = useTranslation()
+
+  // Get dynamic configuration based on database type
+  const columnTypes = useMemo(() => getDataTypeNames(dbType), [dbType])
+  const dialect = useMemo(() => getDialect(dbType), [dbType])
+
+  // Auto-generate options based on database type
+  const autoGenerateOptions = useMemo(() => {
+    const options = [{ value: '', label: t('database.none', { defaultValue: '无' }) }]
+    if (dialect.autoIncrement.keyword) {
+      options.push({ value: dialect.autoIncrement.keyword, label: dialect.autoIncrement.keyword })
+    }
+    return options
+  }, [dbType, dialect, t])
 
   const textSecondary = isDark ? 'text-dark-text-secondary' : 'text-light-text-secondary'
   const textPrimary = isDark ? 'text-dark-text-primary' : 'text-light-text-primary'
@@ -81,7 +82,7 @@ export function ColumnEditPanel({ column, onUpdate, isDark }: ColumnEditPanelPro
           disabled={column.isDeleted}
           className={cn(inputClass, 'w-full')}
         >
-          {COLUMN_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          {columnTypes.map((typeName) => <option key={typeName} value={typeName}>{typeName}</option>)}
         </select>
       </div>
 
@@ -153,7 +154,7 @@ export function ColumnEditPanel({ column, onUpdate, isDark }: ColumnEditPanelPro
           disabled={column.isDeleted}
           className={cn(inputClass, 'w-full')}
         >
-          {AUTO_GENERATE_OPTIONS.map((opt) => (
+          {autoGenerateOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>

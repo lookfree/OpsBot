@@ -3,8 +3,10 @@
  * Right panel for editing foreign key details in the table structure dialog.
  */
 
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { getForeignKeyActions, type DatabaseType } from '@/config/dbDialects'
 
 export interface ForeignKeyEdit {
   id: string
@@ -22,17 +24,22 @@ export interface ForeignKeyEdit {
   isSelected: boolean
 }
 
-const FK_ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT']
-
 interface ForeignKeyEditPanelProps {
   fk: ForeignKeyEdit
   availableColumns: string[]
   onUpdate: (id: string, updates: Partial<ForeignKeyEdit>) => void
   isDark: boolean
+  dbType?: DatabaseType
 }
 
-export function ForeignKeyEditPanel({ fk, availableColumns, onUpdate, isDark }: ForeignKeyEditPanelProps) {
+export function ForeignKeyEditPanel({ fk, availableColumns, onUpdate, isDark, dbType = 'mysql' }: ForeignKeyEditPanelProps) {
   const { t } = useTranslation()
+
+  // Get FK actions based on database type
+  const fkActions = useMemo(() => getForeignKeyActions(dbType), [dbType])
+
+  // Oracle doesn't support ON UPDATE
+  const supportsOnUpdate = dbType !== 'oracle'
 
   const textSecondary = isDark ? 'text-dark-text-secondary' : 'text-light-text-secondary'
   const textPrimary = isDark ? 'text-dark-text-primary' : 'text-light-text-primary'
@@ -104,25 +111,27 @@ export function ForeignKeyEditPanel({ fk, availableColumns, onUpdate, isDark }: 
           disabled={!fk.isNew}
           className={cn(inputClass, 'w-full')}
         >
-          {FK_ACTIONS.map((action) => (
+          {fkActions.map((action) => (
             <option key={action} value={action}>{action}</option>
           ))}
         </select>
       </div>
 
-      <div>
-        <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.onUpdate')}</label>
-        <select
-          value={fk.onUpdate}
-          onChange={(e) => onUpdate(fk.id, { onUpdate: e.target.value })}
-          disabled={!fk.isNew}
-          className={cn(inputClass, 'w-full')}
-        >
-          {FK_ACTIONS.map((action) => (
-            <option key={action} value={action}>{action}</option>
-          ))}
-        </select>
-      </div>
+      {supportsOnUpdate && (
+        <div>
+          <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.onUpdate')}</label>
+          <select
+            value={fk.onUpdate}
+            onChange={(e) => onUpdate(fk.id, { onUpdate: e.target.value })}
+            disabled={!fk.isNew}
+            className={cn(inputClass, 'w-full')}
+          >
+            {fkActions.map((action) => (
+              <option key={action} value={action}>{action}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   )
 }

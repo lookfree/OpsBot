@@ -37,7 +37,7 @@ export const DATABASE_TYPES: DatabaseTypeConfig[] = [
     name: 'MariaDB',
     icon: '/assets/icons/mariadb-icon.png',
     defaultPort: 3306,
-    enabled: false,
+    enabled: true,
     category: 'relational',
   },
   {
@@ -45,7 +45,7 @@ export const DATABASE_TYPES: DatabaseTypeConfig[] = [
     name: 'Oracle',
     icon: '/assets/icons/oracle-icon.svg',
     defaultPort: 1521,
-    enabled: false,
+    enabled: true,
     category: 'relational',
   },
   {
@@ -53,7 +53,7 @@ export const DATABASE_TYPES: DatabaseTypeConfig[] = [
     name: 'SQL Server',
     icon: '/assets/icons/sqlserver-icon.svg',
     defaultPort: 1433,
-    enabled: false,
+    enabled: true,
     category: 'relational',
   },
   {

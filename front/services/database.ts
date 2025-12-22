@@ -5,7 +5,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
 // Database types
-export type DatabaseType = 'mysql' | 'postgresql' | 'sqlite'
+export type DatabaseType = 'mysql' | 'postgresql' | 'mariadb' | 'sqlite' | 'oracle'
 
 // Connect request
 export interface DatabaseConnectRequest {

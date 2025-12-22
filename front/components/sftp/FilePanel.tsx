@@ -506,7 +506,7 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
         <ContextMenu.Portal>
           <ContextMenu.Content className={cn(
             "min-w-[180px] rounded-md p-1 shadow-lg z-50",
-            isDark ? "bg-dark-bg-tertiary border border-dark-border" : "bg-light-bg-primary border border-light-border"
+            isDark ? "bg-dark-bg-hover border border-dark-border" : "bg-light-bg-primary border border-light-border"
           )}>
             {/* 通用操作 - 始终显示 */}
             <ContextMenu.Item

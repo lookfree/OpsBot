@@ -18,9 +18,10 @@ import {
   Link,
   ChevronsUpDown,
   ChevronsDownUp,
+  Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useConnectionStore } from '@/stores'
+import { useConnectionStore, useTabStore } from '@/stores'
 import { ModuleType } from '@/types'
 import { ConnectionTree } from './ConnectionTree'
 import { SettingsDropdown } from '@/components/settings'
@@ -48,6 +49,7 @@ export function Sidebar({ className }: SidebarProps) {
   const connectionStatus = useConnectionStore((state) => state.connectionStatus)
   const getTreeNodes = useConnectionStore((state) => state.getTreeNodes)
   const createFolder = useConnectionStore((state) => state.createFolder)
+  const addTab = useTabStore((state) => state.addTab)
   const [expandedModules, setExpandedModules] = useState<Record<ModuleType, boolean>>({
     [ModuleType.SSH]: true,
     [ModuleType.Database]: true,
@@ -141,6 +143,18 @@ export function Sidebar({ className }: SidebarProps) {
       setDatabaseDialogOpen(true)
     }
     // TODO: Docker, Middleware 连接对话框
+  }
+
+  // 打开 ER 图设计器
+  const openERDesigner = () => {
+    addTab({
+      type: 'erDesigner',
+      title: t('database.erDesigner.title'),
+      moduleType: ModuleType.Database,
+      status: 'connected',
+      closable: true,
+      pinned: false,
+    })
   }
 
   return (
@@ -306,6 +320,15 @@ export function Sidebar({ className }: SidebarProps) {
                             <FolderPlus className="w-4 h-4" />
                             {t('sidebar.newFolder')}
                           </DropdownMenu.Item>
+                          {moduleNode.moduleType === ModuleType.Database && (
+                            <DropdownMenu.Item
+                              className="dropdown-item rounded-md flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer outline-none"
+                              onSelect={openERDesigner}
+                            >
+                              <Workflow className="w-4 h-4" />
+                              {t('database.erDesigner.title')}
+                            </DropdownMenu.Item>
+                          )}
                         </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
@@ -329,6 +352,15 @@ export function Sidebar({ className }: SidebarProps) {
                       <FolderPlus className="w-4 h-4" />
                       {t('sidebar.newFolder')}
                     </ContextMenu.Item>
+                    {moduleNode.moduleType === ModuleType.Database && (
+                      <ContextMenu.Item
+                        className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                        onClick={openERDesigner}
+                      >
+                        <Workflow className="w-4 h-4" />
+                        {t('database.erDesigner.title')}
+                      </ContextMenu.Item>
+                    )}
 
                     <ContextMenu.Separator className="context-menu-separator h-px my-1" />
 

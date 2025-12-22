@@ -13,6 +13,7 @@ export default {
           bg: {
             primary: '#1e1e1e',
             secondary: '#252525',
+            tertiary: '#2d2d2d',
             sidebar: '#1e1e1e',
             hover: '#2a2a2a',
             selected: '#1e3a5f',
@@ -22,13 +23,17 @@ export default {
             secondary: '#a0a0a0',
             disabled: '#666666',
           },
-          border: '#2a2a2a',
+          border: {
+            DEFAULT: '#2a2a2a',
+            hover: '#3a3a3a',
+          },
         },
         // 亮色主题
         light: {
           bg: {
             primary: '#ffffff',
             secondary: '#ffffff',
+            tertiary: '#f5f5f5',
             sidebar: '#ffffff',
             hover: '#eeeeee',
             selected: '#e0f2fe',

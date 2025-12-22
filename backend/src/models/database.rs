@@ -1,4 +1,4 @@
-//! Database models for MySQL/PostgreSQL/SQLite connections
+//! Database models for MySQL/PostgreSQL/SQLite/MariaDB/Oracle/MSSQL connections
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +9,10 @@ pub enum DatabaseType {
     MySQL,
     PostgreSQL,
     SQLite,
+    MariaDB,
+    Oracle,
+    #[serde(alias = "sqlserver")]
+    MSSQL,
 }
 
 /// Database connection request

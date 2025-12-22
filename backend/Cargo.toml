@@ -38,6 +38,8 @@ russh-sftp = "2.0"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "postgres", "chrono", "json", "tls-native-tls"] }
+tiberius = { version = "0.12", default-features = false, features = ["rustls", "chrono"], optional = true }
+oracle = { version = "0.6", optional = true }
 
 # Error handling
 anyhow = "1.0"
@@ -59,6 +61,11 @@ urlencoding = "2.1"
 # Encryption (for storing credentials)
 ring = "0.17"
 base64 = "0.22"
+
+[features]
+default = ["oracle", "mssql"]
+oracle = ["dep:oracle"]
+mssql = ["dep:tiberius"]
 
 [profile.release]
 strip = true

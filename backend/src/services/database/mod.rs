@@ -1,9 +1,14 @@
 //! Database service module
 //!
 //! Provides database connection management using the strategy pattern.
-//! Supports MySQL and PostgreSQL with easy extensibility for new databases.
+//! Supports MySQL, PostgreSQL, and MariaDB with easy extensibility for new databases.
 
+mod mariadb;
+#[cfg(feature = "mssql")]
+mod mssql;
 mod mysql;
+#[cfg(feature = "oracle")]
+mod oracle;
 mod postgresql;
 mod session;
 mod traits;
@@ -22,7 +27,12 @@ use crate::models::{
     TableOptions, TableStructure, TableStructureExt, TriggerInfo, ViewInfo,
 };
 
+use mariadb::MariaDBDriver;
+#[cfg(feature = "mssql")]
+use mssql::MssqlDriver;
 use mysql::MySqlDriver;
+#[cfg(feature = "oracle")]
+use oracle::OracleDriver;
 use postgresql::PostgreSqlDriver;
 
 /// Database service managing all database connections
@@ -69,8 +79,54 @@ impl DatabaseService {
                 .await?;
                 (Arc::new(driver), Some("public".to_string()))
             }
+            DatabaseType::MariaDB => {
+                let database = request.database.as_deref().unwrap_or("mysql");
+                let driver = MariaDBDriver::connect(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await?;
+                (Arc::new(driver), None)
+            }
             DatabaseType::SQLite => {
                 return Err("SQLite is not supported yet".to_string());
+            }
+            #[cfg(feature = "oracle")]
+            DatabaseType::Oracle => {
+                let service_name = request.database.as_deref().unwrap_or("ORCL");
+                let driver = OracleDriver::connect(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    service_name,
+                )
+                .await?;
+                (Arc::new(driver), None)
+            }
+            #[cfg(not(feature = "oracle"))]
+            DatabaseType::Oracle => {
+                return Err("Oracle support is not enabled. Rebuild with --features oracle".to_string());
+            }
+            #[cfg(feature = "mssql")]
+            DatabaseType::MSSQL => {
+                let database = request.database.as_deref().unwrap_or("master");
+                let driver = MssqlDriver::connect(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await?;
+                (Arc::new(driver), Some("dbo".to_string()))
+            }
+            #[cfg(not(feature = "mssql"))]
+            DatabaseType::MSSQL => {
+                return Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string());
             }
         };
 
@@ -136,7 +192,50 @@ impl DatabaseService {
                 )
                 .await
             }
+            DatabaseType::MariaDB => {
+                let database = request.database.as_deref().unwrap_or("mysql");
+                MariaDBDriver::test_connection(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await
+            }
             DatabaseType::SQLite => Err("SQLite is not supported yet".to_string()),
+            #[cfg(feature = "oracle")]
+            DatabaseType::Oracle => {
+                let service_name = request.database.as_deref().unwrap_or("ORCL");
+                OracleDriver::test_connection(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    service_name,
+                )
+                .await
+            }
+            #[cfg(not(feature = "oracle"))]
+            DatabaseType::Oracle => {
+                Err("Oracle support is not enabled. Rebuild with --features oracle".to_string())
+            }
+            #[cfg(feature = "mssql")]
+            DatabaseType::MSSQL => {
+                let database = request.database.as_deref().unwrap_or("master");
+                MssqlDriver::test_connection(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await
+            }
+            #[cfg(not(feature = "mssql"))]
+            DatabaseType::MSSQL => {
+                Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string())
+            }
         }
     }
 

@@ -5,13 +5,25 @@
  * This is a version of CreateTableDialog without the dialog wrapper.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Plus, ChevronDown, ChevronUp, Save, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { useThemeStore, useConnectionStore } from '@/stores'
 import { dbExecuteSql } from '@/services/database'
 import type { DatabaseConnection } from '@/types'
+import {
+  getEngines,
+  getCharsets,
+  getIndexTypes,
+  getForeignKeyActions,
+  quoteIdentifier,
+  quoteTableName,
+  type DatabaseType,
+} from '@/config/dbDialects'
+import { getDataTypeNames } from '@/config/datatypes'
+// These utility functions are available for advanced features:
+// import { getTypesByCategory, isTypeSized, hasTypePrecision, canTypeAutoIncrement, isTypeSigned } from '@/config/datatypes'
 
 interface CreateTableInlineProps {
   connectionId: string
@@ -29,6 +41,7 @@ interface ColumnDef {
   nullable: boolean
   isPrimaryKey: boolean
   autoIncrement: boolean
+  unsigned: boolean  // MySQL/MariaDB UNSIGNED
   defaultValue: string
   comment: string
 }
@@ -65,18 +78,6 @@ interface TriggerDef {
   statement: string
 }
 
-const COLUMN_TYPES = [
-  'INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'MEDIUMINT',
-  'VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT',
-  'DATETIME', 'DATE', 'TIME', 'TIMESTAMP',
-  'DECIMAL', 'FLOAT', 'DOUBLE',
-  'BOOLEAN', 'JSON', 'BLOB',
-]
-
-const ENGINES = ['InnoDB', 'MyISAM', 'MEMORY', 'CSV', 'ARCHIVE']
-const CHARSETS = ['utf8mb4', 'utf8', 'latin1', 'gbk', 'gb2312']
-const FK_ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT']
-
 type TabType = 'columns' | 'indexes' | 'foreignKeys' | 'constraints' | 'triggers' | 'advanced'
 
 export function CreateTableInline({
@@ -91,22 +92,6 @@ export function CreateTableInline({
   const { connections } = useConnectionStore()
   const connection = connections.find((c) => c.id === connectionId) as DatabaseConnection | undefined
   const dbType = connection?.dbType || 'mysql'
-
-  // Quote identifier based on database type (MySQL uses backticks, PostgreSQL uses double quotes)
-  const q = useCallback((identifier: string) => {
-    if (dbType === 'postgresql') {
-      return `"${identifier}"`
-    }
-    return `\`${identifier}\``
-  }, [dbType])
-
-  // Quote table with schema/database prefix
-  const qTable = useCallback((db: string, table: string) => {
-    if (dbType === 'postgresql') {
-      return `"${db}"."${table}"`
-    }
-    return `\`${db}\`.\`${table}\``
-  }, [dbType])
 
   const [tableName, setTableName] = useState('')
   const [tableComment, setTableComment] = useState('')
@@ -136,18 +121,45 @@ export function CreateTableInline({
     setError(null)
   }, [database])
 
-  const createEmptyColumn = (): ColumnDef => ({
+  // Get dynamic configuration based on database type
+  const columnTypes = useMemo(() => getDataTypeNames(dbType as DatabaseType), [dbType])
+  const engines = useMemo(() => getEngines(dbType as DatabaseType), [dbType])
+  const charsets = useMemo(() => getCharsets(dbType as DatabaseType), [dbType])
+  const indexTypes = useMemo(() => getIndexTypes(dbType as DatabaseType), [dbType])
+  const fkActions = useMemo(() => getForeignKeyActions(dbType as DatabaseType), [dbType])
+
+  // Oracle doesn't support ON UPDATE for foreign keys
+  const isOracle = dbType === 'oracle'
+  const supportsOnUpdate = !isOracle
+
+  // Use dialect's quote functions
+  const q = useCallback((identifier: string) => {
+    return quoteIdentifier(dbType as DatabaseType, identifier)
+  }, [dbType])
+
+  const qTable = useCallback((db: string, table: string) => {
+    return quoteTableName(dbType as DatabaseType, db, table)
+  }, [dbType])
+
+  // Default column type based on database
+  const defaultColumnType = useMemo(() => {
+    if (dbType === 'postgresql') return 'VARCHAR'
+    return 'VARCHAR'
+  }, [dbType])
+
+  const createEmptyColumn = useCallback((): ColumnDef => ({
     id: crypto.randomUUID(),
     name: '',
-    type: 'VARCHAR',
+    type: defaultColumnType,
     length: '255',
     scale: '',
     nullable: true,
     isPrimaryKey: false,
     autoIncrement: false,
+    unsigned: false,
     defaultValue: '',
     comment: '',
-  })
+  }), [defaultColumnType])
 
   const updateColumn = (id: string, updates: Partial<ColumnDef>) => {
     setColumns((cols) => cols.map((c) => (c.id === id ? { ...c, ...updates } : c)))
@@ -250,22 +262,24 @@ export function CreateTableInline({
 
     const defs: string[] = []
     const isPostgres = dbType === 'postgresql'
+    const isMySQLLike = dbType === 'mysql' || dbType === 'mariadb'
 
     validColumns.forEach((col) => {
       let def = `  ${q(col.name)} ${col.type}`
-      if (['VARCHAR', 'CHAR', 'VARBINARY', 'BINARY'].includes(col.type) && col.length) {
+      if (['VARCHAR', 'CHAR', 'VARBINARY', 'BINARY', 'VARCHAR2', 'NVARCHAR2', 'RAW'].includes(col.type) && col.length) {
         def += `(${col.length})`
-      } else if (['DECIMAL', 'NUMERIC'].includes(col.type) && col.length) {
+      } else if (['DECIMAL', 'NUMERIC', 'NUMBER'].includes(col.type) && col.length) {
         def += col.scale ? `(${col.length},${col.scale})` : `(${col.length})`
       }
       if (!col.nullable) def += ' NOT NULL'
       if (col.autoIncrement) {
-        // PostgreSQL uses SERIAL/BIGSERIAL, MySQL uses AUTO_INCREMENT
-        if (!isPostgres) def += ' AUTO_INCREMENT'
+        // PostgreSQL uses SERIAL/BIGSERIAL, MySQL uses AUTO_INCREMENT, Oracle uses GENERATED AS IDENTITY
+        if (isOracle) def += ' GENERATED ALWAYS AS IDENTITY'
+        else if (!isPostgres) def += ' AUTO_INCREMENT'
       }
       if (col.defaultValue) def += ` DEFAULT ${col.defaultValue}`
-      // COMMENT syntax is MySQL-specific
-      if (col.comment && !isPostgres) def += ` COMMENT '${col.comment.replace(/'/g, "''")}'`
+      // COMMENT syntax is MySQL/MariaDB-specific (inline)
+      if (col.comment && isMySQLLike) def += ` COMMENT '${col.comment.replace(/'/g, "''")}'`
       defs.push(def)
     })
 
@@ -273,16 +287,18 @@ export function CreateTableInline({
     if (pkCols.length > 0) defs.push(`  PRIMARY KEY (${pkCols.join(', ')})`)
 
     indexes.filter((i) => i.columns.length > 0).forEach((idx) => {
-      const indexType = idx.unique ? 'UNIQUE KEY' : 'KEY'
       const colList = idx.columns.map((c) => q(c)).join(', ')
-      // MySQL inline index syntax
-      if (!isPostgres) {
+      // MySQL inline index syntax (Oracle and PostgreSQL use separate CREATE INDEX)
+      if (isMySQLLike) {
+        const indexType = idx.unique ? 'UNIQUE KEY' : 'KEY'
         defs.push(`  ${indexType} ${q(idx.name)} (${colList}) USING ${idx.indexType}`)
       }
     })
 
     foreignKeys.filter((f) => f.column && f.refTable && f.refColumn).forEach((fk) => {
-      defs.push(`  CONSTRAINT ${q(fk.name)} FOREIGN KEY (${q(fk.column)}) REFERENCES ${q(fk.refTable)}(${q(fk.refColumn)}) ON DELETE ${fk.onDelete} ON UPDATE ${fk.onUpdate}`)
+      // Oracle doesn't support ON UPDATE
+      const onUpdate = isOracle ? '' : ` ON UPDATE ${fk.onUpdate}`
+      defs.push(`  CONSTRAINT ${q(fk.name)} FOREIGN KEY (${q(fk.column)}) REFERENCES ${q(fk.refTable)}(${q(fk.refColumn)}) ON DELETE ${fk.onDelete}${onUpdate}`)
     })
 
     checkConstraints.filter((c) => c.expression).forEach((chk) => {
@@ -290,19 +306,24 @@ export function CreateTableInline({
     })
 
     let sql = `CREATE TABLE ${qTable(database, tableName)} (\n${defs.join(',\n')}\n)`
-    // Engine and charset are MySQL-specific
-    if (!isPostgres) {
+    // Engine and charset are MySQL/MariaDB-specific
+    if (isMySQLLike) {
       sql += ` ENGINE=${engine} DEFAULT CHARSET=${charset}`
       if (tableComment) sql += ` COMMENT='${tableComment.replace(/'/g, "''")}'`
     }
     sql += ';'
 
-    // PostgreSQL index creation is separate
-    if (isPostgres) {
+    // PostgreSQL and Oracle index creation is separate
+    if (isPostgres || isOracle) {
       indexes.filter((i) => i.columns.length > 0).forEach((idx) => {
         const uniqueStr = idx.unique ? 'UNIQUE ' : ''
         const colList = idx.columns.map((c) => q(c)).join(', ')
-        sql += `\n\nCREATE ${uniqueStr}INDEX ${q(idx.name)} ON ${qTable(database, tableName)} USING ${idx.indexType} (${colList});`
+        if (isOracle) {
+          // Oracle doesn't support USING for index type in CREATE INDEX
+          sql += `\n\nCREATE ${uniqueStr}INDEX ${q(idx.name)} ON ${qTable(database, tableName)} (${colList});`
+        } else {
+          sql += `\n\nCREATE ${uniqueStr}INDEX ${q(idx.name)} ON ${qTable(database, tableName)} USING ${idx.indexType} (${colList});`
+        }
       })
     }
 
@@ -310,6 +331,9 @@ export function CreateTableInline({
       if (isPostgres) {
         // PostgreSQL trigger syntax is different
         sql += `\n\nCREATE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(database, tableName)} FOR EACH ROW EXECUTE FUNCTION ${trg.statement}`
+      } else if (isOracle) {
+        // Oracle trigger syntax
+        sql += `\n\nCREATE OR REPLACE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(database, tableName)} FOR EACH ROW\n${trg.statement}`
       } else {
         sql += `\n\nCREATE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(database, tableName)} FOR EACH ROW ${trg.statement}`
       }
@@ -467,7 +491,7 @@ export function CreateTableInline({
                       onChange={(e) => updateColumn(col.id, { type: e.target.value })}
                       className={cn(inputClass, 'w-full')}
                     >
-                      {COLUMN_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      {columnTypes.map((typeName) => <option key={typeName} value={typeName}>{typeName}</option>)}
                     </select>
                   </td>
                   <td className="px-2 py-1">
@@ -573,8 +597,7 @@ export function CreateTableInline({
                       onChange={(e) => updateIndex(idx.id, { indexType: e.target.value })}
                       className={cn(inputClass, 'w-full')}
                     >
-                      <option value="BTREE">BTREE</option>
-                      <option value="HASH">HASH</option>
+                      {indexTypes.map((idxType) => <option key={idxType} value={idxType}>{idxType}</option>)}
                     </select>
                   </td>
                   <td className="px-2 py-1">
@@ -627,7 +650,9 @@ export function CreateTableInline({
                 <th className={cn('px-2 py-2 text-left font-medium', textSecondary)}>{t('database.refTable')}</th>
                 <th className={cn('px-2 py-2 text-left font-medium', textSecondary)}>{t('database.refColumn')}</th>
                 <th className={cn('px-2 py-2 text-left font-medium w-28', textSecondary)}>{t('database.onDelete')}</th>
-                <th className={cn('px-2 py-2 text-left font-medium w-28', textSecondary)}>{t('database.onUpdate')}</th>
+                {supportsOnUpdate && (
+                  <th className={cn('px-2 py-2 text-left font-medium w-28', textSecondary)}>{t('database.onUpdate')}</th>
+                )}
                 <th className="w-10"></th>
               </tr>
             </thead>
@@ -676,18 +701,20 @@ export function CreateTableInline({
                       onChange={(e) => updateForeignKey(fk.id, { onDelete: e.target.value })}
                       className={cn(inputClass, 'w-full')}
                     >
-                      {FK_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                      {fkActions.map((action) => <option key={action} value={action}>{action}</option>)}
                     </select>
                   </td>
-                  <td className="px-2 py-1">
-                    <select
-                      value={fk.onUpdate}
-                      onChange={(e) => updateForeignKey(fk.id, { onUpdate: e.target.value })}
-                      className={cn(inputClass, 'w-full')}
-                    >
-                      {FK_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
-                    </select>
-                  </td>
+                  {supportsOnUpdate && (
+                    <td className="px-2 py-1">
+                      <select
+                        value={fk.onUpdate}
+                        onChange={(e) => updateForeignKey(fk.id, { onUpdate: e.target.value })}
+                        className={cn(inputClass, 'w-full')}
+                      >
+                        {fkActions.map((action) => <option key={action} value={action}>{action}</option>)}
+                      </select>
+                    </td>
+                  )}
                   <td className="px-2 py-1">
                     <button onClick={() => removeForeignKey(fk.id)} className="p-1 text-status-error hover:bg-status-error/10 rounded">
                       <Trash2 className="w-4 h-4" />
@@ -696,7 +723,7 @@ export function CreateTableInline({
                 </tr>
               ))}
               {foreignKeys.length === 0 && (
-                <tr><td colSpan={7} className={cn('px-4 py-8 text-center', textSecondary)}>{t('database.noForeignKeys')}</td></tr>
+                <tr><td colSpan={supportsOnUpdate ? 7 : 6} className={cn('px-4 py-8 text-center', textSecondary)}>{t('database.noForeignKeys')}</td></tr>
               )}
             </tbody>
           </table>
@@ -807,18 +834,30 @@ export function CreateTableInline({
         {activeTab === 'advanced' && (
           <div className="p-4">
             <div className="grid grid-cols-3 gap-4 max-w-2xl">
-              <div>
-                <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.engine')}</label>
-                <select className={cn(inputClass, 'w-full')} value={engine} onChange={(e) => setEngine(e.target.value)}>
-                  {ENGINES.map((e) => <option key={e} value={e}>{e}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.charset')}</label>
-                <select className={cn(inputClass, 'w-full')} value={charset} onChange={(e) => setCharset(e.target.value)}>
-                  {CHARSETS.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
+              {/* Engine selector - MySQL/MariaDB only */}
+              {engines.length > 0 && (
+                <div>
+                  <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.engine')}</label>
+                  <select className={cn(inputClass, 'w-full')} value={engine} onChange={(e) => setEngine(e.target.value)}>
+                    {engines.map((eng) => <option key={eng} value={eng}>{eng}</option>)}
+                  </select>
+                </div>
+              )}
+              {/* Charset selector - MySQL/MariaDB only */}
+              {charsets.length > 0 && (
+                <div>
+                  <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.charset')}</label>
+                  <select className={cn(inputClass, 'w-full')} value={charset} onChange={(e) => setCharset(e.target.value)}>
+                    {charsets.map((cs) => <option key={cs} value={cs}>{cs}</option>)}
+                  </select>
+                </div>
+              )}
+              {/* Show message if no advanced options available */}
+              {engines.length === 0 && charsets.length === 0 && (
+                <div className={cn('col-span-3 text-center py-4', textSecondary)}>
+                  {t('database.noAdvancedOptions', { defaultValue: 'No advanced options available for this database type' })}
+                </div>
+              )}
             </div>
           </div>
         )}

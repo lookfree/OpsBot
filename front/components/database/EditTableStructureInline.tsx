@@ -5,7 +5,7 @@
  * This is a version of EditTableStructureDialog without the dialog wrapper.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Plus, ChevronDown, ChevronUp, Loader2, Save, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
@@ -13,6 +13,14 @@ import { useThemeStore, useConnectionStore } from '@/stores'
 import { dbGetTableStructureExt, dbExecuteSql } from '@/services/database'
 import type { DatabaseConnection } from '@/types'
 import type { ColumnDetail, IndexInfo, ForeignKeyInfo, CheckConstraintInfo, TriggerInfo, TableOptions } from '@/services/database'
+import {
+  getIndexTypes,
+  getForeignKeyActions,
+  quoteIdentifier,
+  quoteTableName,
+  type DatabaseType,
+} from '@/config/dbDialects'
+import { getDataTypeNames } from '@/config/datatypes'
 
 interface EditTableStructureInlineProps {
   connectionId: string
@@ -82,12 +90,6 @@ interface TriggerDef {
   isDeleted: boolean
 }
 
-const COLUMN_TYPES = [
-  'INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'VARCHAR', 'CHAR', 'TEXT',
-  'DATETIME', 'DATE', 'TIMESTAMP', 'DECIMAL', 'FLOAT', 'DOUBLE', 'BOOLEAN', 'JSON', 'BLOB',
-]
-const FK_ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT']
-
 type TabType = 'columns' | 'indexes' | 'foreignKeys' | 'constraints' | 'triggers' | 'advanced'
 
 export function EditTableStructureInline({
@@ -100,20 +102,19 @@ export function EditTableStructureInline({
   const connection = connections.find((c) => c.id === connectionId) as DatabaseConnection | undefined
   const dbType = connection?.dbType || 'mysql'
 
-  // Quote identifier based on database type (MySQL uses backticks, PostgreSQL uses double quotes)
+  // Get dynamic configuration based on database type
+  const columnTypes = useMemo(() => getDataTypeNames(dbType as DatabaseType), [dbType])
+  const indexTypes = useMemo(() => getIndexTypes(dbType as DatabaseType), [dbType])
+  const fkActions = useMemo(() => getForeignKeyActions(dbType as DatabaseType), [dbType])
+  const supportsOnUpdate = dbType !== 'oracle' // Oracle doesn't support ON UPDATE
+
+  // Use dialect's quote functions
   const q = useCallback((identifier: string) => {
-    if (dbType === 'postgresql') {
-      return `"${identifier}"`
-    }
-    return `\`${identifier}\``
+    return quoteIdentifier(dbType as DatabaseType, identifier)
   }, [dbType])
 
-  // Quote table with schema/database prefix
   const qTable = useCallback((db: string, table: string) => {
-    if (dbType === 'postgresql') {
-      return `"${db}"."${table}"`
-    }
-    return `\`${db}\`.\`${table}\``
+    return quoteTableName(dbType as DatabaseType, db, table)
   }, [dbType])
 
   const [activeTab, setActiveTab] = useState<TabType>('columns')
@@ -277,6 +278,7 @@ export function EditTableStructureInline({
     const stmts: string[] = []
     const tbl = qTable(database, tableName)
     const isPg = dbType === 'postgresql'
+    const isOracle = dbType === 'oracle'
 
     // Drop indexes first
     indexes.filter(i => i.isDeleted && !i.isNew && i.originalName !== 'PRIMARY').forEach(i => {
@@ -349,8 +351,11 @@ export function EditTableStructureInline({
     })
 
     // Add foreign keys
-    foreignKeys.filter(f => f.isNew && !f.isDeleted && f.column && f.refTable && f.refColumn).forEach(f =>
-      stmts.push(`ALTER TABLE ${tbl} ADD CONSTRAINT ${q(f.name)} FOREIGN KEY (${q(f.column)}) REFERENCES ${q(f.refTable)}(${q(f.refColumn)}) ON DELETE ${f.onDelete} ON UPDATE ${f.onUpdate};`))
+    foreignKeys.filter(f => f.isNew && !f.isDeleted && f.column && f.refTable && f.refColumn).forEach(f => {
+      // Oracle doesn't support ON UPDATE
+      const onUpdate = isOracle ? '' : ` ON UPDATE ${f.onUpdate}`
+      stmts.push(`ALTER TABLE ${tbl} ADD CONSTRAINT ${q(f.name)} FOREIGN KEY (${q(f.column)}) REFERENCES ${q(f.refTable)}(${q(f.refColumn)}) ON DELETE ${f.onDelete}${onUpdate};`)
+    })
 
     // Drop check constraints
     checkConstraints.filter(c => c.isDeleted && !c.isNew).forEach(c =>
@@ -499,7 +504,7 @@ export function EditTableStructureInline({
                       <td className="px-2 py-1">
                         <select value={col.type} onChange={(e) => updateColumn(col.id, { type: e.target.value })}
                           disabled={col.isDeleted || !col.isNew} className={cn(inputClass, 'w-full')}>
-                          {COLUMN_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                          {columnTypes.map((typeName) => <option key={typeName} value={typeName}>{typeName}</option>)}
                         </select>
                       </td>
                       <td className="px-2 py-1">
@@ -565,8 +570,7 @@ export function EditTableStructureInline({
                       <td className="px-2 py-1">
                         <select value={idx.indexType} onChange={(e) => updateIndex(idx.id, { indexType: e.target.value })}
                           disabled={!idx.isNew} className={cn(inputClass, 'w-full')}>
-                          <option value="BTREE">BTREE</option>
-                          <option value="HASH">HASH</option>
+                          {indexTypes.map((idxType) => <option key={idxType} value={idxType}>{idxType}</option>)}
                         </select>
                       </td>
                       <td className="px-2 py-1">
@@ -609,7 +613,9 @@ export function EditTableStructureInline({
                     <th className={cn('px-2 py-2 text-left font-medium', textSecondary)}>{t('database.refTable')}</th>
                     <th className={cn('px-2 py-2 text-left font-medium', textSecondary)}>{t('database.refColumn')}</th>
                     <th className={cn('px-2 py-2 text-left font-medium w-28', textSecondary)}>{t('database.onDelete')}</th>
-                    <th className={cn('px-2 py-2 text-left font-medium w-28', textSecondary)}>{t('database.onUpdate')}</th>
+                    {supportsOnUpdate && (
+                      <th className={cn('px-2 py-2 text-left font-medium w-28', textSecondary)}>{t('database.onUpdate')}</th>
+                    )}
                     <th className="w-10"></th>
                   </tr>
                 </thead>
@@ -638,15 +644,17 @@ export function EditTableStructureInline({
                       <td className="px-2 py-1">
                         <select value={fk.onDelete} onChange={(e) => updateForeignKey(fk.id, { onDelete: e.target.value })}
                           disabled={!fk.isNew} className={cn(inputClass, 'w-full')}>
-                          {FK_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                          {fkActions.map((action) => <option key={action} value={action}>{action}</option>)}
                         </select>
                       </td>
-                      <td className="px-2 py-1">
-                        <select value={fk.onUpdate} onChange={(e) => updateForeignKey(fk.id, { onUpdate: e.target.value })}
-                          disabled={!fk.isNew} className={cn(inputClass, 'w-full')}>
-                          {FK_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </td>
+                      {supportsOnUpdate && (
+                        <td className="px-2 py-1">
+                          <select value={fk.onUpdate} onChange={(e) => updateForeignKey(fk.id, { onUpdate: e.target.value })}
+                            disabled={!fk.isNew} className={cn(inputClass, 'w-full')}>
+                            {fkActions.map((action) => <option key={action} value={action}>{action}</option>)}
+                          </select>
+                        </td>
+                      )}
                       <td className="px-2 py-1">
                         <button onClick={() => removeForeignKey(fk.id)} className="p-1 text-status-error hover:bg-status-error/10 rounded">
                           <Trash2 className="w-4 h-4" />
@@ -655,7 +663,7 @@ export function EditTableStructureInline({
                     </tr>
                   ))}
                   {foreignKeys.filter(f => !(f.isNew && f.isDeleted)).length === 0 && (
-                    <tr><td colSpan={7} className={cn('px-4 py-8 text-center', textSecondary)}>{t('database.noForeignKeys')}</td></tr>
+                    <tr><td colSpan={supportsOnUpdate ? 7 : 6} className={cn('px-4 py-8 text-center', textSecondary)}>{t('database.noForeignKeys')}</td></tr>
                   )}
                 </tbody>
               </table>

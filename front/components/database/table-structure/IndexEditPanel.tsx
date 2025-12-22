@@ -3,8 +3,10 @@
  * Right panel for editing index details in the table structure dialog.
  */
 
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { getIndexTypes, type DatabaseType } from '@/config/dbDialects'
 
 export interface IndexEdit {
   id: string
@@ -23,10 +25,14 @@ interface IndexEditPanelProps {
   availableColumns: string[]
   onUpdate: (id: string, updates: Partial<IndexEdit>) => void
   isDark: boolean
+  dbType?: DatabaseType
 }
 
-export function IndexEditPanel({ index, availableColumns, onUpdate, isDark }: IndexEditPanelProps) {
+export function IndexEditPanel({ index, availableColumns, onUpdate, isDark, dbType = 'mysql' }: IndexEditPanelProps) {
   const { t } = useTranslation()
+
+  // Get dynamic configuration based on database type
+  const indexTypes = useMemo(() => getIndexTypes(dbType), [dbType])
 
   const textSecondary = isDark ? 'text-dark-text-secondary' : 'text-light-text-secondary'
   const textPrimary = isDark ? 'text-dark-text-primary' : 'text-light-text-primary'
@@ -72,8 +78,7 @@ export function IndexEditPanel({ index, availableColumns, onUpdate, isDark }: In
           disabled={!index.isNew}
           className={cn(inputClass, 'w-full')}
         >
-          <option value="BTREE">BTREE</option>
-          <option value="HASH">HASH</option>
+          {indexTypes.map((idxType) => <option key={idxType} value={idxType}>{idxType}</option>)}
         </select>
       </div>
 

@@ -14,6 +14,7 @@ import {
   Settings2,
   FolderOpen,
   Plus,
+  Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTabStore } from '@/stores'
@@ -26,6 +27,7 @@ const tabIcons: Record<TabType, React.ComponentType<{ className?: string }>> = {
   database: Database,
   docker: Container,
   middleware: Settings2,
+  erDesigner: Workflow,
 }
 
 // 状态颜色

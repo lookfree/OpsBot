@@ -35,6 +35,7 @@ import {
   FileCode,
   Pencil,
   Edit3,
+  Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getDatabaseIcon } from '@/components/icons/DatabaseIcons'
@@ -608,8 +609,12 @@ function TreeNodeItem({
         // PostgreSQL uses schema.table format
         const schema = schemaName || 'public'
         query = `SELECT * FROM "${schema}"."${tableName}" LIMIT 100;`
+      } else if (conn.dbType === 'oracle') {
+        // Oracle uses schema.table format with double quotes and FETCH FIRST
+        const schema = schemaName || dbName
+        query = `SELECT * FROM "${schema}"."${tableName}" FETCH FIRST 100 ROWS ONLY`
       } else {
-        // MySQL uses database.table format
+        // MySQL/MariaDB uses database.table format with backticks
         query = `SELECT * FROM \`${dbName}\`.\`${tableName}\` LIMIT 100;`
       }
     }
@@ -704,6 +709,16 @@ function TreeNodeItem({
     const location = schemaName || dbName
     const tab = createTabFromConnection(conn.id, `${t('database.editTableStructure')} - ${tableName} [${location}]`, ModuleType.Database, 'database', 'connected')
     tab.data = { ...tab.data, editStructure: true, database: dbName, tableName, schemaName }
+    addTab(tab)
+  }
+
+  // Open ER Diagram Designer - open tab with erDesigner flag
+  const handleOpenERDesigner = (dbName: string, schemaName?: string) => {
+    if (!node.data) return
+    const conn = node.data as DatabaseConnection
+    const location = schemaName || dbName
+    const tab = createTabFromConnection(conn.id, `${t('database.erDesigner.title')} [${location}]`, ModuleType.Database, 'database', 'connected')
+    tab.data = { ...tab.data, erDesigner: true, database: dbName, schemaName }
     addTab(tab)
   }
 
@@ -868,6 +883,87 @@ function TreeNodeItem({
                 >
                   <Plus className="w-4 h-4" />
                   {t('database.createTable')}
+                </ContextMenu.Item>
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          </ContextMenu.Root>
+          {isExpanded && dbNode.children && dbNode.children.map((child) => renderDbTreeNode(child, depth + 1))}
+        </div>
+      )
+    }
+
+    // Database node with context menu
+    if (dbNode.type === 'database') {
+      const parts = dbNode.id.split(':')
+      const dbName = parts[2] // db:connId:dbName
+      return (
+        <div key={dbNode.id}>
+          <ContextMenu.Root>
+            <ContextMenu.Trigger asChild>{nodeContent}</ContextMenu.Trigger>
+            <ContextMenu.Portal>
+              <ContextMenu.Content className="context-menu min-w-[180px] rounded-md shadow-lg py-1 z-50">
+                <ContextMenu.Item
+                  className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                  onSelect={() => handleOpenTableQuery(dbName, '')}
+                >
+                  <FileText className="w-4 h-4" />
+                  {t('database.newQuery')}
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                  onSelect={() => handleCreateTable(dbName)}
+                >
+                  <Plus className="w-4 h-4" />
+                  {t('database.createTable')}
+                </ContextMenu.Item>
+                <ContextMenu.Separator className="context-menu-separator h-px my-1" />
+                <ContextMenu.Item
+                  className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                  onSelect={() => handleOpenERDesigner(dbName)}
+                >
+                  <Workflow className="w-4 h-4" />
+                  {t('database.erDesigner.title')}
+                </ContextMenu.Item>
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          </ContextMenu.Root>
+          {isExpanded && dbNode.children && dbNode.children.map((child) => renderDbTreeNode(child, depth + 1))}
+        </div>
+      )
+    }
+
+    // Schema node with context menu (PostgreSQL)
+    if (dbNode.type === 'schema') {
+      const parts = dbNode.id.split(':')
+      const dbName = parts[2] // schema:connId:dbName:schemaName
+      const schemaName = parts[3]
+      return (
+        <div key={dbNode.id}>
+          <ContextMenu.Root>
+            <ContextMenu.Trigger asChild>{nodeContent}</ContextMenu.Trigger>
+            <ContextMenu.Portal>
+              <ContextMenu.Content className="context-menu min-w-[180px] rounded-md shadow-lg py-1 z-50">
+                <ContextMenu.Item
+                  className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                  onSelect={() => handleOpenTableQuery(dbName, '', schemaName)}
+                >
+                  <FileText className="w-4 h-4" />
+                  {t('database.newQuery')}
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                  onSelect={() => handleCreateTable(dbName, schemaName)}
+                >
+                  <Plus className="w-4 h-4" />
+                  {t('database.createTable')}
+                </ContextMenu.Item>
+                <ContextMenu.Separator className="context-menu-separator h-px my-1" />
+                <ContextMenu.Item
+                  className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                  onSelect={() => handleOpenERDesigner(dbName, schemaName)}
+                >
+                  <Workflow className="w-4 h-4" />
+                  {t('database.erDesigner.title')}
                 </ContextMenu.Item>
               </ContextMenu.Content>
             </ContextMenu.Portal>

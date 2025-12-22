@@ -11,6 +11,7 @@ import { Server, Database, Container, Settings2, AlertTriangle, Table2, Layers }
 import { getDatabaseIcon } from '@/components/icons/DatabaseIcons'
 import { TerminalContainer } from '@/components/terminal'
 import { DatabaseContainer } from '@/components/database'
+import { ERDiagramDesigner } from '@/components/database/designer'
 import { SshConnectionDialog } from '@/components/ssh'
 import { sshConnect } from '@/services'
 import type { Tab, SSHConnection, DatabaseConnection } from '@/types'
@@ -277,6 +278,7 @@ function TabContent({
     if (sessionId && tab.status === 'connected') {
       return (
         <TerminalContainer
+          key={tab.id}
           sessionId={sessionId}
           className="h-full"
           onDisconnected={onDisconnected}
@@ -322,6 +324,16 @@ function TabContent({
       <DatabaseContainer
         key={tab.id}
         connectionId={tab.connectionId}
+        className="h-full"
+      />
+    )
+  }
+
+  // ER Diagram Designer tab - standalone mode (no database connection required)
+  if (tab.type === 'erDesigner') {
+    return (
+      <ERDiagramDesigner
+        key={tab.id}
         className="h-full"
       />
     )
