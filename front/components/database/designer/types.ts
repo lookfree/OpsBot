@@ -12,6 +12,9 @@ export type DatabaseDialect =
   | 'sqlite'
   | 'mssql'
   | 'oracle'
+  | 'kingbase'
+  | 'dm'
+  | 'clickhouse'
 
 // 外键约束动作
 export type ConstraintAction =

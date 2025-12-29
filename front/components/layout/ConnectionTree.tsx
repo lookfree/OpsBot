@@ -36,9 +36,11 @@ import {
   Pencil,
   Edit3,
   Workflow,
+  Zap,
+  Globe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getDatabaseIcon } from '@/components/icons/DatabaseIcons'
+import { getDatabaseIcon, KafkaIcon, DockerIcon, RedisIcon } from '@/components/icons/DatabaseIcons'
 import { useConnectionStore, useTabStore, createTabFromConnection, MAX_FOLDER_DEPTH } from '@/stores'
 import { sshDisconnect } from '@/services'
 import { dbConnect, dbDisconnect, dbGetDatabases, dbGetSchemas, dbGetObjectsCount, dbGetTables, dbGetViews, dbGetRoutines, dbGetTableDdl, dbDropTable, dbRenameTable } from '@/services/database'
@@ -63,6 +65,7 @@ interface DbTreeNode {
   loading?: boolean
   dbName?: string  // For schema/category nodes to track parent database
   schemaName?: string  // For category nodes in PostgreSQL
+  engine?: string  // For ClickHouse tables to distinguish local vs distributed
 }
 
 // 状态颜色
@@ -186,15 +189,21 @@ export function ConnectionTree({
                 tabType = 'middleware'
               }
 
-              addTab(
-                createTabFromConnection(
-                  connection.id,
-                  connection.name,
-                  moduleType,
-                  tabType,
-                  'connecting'
-                )
+              const tab = createTabFromConnection(
+                connection.id,
+                connection.name,
+                moduleType,
+                tabType,
+                'connecting'
               )
+
+              // Add middlewareType to tab data for middleware connections
+              if (moduleType === ModuleType.Middleware) {
+                const mwConn = connection as MiddlewareConnection
+                tab.data = { ...tab.data, middlewareType: mwConn.middlewareType }
+              }
+
+              addTab(tab)
             }
           }}
           onDisconnect={async () => {
@@ -366,6 +375,20 @@ function TreeNodeItem({
         return getDatabaseIcon(dbConnection.dbType)
       }
     }
+    // For Docker connections, use official Docker icon
+    if (moduleType === ModuleType.Docker) {
+      return DockerIcon
+    }
+    // For Middleware connections, use specific icon based on type
+    if (moduleType === ModuleType.Middleware && node.data) {
+      const mwConnection = node.data as MiddlewareConnection
+      if (mwConnection.middlewareType === 'kafka') {
+        return KafkaIcon
+      }
+      if (mwConnection.middlewareType === 'redis') {
+        return RedisIcon
+      }
+    }
     return connectionIcons[moduleType]
   }
   const Icon = getNodeIcon()
@@ -453,7 +476,7 @@ function TreeNodeItem({
     if (!node.data) return
     const conn = node.data as DatabaseConnection
     const nodeId = dbNode.id
-    const isPostgres = conn.dbType === 'postgresql'
+    const hasSchemaSupport = conn.dbType === 'postgresql' || conn.dbType === 'kingbase'
 
     if (expandedDbNodes.has(nodeId)) {
       // Collapse
@@ -475,11 +498,11 @@ function TreeNodeItem({
 
       setLoadingDbNodes((prev) => new Set(prev).add(nodeId))
       try {
-        if (isPostgres) {
-          // PostgreSQL: reconnect to this database first, then load schemas
+        if (hasSchemaSupport) {
+          // PostgreSQL/KingBase: reconnect to this database first, then load schemas
           await dbConnect({
             connectionId: conn.id,
-            dbType: 'postgresql',
+            dbType: conn.dbType,
             host: conn.host,
             port: conn.port,
             username: conn.username,
@@ -498,13 +521,17 @@ function TreeNodeItem({
           }))
           setDbTree((prev) => updateTreeNode(prev, nodeId, { children: schemaNodes }))
         } else {
-          // MySQL: load categories directly under database
+          // MySQL/ClickHouse: load categories directly under database
           const counts = await dbGetObjectsCount(conn.id, dbNode.name)
+          const isClickHouse = conn.dbType === 'clickhouse'
           const categories: DbTreeNode[] = [
             { id: `cat:${conn.id}:${dbNode.name}::tables`, name: t('database.tables'), type: 'category', count: counts.tables, dbName: dbNode.name, children: [] },
             { id: `cat:${conn.id}:${dbNode.name}::views`, name: t('database.views'), type: 'category', count: counts.views, dbName: dbNode.name, children: [] },
-            { id: `cat:${conn.id}:${dbNode.name}::functions`, name: t('database.functions'), type: 'category', count: counts.functions, dbName: dbNode.name, children: [] },
-            { id: `cat:${conn.id}:${dbNode.name}::procedures`, name: t('database.procedures'), type: 'category', count: counts.procedures, dbName: dbNode.name, children: [] },
+            // ClickHouse doesn't support stored routines (functions/procedures)
+            ...(!isClickHouse ? [
+              { id: `cat:${conn.id}:${dbNode.name}::functions`, name: t('database.functions'), type: 'category' as const, count: counts.functions, dbName: dbNode.name, children: [] },
+              { id: `cat:${conn.id}:${dbNode.name}::procedures`, name: t('database.procedures'), type: 'category' as const, count: counts.procedures, dbName: dbNode.name, children: [] },
+            ] : []),
           ]
           setDbTree((prev) => updateTreeNode(prev, nodeId, { children: categories }))
         }
@@ -557,7 +584,7 @@ function TreeNodeItem({
         let items: DbTreeNode[] = []
         if (catType === 'tables') {
           const tables = await dbGetTables(conn.id, dbName, schemaName)
-          items = tables.map((t) => ({ id: `tbl:${conn.id}:${dbName}:${schemaName || ''}:${t.name}`, name: t.name, type: 'table' as const }))
+          items = tables.map((t) => ({ id: `tbl:${conn.id}:${dbName}:${schemaName || ''}:${t.name}`, name: t.name, type: 'table' as const, engine: t.tableType }))
         } else if (catType === 'views') {
           const views = await dbGetViews(conn.id, dbName, schemaName)
           items = views.map((v) => ({ id: `view:${conn.id}:${dbName}:${schemaName || ''}:${v.name}`, name: v.name, type: 'view' as const }))
@@ -605,8 +632,8 @@ function TreeNodeItem({
     // Generate SELECT query
     let query = ''
     if (tableName) {
-      if (conn.dbType === 'postgresql') {
-        // PostgreSQL uses schema.table format
+      if (conn.dbType === 'postgresql' || conn.dbType === 'kingbase') {
+        // PostgreSQL/KingBase uses schema.table format with double quotes
         const schema = schemaName || 'public'
         query = `SELECT * FROM "${schema}"."${tableName}" LIMIT 100;`
       } else if (conn.dbType === 'oracle') {
@@ -722,6 +749,24 @@ function TreeNodeItem({
     addTab(tab)
   }
 
+  // ClickHouse: Optimize Table - open query with OPTIMIZE TABLE command
+  const handleOptimizeTable = (dbName: string, tableName: string, schemaName?: string) => {
+    if (!node.data) return
+    const conn = node.data as DatabaseConnection
+    const location = schemaName || dbName
+    const sql = `OPTIMIZE TABLE \`${dbName}\`.\`${tableName}\` FINAL;`
+    const tab = createTabFromConnection(conn.id, `OPTIMIZE ${tableName} [${location}]`, ModuleType.Database, 'database', 'connected')
+    tab.data = { ...tab.data, initialSql: sql, database: dbName, schemaName }
+    addTab(tab)
+  }
+
+  // Get connection dbType for conditional menu rendering
+  const getConnectionDbType = (): string => {
+    if (!node.data) return 'mysql'
+    const conn = node.data as DatabaseConnection
+    return conn.dbType || 'mysql'
+  }
+
   // Render database tree node
   const renderDbTreeNode = (dbNode: DbTreeNode, depth: number) => {
     const isExpanded = expandedDbNodes.has(dbNode.id)
@@ -736,7 +781,10 @@ function TreeNodeItem({
           if (dbNode.id.includes(':tables')) return Table2
           if (dbNode.id.includes(':views')) return Eye
           return FunctionSquare
-        case 'table': return Table2
+        case 'table':
+          // ClickHouse: show Globe for Distributed tables
+          if (dbNode.engine === 'Distributed') return Globe
+          return Table2
         case 'view': return Eye
         default: return FunctionSquare
       }
@@ -747,7 +795,10 @@ function TreeNodeItem({
       switch (dbNode.type) {
         case 'database': return 'text-yellow-500'
         case 'schema': return 'text-orange-400'
-        case 'table': return 'text-blue-500'
+        case 'table':
+          // ClickHouse: green for Distributed tables
+          if (dbNode.engine === 'Distributed') return 'text-green-500'
+          return 'text-blue-500'
         case 'view': return 'text-cyan-500'
         default: return 'text-purple-500'
       }
@@ -784,6 +835,8 @@ function TreeNodeItem({
       const parts = dbNode.id.split(':')
       const dbName = parts[2]
       const schemaName = parts[3] || undefined
+      const currentDbType = getConnectionDbType()
+      const isClickHouse = currentDbType === 'clickhouse'
       return (
         <div key={dbNode.id}>
           <ContextMenu.Root>
@@ -812,6 +865,19 @@ function TreeNodeItem({
                   <FileCode className="w-4 h-4" />
                   {t('database.viewDDL')}
                 </ContextMenu.Item>
+                {/* ClickHouse: Optimize Table */}
+                {isClickHouse && (
+                  <>
+                    <ContextMenu.Separator className="context-menu-separator h-px my-1" />
+                    <ContextMenu.Item
+                      className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                      onSelect={() => handleOptimizeTable(dbName, dbNode.name, schemaName)}
+                    >
+                      <Zap className="w-4 h-4" />
+                      {t('database.optimizeTable', 'Optimize Table')}
+                    </ContextMenu.Item>
+                  </>
+                )}
                 <ContextMenu.Separator className="context-menu-separator h-px my-1" />
                 <ContextMenu.Item
                   className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"

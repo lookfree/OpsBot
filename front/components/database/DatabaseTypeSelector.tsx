@@ -46,11 +46,17 @@ export function DatabaseTypeSelector({ selectedType, onSelect }: DatabaseTypeSel
               selectedType === dbType.id && 'ring-2 ring-accent-primary'
             )}
           >
-            <div className="w-12 h-12 flex items-center justify-center mb-2">
+            <div className={cn(
+              "flex items-center justify-center mb-2",
+              dbType.id === 'kingbase' ? 'w-16 h-12' : 'w-12 h-12'
+            )}>
               <img
                 src={dbType.icon}
                 alt={dbType.name}
-                className="max-w-full max-h-full object-contain"
+                className={cn(
+                  "object-contain",
+                  dbType.id === 'kingbase' ? 'max-w-[64px] max-h-[48px]' : 'max-w-full max-h-full'
+                )}
                 onError={(e) => {
                   // 图标加载失败时显示默认图标
                   const target = e.target as HTMLImageElement

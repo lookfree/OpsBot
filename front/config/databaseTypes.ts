@@ -11,6 +11,8 @@ export interface DatabaseTypeConfig {
   defaultPort: number
   enabled: boolean
   category: 'relational' | 'nosql' | 'bigdata' | 'timeseries'
+  /** 是否为文件数据库（如 SQLite），不需要 host/port/username */
+  isFileDatabase?: boolean
 }
 
 // 数据库类型配置列表
@@ -61,6 +63,23 @@ export const DATABASE_TYPES: DatabaseTypeConfig[] = [
     name: 'SQLite',
     icon: '/assets/icons/sqlite-icon.svg',
     defaultPort: 0,
+    enabled: true,
+    category: 'relational',
+    isFileDatabase: true,
+  },
+  {
+    id: 'kingbase',
+    name: 'KingBase',
+    icon: '/assets/icons/kingbase-icon.png',
+    defaultPort: 54321,
+    enabled: true,
+    category: 'relational',
+  },
+  {
+    id: 'dm',
+    name: '达梦',
+    icon: '/assets/icons/dm-icon.svg',
+    defaultPort: 5236,
     enabled: false,
     category: 'relational',
   },
@@ -78,7 +97,7 @@ export const DATABASE_TYPES: DatabaseTypeConfig[] = [
     name: 'ClickHouse',
     icon: '/assets/icons/clickhouse-icon.svg',
     defaultPort: 8123,
-    enabled: false,
+    enabled: true,
     category: 'bigdata',
   },
   {

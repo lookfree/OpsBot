@@ -86,3 +86,19 @@ The project has an official resource site (`resources.zwd-opsbot.com`) maintaine
 每个函数不超过80行
 单个代码文件不超过800行，超过就要拆分
 使用策略模式解偶多数据库的实现，方便扩展和维护（前端和后端）
+
+## 调试说明
+- 本项目是 Tauri 桌面应用，调试时在桌面端进行，不要使用 Chrome MCP 工具
+- 运行 `npm run tauri dev` 启动开发服务器
+- 查看后端日志输出定位问题
+
+## 国际化 (i18n)
+- 翻译文件位于 `front/i18n/locales/` 目录
+- **重要**: i18n 使用 `.json` 文件，不是 `.ts` 文件！
+- 支持的语言: zh-CN.json, zh-TW.json, en-US.json, ja-JP.json
+- 添加新翻译时，需同时更新所有语言的 `.json` 文件
+- i18n 配置在 `front/i18n/index.ts` 中加载 JSON 文件
+
+## 文档管理
+- 设计文档位于 `spec/` 目录
+- 完成功能后更新对应 spec 文档的验收标准状态（将 `[ ]` 改为 `[x]`）

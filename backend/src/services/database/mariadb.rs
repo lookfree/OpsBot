@@ -72,6 +72,7 @@ impl MariaDBDriver {
 
         let pool = MySqlPoolOptions::new()
             .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(&url)
             .await
             .map_err(|e| format!("Connection test failed: {}", e))?;

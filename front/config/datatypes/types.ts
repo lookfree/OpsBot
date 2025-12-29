@@ -69,7 +69,7 @@ export type DataTypeMap = Record<string, DataTypeDefinition>
 /**
  * 支持的数据库类型
  */
-export type DatabaseType = 'mysql' | 'postgresql' | 'mariadb' | 'sqlite' | 'mssql' | 'oracle'
+export type DatabaseType = 'mysql' | 'postgresql' | 'mariadb' | 'sqlite' | 'mssql' | 'oracle' | 'kingbase' | 'dm' | 'clickhouse'
 
 /**
  * 类型分类

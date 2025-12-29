@@ -10,6 +10,8 @@ use crate::models::{
     TableStructure, TableStructureExt, TriggerInfo, ViewInfo,
 };
 use crate::services::DatabaseService;
+#[cfg(feature = "clickhouse")]
+use crate::services::database::ClusterInfo;
 
 /// State wrapper for database service
 pub struct DatabaseServiceState(pub Arc<DatabaseService>);
@@ -220,4 +222,14 @@ pub async fn db_get_table_structure_ext(
     table: String,
 ) -> Result<TableStructureExt, String> {
     state.0.get_table_structure_ext(&connection_id, &database, &table).await
+}
+
+/// Get ClickHouse clusters (ClickHouse only)
+#[cfg(feature = "clickhouse")]
+#[tauri::command]
+pub async fn db_get_clickhouse_clusters(
+    state: State<'_, DatabaseServiceState>,
+    connection_id: String,
+) -> Result<Vec<ClusterInfo>, String> {
+    state.0.get_clickhouse_clusters(&connection_id).await
 }

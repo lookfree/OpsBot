@@ -2,3 +2,6 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# Local cargo config (copy from config.toml.example)
+/.cargo/config.toml

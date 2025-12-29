@@ -24,6 +24,9 @@ const DATABASES: { value: DatabaseDialect; label: string }[] = [
   { value: 'oracle', label: 'Oracle' },
   { value: 'mssql', label: 'SQL Server' },
   { value: 'sqlite', label: 'SQLite' },
+  { value: 'kingbase', label: 'KingBase' },
+  { value: 'dm', label: '达梦' },
+  { value: 'clickhouse', label: 'ClickHouse' },
 ]
 
 export function ERDiagramToolbar({ onClose }: ERDiagramToolbarProps) {

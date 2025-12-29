@@ -1,8 +1,14 @@
 //! Database service module
 //!
 //! Provides database connection management using the strategy pattern.
-//! Supports MySQL, PostgreSQL, and MariaDB with easy extensibility for new databases.
+//! Supports MySQL, PostgreSQL, MariaDB, SQLite, Oracle, MSSQL, KingBase, DM and ClickHouse
+//! with easy extensibility for new databases.
 
+#[cfg(feature = "clickhouse")]
+mod clickhouse;
+#[cfg(feature = "dm")]
+mod dm;
+mod kingbase;
 mod mariadb;
 #[cfg(feature = "mssql")]
 mod mssql;
@@ -11,6 +17,7 @@ mod mysql;
 mod oracle;
 mod postgresql;
 mod session;
+mod sqlite;
 mod traits;
 
 pub use session::DatabaseSession;
@@ -27,6 +34,13 @@ use crate::models::{
     TableOptions, TableStructure, TableStructureExt, TriggerInfo, ViewInfo,
 };
 
+#[cfg(feature = "clickhouse")]
+pub use clickhouse::{ClusterInfo, ClusterNode};
+#[cfg(feature = "clickhouse")]
+use clickhouse::ClickHouseDriver;
+#[cfg(feature = "dm")]
+use dm::DmDriver;
+use kingbase::KingBaseDriver;
 use mariadb::MariaDBDriver;
 #[cfg(feature = "mssql")]
 use mssql::MssqlDriver;
@@ -34,6 +48,7 @@ use mysql::MySqlDriver;
 #[cfg(feature = "oracle")]
 use oracle::OracleDriver;
 use postgresql::PostgreSqlDriver;
+use sqlite::SqliteDriver;
 
 /// Database service managing all database connections
 pub struct DatabaseService {
@@ -92,7 +107,10 @@ impl DatabaseService {
                 (Arc::new(driver), None)
             }
             DatabaseType::SQLite => {
-                return Err("SQLite is not supported yet".to_string());
+                // For SQLite, the database field contains the file path
+                let file_path = request.database.as_deref().unwrap_or(":memory:");
+                let driver = SqliteDriver::connect(file_path).await?;
+                (Arc::new(driver), Some("main".to_string()))
             }
             #[cfg(feature = "oracle")]
             DatabaseType::Oracle => {
@@ -127,6 +145,52 @@ impl DatabaseService {
             #[cfg(not(feature = "mssql"))]
             DatabaseType::MSSQL => {
                 return Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string());
+            }
+            DatabaseType::KingBase => {
+                let database = request.database.as_deref().unwrap_or("TEST");
+                let driver = KingBaseDriver::connect(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await?;
+                (Arc::new(driver), Some("public".to_string()))
+            }
+            #[cfg(feature = "dm")]
+            DatabaseType::DM => {
+                let database = request.database.as_deref().unwrap_or("SYSDBA");
+                let driver = DmDriver::connect(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await?;
+                (Arc::new(driver), None)
+            }
+            #[cfg(not(feature = "dm"))]
+            DatabaseType::DM => {
+                return Err("DM Database support is not enabled. Rebuild with --features dm".to_string());
+            }
+            #[cfg(feature = "clickhouse")]
+            DatabaseType::ClickHouse => {
+                let database = request.database.as_deref().unwrap_or("default");
+                let driver = ClickHouseDriver::connect(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await?;
+                (Arc::new(driver), None)
+            }
+            #[cfg(not(feature = "clickhouse"))]
+            DatabaseType::ClickHouse => {
+                return Err("ClickHouse support is not enabled. Rebuild with --features clickhouse".to_string());
             }
         };
 
@@ -203,7 +267,10 @@ impl DatabaseService {
                 )
                 .await
             }
-            DatabaseType::SQLite => Err("SQLite is not supported yet".to_string()),
+            DatabaseType::SQLite => {
+                let file_path = request.database.as_deref().unwrap_or(":memory:");
+                SqliteDriver::test_connection(file_path).await
+            }
             #[cfg(feature = "oracle")]
             DatabaseType::Oracle => {
                 let service_name = request.database.as_deref().unwrap_or("ORCL");
@@ -235,6 +302,49 @@ impl DatabaseService {
             #[cfg(not(feature = "mssql"))]
             DatabaseType::MSSQL => {
                 Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string())
+            }
+            DatabaseType::KingBase => {
+                let database = request.database.as_deref().unwrap_or("TEST");
+                KingBaseDriver::test_connection(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await
+            }
+            #[cfg(feature = "dm")]
+            DatabaseType::DM => {
+                let database = request.database.as_deref().unwrap_or("SYSDBA");
+                DmDriver::test_connection(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await
+            }
+            #[cfg(not(feature = "dm"))]
+            DatabaseType::DM => {
+                Err("DM Database support is not enabled. Rebuild with --features dm".to_string())
+            }
+            #[cfg(feature = "clickhouse")]
+            DatabaseType::ClickHouse => {
+                let database = request.database.as_deref().unwrap_or("default");
+                ClickHouseDriver::test_connection(
+                    &request.host,
+                    request.port,
+                    &request.username,
+                    password,
+                    database,
+                )
+                .await
+            }
+            #[cfg(not(feature = "clickhouse"))]
+            DatabaseType::ClickHouse => {
+                Err("ClickHouse support is not enabled. Rebuild with --features clickhouse".to_string())
             }
         }
     }
@@ -431,6 +541,75 @@ impl DatabaseService {
             triggers,
             options,
         })
+    }
+
+    /// Get ClickHouse clusters (ClickHouse only)
+    #[cfg(feature = "clickhouse")]
+    pub async fn get_clickhouse_clusters(
+        &self,
+        connection_id: &str,
+    ) -> Result<Vec<clickhouse::ClusterInfo>, String> {
+        let session = self.get_session(connection_id)?;
+
+        // Check if this is a ClickHouse connection
+        if session.db_type != DatabaseType::ClickHouse {
+            return Err("This operation is only available for ClickHouse connections".to_string());
+        }
+
+        // Execute query to get cluster information
+        let sql = r#"
+            SELECT
+                cluster,
+                shard_num,
+                replica_num,
+                host_name,
+                port
+            FROM system.clusters
+            ORDER BY cluster, shard_num, replica_num
+        "#;
+
+        let result = session.driver.execute_query(sql).await?;
+
+        // Parse results into ClusterInfo
+        let mut clusters_map: std::collections::HashMap<String, clickhouse::ClusterInfo> =
+            std::collections::HashMap::new();
+
+        for row in result.rows {
+            if row.len() < 5 {
+                continue;
+            }
+
+            let cluster_name = row[0].as_str().unwrap_or_default().to_string();
+            let shard_num = row[1].as_u64().unwrap_or(0) as u32;
+            let replica_num = row[2].as_u64().unwrap_or(0) as u32;
+            let host_name = row[3].as_str().unwrap_or_default().to_string();
+            let port = row[4].as_u64().unwrap_or(0) as u16;
+
+            let cluster = clusters_map
+                .entry(cluster_name.clone())
+                .or_insert_with(|| clickhouse::ClusterInfo {
+                    name: cluster_name,
+                    shard_count: 0,
+                    replica_count: 0,
+                    nodes: vec![],
+                });
+
+            if shard_num > cluster.shard_count {
+                cluster.shard_count = shard_num;
+            }
+            if replica_num > cluster.replica_count {
+                cluster.replica_count = replica_num;
+            }
+
+            cluster.nodes.push(clickhouse::ClusterNode {
+                shard_num,
+                replica_num,
+                host_name,
+                port,
+            });
+        }
+
+        Ok(clusters_map.into_values().collect())
     }
 
     /// Check if connection exists

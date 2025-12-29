@@ -37,9 +37,26 @@ russh-keys = "0.46"
 russh-sftp = "2.0"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "postgres", "chrono", "json", "tls-native-tls"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "postgres", "sqlite", "chrono", "json", "tls-native-tls"] }
 tiberius = { version = "0.12", default-features = false, features = ["rustls", "chrono"], optional = true }
 oracle = { version = "0.6", optional = true }
+odbc-api = { version = "5", optional = true }
+clickhouse = { version = "0.13", features = ["native-tls"], optional = true }
+reqwest = { version = "0.12", features = ["json", "native-tls"], optional = true }
+
+# Middleware - Message Queue
+rdkafka = { version = "0.36", features = ["cmake-build", "ssl-vendored"], optional = true }
+
+# Middleware - Cache/KV Store
+# Note: TLS disabled temporarily due to redis 0.27 dependency issues
+redis = { version = "0.27", features = ["tokio-comp", "cluster-async"], optional = true }
+
+# Docker
+bollard = "0.18"
+hyper = "1.4"
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+hyperlocal = "0.9"
+http-body-util = "0.1"
 
 # Error handling
 anyhow = "1.0"
@@ -57,15 +74,20 @@ parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
 urlencoding = "2.1"
+regex = "1.10"
 
 # Encryption (for storing credentials)
 ring = "0.17"
 base64 = "0.22"
 
 [features]
-default = ["oracle", "mssql"]
+default = ["oracle", "mssql", "dm", "clickhouse", "kafka", "redis"]
 oracle = ["dep:oracle"]
 mssql = ["dep:tiberius"]
+dm = ["dep:odbc-api"]
+clickhouse = ["dep:clickhouse", "dep:reqwest"]
+kafka = ["dep:rdkafka"]
+redis = ["dep:redis"]
 
 [profile.release]
 strip = true

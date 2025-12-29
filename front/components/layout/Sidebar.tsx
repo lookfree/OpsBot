@@ -27,6 +27,8 @@ import { ConnectionTree } from './ConnectionTree'
 import { SettingsDropdown } from '@/components/settings'
 import { SshConnectionDialog } from '@/components/ssh'
 import { DatabaseConnectionDialog } from '@/components/database'
+import { DockerConnectionDialog } from '@/components/docker'
+import { MiddlewareConnectionDialog } from '@/components/middleware'
 import { InputDialog } from '@/components/common'
 
 // 模块图标映射
@@ -58,6 +60,8 @@ export function Sidebar({ className }: SidebarProps) {
   })
   const [sshDialogOpen, setSshDialogOpen] = useState(false)
   const [databaseDialogOpen, setDatabaseDialogOpen] = useState(false)
+  const [dockerDialogOpen, setDockerDialogOpen] = useState(false)
+  const [middlewareDialogOpen, setMiddlewareDialogOpen] = useState(false)
   const [editingConnection, setEditingConnection] = useState<any>(null)
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [folderDialogModuleType, setFolderDialogModuleType] = useState<ModuleType>(ModuleType.SSH)
@@ -93,6 +97,10 @@ export function Sidebar({ className }: SidebarProps) {
       setSshDialogOpen(true)
     } else if (connection.moduleType === ModuleType.Database) {
       setDatabaseDialogOpen(true)
+    } else if (connection.moduleType === ModuleType.Docker) {
+      setDockerDialogOpen(true)
+    } else if (connection.moduleType === ModuleType.Middleware) {
+      setMiddlewareDialogOpen(true)
     }
   }
 
@@ -108,6 +116,24 @@ export function Sidebar({ className }: SidebarProps) {
   // 关闭数据库对话框时清除编辑状态和目标文件夹
   const handleDatabaseDialogOpenChange = (open: boolean) => {
     setDatabaseDialogOpen(open)
+    if (!open) {
+      setEditingConnection(null)
+      setTargetFolderId(null)
+    }
+  }
+
+  // 关闭中间件对话框时清除编辑状态和目标文件夹
+  const handleMiddlewareDialogOpenChange = (open: boolean) => {
+    setMiddlewareDialogOpen(open)
+    if (!open) {
+      setEditingConnection(null)
+      setTargetFolderId(null)
+    }
+  }
+
+  // 关闭Docker对话框时清除编辑状态和目标文件夹
+  const handleDockerDialogOpenChange = (open: boolean) => {
+    setDockerDialogOpen(open)
     if (!open) {
       setEditingConnection(null)
       setTargetFolderId(null)
@@ -141,8 +167,11 @@ export function Sidebar({ className }: SidebarProps) {
       setSshDialogOpen(true)
     } else if (moduleType === ModuleType.Database) {
       setDatabaseDialogOpen(true)
+    } else if (moduleType === ModuleType.Docker) {
+      setDockerDialogOpen(true)
+    } else if (moduleType === ModuleType.Middleware) {
+      setMiddlewareDialogOpen(true)
     }
-    // TODO: Docker, Middleware 连接对话框
   }
 
   // 打开 ER 图设计器
@@ -201,11 +230,17 @@ export function Sidebar({ className }: SidebarProps) {
                         <Database className="w-4 h-4 mr-2" />
                         {t('modules.database')}
                       </DropdownMenu.Item>
-                      <DropdownMenu.Item className="dropdown-item rounded-md" disabled>
+                      <DropdownMenu.Item
+                        className="dropdown-item rounded-md"
+                        onClick={() => setDockerDialogOpen(true)}
+                      >
                         <Container className="w-4 h-4 mr-2" />
                         {t('modules.docker')}
                       </DropdownMenu.Item>
-                      <DropdownMenu.Item className="dropdown-item rounded-md" disabled>
+                      <DropdownMenu.Item
+                        className="dropdown-item rounded-md"
+                        onClick={() => setMiddlewareDialogOpen(true)}
+                      >
                         <Settings2 className="w-4 h-4 mr-2" />
                         {t('modules.middleware')}
                       </DropdownMenu.Item>
@@ -425,6 +460,22 @@ export function Sidebar({ className }: SidebarProps) {
         title={t('sidebar.newFolder')}
         placeholder={t('sidebar.enterFolderName')}
         onConfirm={handleFolderDialogConfirm}
+      />
+
+      {/* 中间件连接对话框 */}
+      <MiddlewareConnectionDialog
+        open={middlewareDialogOpen}
+        onOpenChange={handleMiddlewareDialogOpenChange}
+        connection={editingConnection}
+        folderId={editingConnection ? undefined : targetFolderId}
+      />
+
+      {/* Docker连接对话框 */}
+      <DockerConnectionDialog
+        open={dockerDialogOpen}
+        onOpenChange={handleDockerDialogOpenChange}
+        connection={editingConnection}
+        folderId={editingConnection ? undefined : targetFolderId}
       />
     </div>
   )

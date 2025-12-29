@@ -10,6 +10,10 @@ import { mariadbDialect } from './mariadb'
 import { postgresqlDialect } from './postgresql'
 import { oracleDialect } from './oracle'
 import { mssqlDialect } from './mssql'
+import { kingbaseDialect } from './kingbase'
+import { dmDialect } from './dm'
+import { sqliteDialect } from './sqlite'
+import { clickhouseDialect } from './clickhouse'
 
 // ============================================================================
 // 方言映射表
@@ -24,37 +28,10 @@ const dialectMap: Record<DatabaseType, DatabaseDialectConfig> = {
   postgresql: postgresqlDialect,
   oracle: oracleDialect,
   mssql: mssqlDialect,
-  // 以下数据库类型暂时使用占位符，待后续实现
-  sqlite: {
-    ...mysqlDialect,
-    id: 'sqlite',
-    name: 'SQLite',
-    quoteIdentifier: (name: string) => `"${name}"`,
-    tableOptions: {
-      supportsSchema: false,
-      supportsTablespace: false,
-      supportsTableComment: false,
-      supportsColumnComment: false,
-    },
-    indexOptions: {
-      types: ['BTREE'],
-      supportsFulltext: true,
-      supportsSpatial: false,
-      supportsHash: false,
-      supportsUnique: true,
-      supportsPartial: true,
-    },
-    autoIncrement: {
-      keyword: 'AUTOINCREMENT',
-      supportsStartWith: false,
-      supportsIncrementBy: false,
-    },
-    syntax: {
-      ...mysqlDialect.syntax,
-      supportsIfNotExists: true,
-    },
-    defaults: {},
-  },
+  kingbase: kingbaseDialect,
+  dm: dmDialect,
+  sqlite: sqliteDialect,
+  clickhouse: clickhouseDialect,
 }
 
 // ============================================================================
@@ -212,3 +189,7 @@ export { mariadbDialect } from './mariadb'
 export { postgresqlDialect } from './postgresql'
 export { oracleDialect } from './oracle'
 export { mssqlDialect } from './mssql'
+export { kingbaseDialect } from './kingbase'
+export { dmDialect } from './dm'
+export { sqliteDialect } from './sqlite'
+export { clickhouseDialect } from './clickhouse'

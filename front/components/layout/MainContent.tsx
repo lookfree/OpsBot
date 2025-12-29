@@ -8,13 +8,16 @@ import { cn } from '@/lib/utils'
 import { useTabStore, useConnectionStore } from '@/stores'
 import { TabBar } from './TabBar'
 import { Server, Database, Container, Settings2, AlertTriangle, Table2, Layers } from 'lucide-react'
-import { getDatabaseIcon } from '@/components/icons/DatabaseIcons'
+import { getDatabaseIcon, KafkaIcon, RedisIcon } from '@/components/icons/DatabaseIcons'
 import { TerminalContainer } from '@/components/terminal'
 import { DatabaseContainer } from '@/components/database'
 import { ERDiagramDesigner } from '@/components/database/designer'
+import { KafkaContainer } from '@/components/kafka'
+import { RedisContainer } from '@/components/middleware/redis'
+import { DockerContainer } from '@/components/docker'
 import { SshConnectionDialog } from '@/components/ssh'
 import { sshConnect } from '@/services'
-import type { Tab, SSHConnection, DatabaseConnection } from '@/types'
+import type { Tab, SSHConnection, DatabaseConnection, MiddlewareConnection, DockerConnection } from '@/types'
 
 // Error Boundary for catching render errors
 interface ErrorBoundaryState {
@@ -99,6 +102,18 @@ export function MainContent({ className }: MainContentProps) {
           segments.push({ icon: Table2, label: tabData.tableName as string, type: 'table' })
         }
       }
+    } else if (activeTab.type === 'middleware') {
+      const mwConn = connection as MiddlewareConnection
+      if (mwConn.middlewareType === 'kafka') {
+        segments.push({ icon: KafkaIcon, label: mwConn.name, type: 'middleware' })
+      } else if (mwConn.middlewareType === 'redis') {
+        segments.push({ icon: RedisIcon, label: mwConn.name, type: 'middleware' })
+      } else {
+        segments.push({ icon: Settings2, label: mwConn.name, type: 'middleware' })
+      }
+    } else if (activeTab.type === 'docker') {
+      const dockerConn = connection as DockerConnection
+      segments.push({ icon: Container, label: dockerConn.name, type: 'docker' })
     }
 
     return segments
@@ -334,6 +349,41 @@ function TabContent({
     return (
       <ERDiagramDesigner
         key={tab.id}
+        className="h-full"
+      />
+    )
+  }
+
+  // Middleware tab - supports Kafka and Redis
+  if (tab.type === 'middleware' && tab.connectionId) {
+    const middlewareType = tab.data?.middlewareType as string | undefined
+
+    if (middlewareType === 'redis') {
+      return (
+        <RedisContainer
+          key={tab.id}
+          connectionId={tab.connectionId}
+          className="h-full"
+        />
+      )
+    }
+
+    // Default to Kafka for backwards compatibility
+    return (
+      <KafkaContainer
+        key={tab.id}
+        connectionId={tab.connectionId}
+        className="h-full"
+      />
+    )
+  }
+
+  // Docker tab
+  if (tab.type === 'docker' && tab.connectionId) {
+    return (
+      <DockerContainer
+        key={tab.id}
+        connectionId={tab.connectionId}
         className="h-full"
       />
     )

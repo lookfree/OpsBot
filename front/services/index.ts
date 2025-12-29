@@ -5,5 +5,6 @@
 export * from './configExport'
 export * from './configImport'
 export * from './database'
+export * from './docker'
 export * from './ssh'
 export * from './secureStorage'

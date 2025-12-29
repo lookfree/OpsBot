@@ -28,7 +28,20 @@ pub struct SshSession {
     tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     // Store connection parameters for reconnection
     connect_request: Option<SshConnectRequest>,
-    terminal_size: TerminalSize,
+}
+
+/// Commands for interactive exec sessions
+pub enum ExecCommand {
+    WriteData(Vec<u8>),
+    Resize(u16, u16),
+    Close,
+}
+
+/// Interactive exec session for docker exec or other PTY commands
+pub struct InteractiveExecSession {
+    pub exec_id: String,
+    pub session_id: String,
+    command_tx: tokio::sync::mpsc::UnboundedSender<ExecCommand>,
 }
 
 impl SshSession {
@@ -44,7 +57,6 @@ impl SshSession {
             channel: None,
             tx: None,
             connect_request: Some(request.clone()),
-            terminal_size: request.terminal_size,
         }
     }
 
@@ -116,6 +128,8 @@ impl client::Handler for SshClientHandler {
 /// SSH Service for managing multiple SSH sessions
 pub struct SshService {
     sessions: Arc<RwLock<HashMap<String, SshSession>>>,
+    /// Interactive exec sessions (for docker exec, etc.)
+    exec_sessions: Arc<RwLock<HashMap<String, InteractiveExecSession>>>,
 }
 
 impl Default for SshService {
@@ -128,6 +142,7 @@ impl SshService {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            exec_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -375,7 +390,6 @@ impl SshService {
         }
 
         // Open a direct-tcpip channel to the target host through the jump host
-        let target_addr = format!("{}:{}", request.host, request.port);
         let channel = jump_handle
             .channel_open_direct_tcpip(
                 &request.host,
@@ -385,13 +399,8 @@ impl SshService {
             )
             .await?;
 
-        // Now connect to the target through the tunnel
-        let target_config = client::Config {
-            inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
-            ..Default::default()
-        };
-        let target_config = Arc::new(target_config);
-
+        // Note: target_handler was for a more complex tunnel approach
+        // Currently using simpler ssh-through-jump-host method
         let _target_handler = SshClientHandler {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
@@ -540,6 +549,25 @@ impl SshService {
             .unwrap_or(false)
     }
 
+    /// Check if there's an active session for a given connection_id (saved config ID)
+    pub async fn is_connection_active(&self, connection_id: &str) -> bool {
+        self.sessions
+            .read()
+            .await
+            .values()
+            .any(|s| s.connection_id == connection_id && s.status == SessionStatus::Connected)
+    }
+
+    /// Find active session_id by connection_id (saved config ID)
+    pub async fn find_session_by_connection_id(&self, connection_id: &str) -> Option<String> {
+        self.sessions
+            .read()
+            .await
+            .values()
+            .find(|s| s.connection_id == connection_id && s.status == SessionStatus::Connected)
+            .map(|s| s.session_id.clone())
+    }
+
     /// Open a new channel for SFTP on an existing SSH connection
     /// Returns the channel ready for SFTP subsystem request
     pub async fn open_sftp_channel(&self, session_id: &str) -> Result<Channel<client::Msg>> {
@@ -651,6 +679,163 @@ impl SshService {
             .disconnect(Disconnect::ByApplication, "Connection test completed", "")
             .await;
 
+        Ok(())
+    }
+
+    // ========== Interactive Exec Methods (for docker exec, etc.) ==========
+
+    /// Start an interactive exec session with PTY
+    /// Returns exec_id for subsequent operations
+    pub async fn exec_interactive_start(
+        &self,
+        session_id: &str,
+        command: &str,
+        cols: u16,
+        rows: u16,
+        output_tx: mpsc::UnboundedSender<Vec<u8>>,
+    ) -> Result<String> {
+        let sessions = self.sessions.read().await;
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow!("Session not found"))?;
+
+        if session.status != SessionStatus::Connected {
+            return Err(anyhow!("Session not connected"));
+        }
+
+        let handle = session
+            .handle
+            .as_ref()
+            .ok_or_else(|| anyhow!("No handle available"))?;
+
+        // Open a new channel
+        let mut channel = handle.channel_open_session().await?;
+
+        // Request PTY
+        channel
+            .request_pty(
+                false,
+                "xterm-256color",
+                cols.into(),
+                rows.into(),
+                0,
+                0,
+                &[],
+            )
+            .await?;
+
+        // Execute the command
+        channel.exec(true, command).await?;
+
+        let exec_id = Uuid::new_v4().to_string();
+        let exec_id_clone = exec_id.clone();
+
+        // Create command channel for sending data/resize/close commands
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel::<ExecCommand>();
+
+        // Spawn a task that owns the channel, reads output, and handles commands
+        tokio::spawn(async move {
+            log::debug!("Interactive exec task started for {}", exec_id_clone);
+            loop {
+                tokio::select! {
+                    // Handle incoming commands
+                    cmd = command_rx.recv() => {
+                        match cmd {
+                            Some(ExecCommand::WriteData(data)) => {
+                                if let Err(e) = channel.data(&data[..]).await {
+                                    log::error!("Failed to write data to exec session: {}", e);
+                                    break;
+                                }
+                            }
+                            Some(ExecCommand::Resize(cols, rows)) => {
+                                log::debug!("Exec {} resize to {}x{}", exec_id_clone, cols, rows);
+                                if let Err(e) = channel.window_change(cols.into(), rows.into(), 0, 0).await {
+                                    log::error!("Failed to resize exec session: {}", e);
+                                }
+                            }
+                            Some(ExecCommand::Close) | None => {
+                                log::debug!("Exec {} received close command", exec_id_clone);
+                                let _ = channel.close().await;
+                                break;
+                            }
+                        }
+                    }
+                    // Handle channel output
+                    msg = channel.wait() => {
+                        match msg {
+                            Some(ChannelMsg::Data { data }) => {
+                                if output_tx.unbounded_send(data.to_vec()).is_err() {
+                                    log::error!("Exec {} failed to forward data to output_tx", exec_id_clone);
+                                    break;
+                                }
+                            }
+                            Some(ChannelMsg::ExtendedData { data, .. }) => {
+                                if output_tx.unbounded_send(data.to_vec()).is_err() {
+                                    log::error!("Exec {} failed to forward extended data to output_tx", exec_id_clone);
+                                    break;
+                                }
+                            }
+                            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                                log::debug!("Exec {} channel EOF/Close/None", exec_id_clone);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            log::debug!("Interactive exec session {} ended", exec_id_clone);
+        });
+
+        // Store the session with command sender
+        let exec_session = InteractiveExecSession {
+            exec_id: exec_id.clone(),
+            session_id: session_id.to_string(),
+            command_tx,
+        };
+
+        self.exec_sessions.write().await.insert(exec_id.clone(), exec_session);
+
+        Ok(exec_id)
+    }
+
+    /// Send data to an interactive exec session
+    pub async fn exec_interactive_send_data(&self, exec_id: &str, data: &[u8]) -> Result<()> {
+        let exec_sessions = self.exec_sessions.read().await;
+        let exec_session = exec_sessions
+            .get(exec_id)
+            .ok_or_else(|| anyhow!("Exec session not found"))?;
+
+        exec_session
+            .command_tx
+            .send(ExecCommand::WriteData(data.to_vec()))
+            .map_err(|e| {
+                log::error!("Failed to send data to exec session: {:?}", e);
+                anyhow!("Failed to send data to exec session")
+            })?;
+
+        Ok(())
+    }
+
+    /// Resize an interactive exec session's PTY
+    pub async fn exec_interactive_resize(&self, exec_id: &str, cols: u16, rows: u16) -> Result<()> {
+        let exec_sessions = self.exec_sessions.read().await;
+        let exec_session = exec_sessions
+            .get(exec_id)
+            .ok_or_else(|| anyhow!("Exec session not found"))?;
+
+        exec_session
+            .command_tx
+            .send(ExecCommand::Resize(cols, rows))
+            .map_err(|_| anyhow!("Failed to send resize to exec session"))?;
+        Ok(())
+    }
+
+    /// Close an interactive exec session
+    pub async fn exec_interactive_close(&self, exec_id: &str) -> Result<()> {
+        if let Some(exec_session) = self.exec_sessions.write().await.remove(exec_id) {
+            let _ = exec_session.command_tx.send(ExecCommand::Close);
+        }
         Ok(())
     }
 }

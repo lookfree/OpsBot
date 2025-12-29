@@ -1,0 +1,17 @@
+# Cargo configuration for ZWD-OpsBot
+# Copy this file to config.toml and adjust paths for your system
+#
+# DM Database requires unixODBC:
+#   macOS:   brew install unixodbc
+#   Ubuntu:  sudo apt install unixodbc-dev
+#   CentOS:  sudo yum install unixODBC-devel
+
+[env]
+# macOS with Homebrew (Apple Silicon)
+LIBRARY_PATH = "/opt/homebrew/opt/unixodbc/lib"
+
+# macOS with Homebrew (Intel)
+# LIBRARY_PATH = "/usr/local/opt/unixodbc/lib"
+
+# Linux (usually no config needed, but if required):
+# LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu"

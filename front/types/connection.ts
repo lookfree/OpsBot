@@ -79,7 +79,7 @@ export interface SSHConnection extends ConnectionBase {
 }
 
 // 数据库类型
-export type DatabaseType = 'mysql' | 'postgresql' | 'mariadb' | 'sqlite' | 'oracle'
+export type DatabaseType = 'mysql' | 'postgresql' | 'mariadb' | 'sqlite' | 'oracle' | 'mssql' | 'kingbase' | 'dm' | 'clickhouse'
 
 // 数据库连接配置
 export interface DatabaseConnection extends ConnectionBase {
@@ -103,7 +103,7 @@ export interface DatabaseConnection extends ConnectionBase {
 }
 
 // Docker连接类型
-export type DockerConnectionType = 'local' | 'ssh' | 'tcp'
+export type DockerConnectionType = 'local' | 'ssh'
 
 // Docker连接配置
 export interface DockerConnection extends ConnectionBase {
@@ -122,17 +122,30 @@ export interface DockerConnection extends ConnectionBase {
 export type MiddlewareType = 'redis' | 'kafka' | 'elasticsearch' | 'clickhouse'
 
 // Redis模式
-export type RedisMode = 'standalone' | 'sentinel' | 'cluster'
+export type RedisMode = 'Standalone' | 'Cluster' | 'Sentinel'
+
+// Redis TLS配置
+export interface RedisTlsConfig {
+  enabled: boolean
+  rejectUnauthorized?: boolean
+  ca?: string
+}
 
 // 中间件连接配置
 export interface MiddlewareConnection extends ConnectionBase {
   moduleType: ModuleType.Middleware
   middlewareType: MiddlewareType
   redisConfig?: {
-    mode: RedisMode
-    nodes: { host: string; port: number }[]
+    mode?: RedisMode
+    host?: string
+    port?: number
+    nodes?: string[]
+    sentinels?: string[]
+    sentinelPassword?: string
+    masterName?: string
     password?: string
-    database?: number
+    db?: number
+    tls?: RedisTlsConfig
   }
   kafkaConfig?: {
     bootstrapServers: string[]

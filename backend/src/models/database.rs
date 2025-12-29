@@ -1,4 +1,4 @@
-//! Database models for MySQL/PostgreSQL/SQLite/MariaDB/Oracle/MSSQL connections
+//! Database models for MySQL/PostgreSQL/SQLite/MariaDB/Oracle/MSSQL/KingBase connections
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,12 @@ pub enum DatabaseType {
     Oracle,
     #[serde(alias = "sqlserver")]
     MSSQL,
+    KingBase,
+    /// 达梦数据库 (DM Database)
+    #[serde(alias = "dameng")]
+    DM,
+    /// ClickHouse 列式分析数据库
+    ClickHouse,
 }
 
 /// Database connection request

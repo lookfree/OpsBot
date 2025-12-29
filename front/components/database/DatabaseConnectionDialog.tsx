@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
-import { X, Eye, EyeOff, ChevronLeft } from 'lucide-react'
+import { X, Eye, EyeOff, ChevronLeft, FolderOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore, useThemeStore } from '@/stores'
 import type { DatabaseConnection, DatabaseType } from '@/types'
@@ -17,6 +17,7 @@ import { ModuleType } from '@/types'
 import { dbTestConnection } from '@/services/database'
 import { DatabaseTypeSelector } from './DatabaseTypeSelector'
 import { getDatabaseTypeById, type DatabaseTypeConfig } from '@/config/databaseTypes'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 interface DatabaseConnectionDialogProps {
   open: boolean
@@ -136,23 +137,33 @@ export function DatabaseConnectionDialog({
 
   const validate = useCallback(() => {
     const newErrors: Record<string, string> = {}
+    const isFileDb = selectedDbType?.isFileDatabase
 
     if (!formData.name?.trim()) {
       newErrors.name = t('database.errors.nameRequired')
     }
-    if (!formData.host?.trim()) {
-      newErrors.host = t('database.errors.hostRequired')
-    }
-    if (!formData.port || formData.port < 1 || formData.port > 65535) {
-      newErrors.port = t('database.errors.portInvalid')
-    }
-    if (!formData.username?.trim()) {
-      newErrors.username = t('database.errors.usernameRequired')
+
+    if (isFileDb) {
+      // 文件数据库只需要文件路径
+      if (!formData.database?.trim()) {
+        newErrors.database = t('database.errors.filePathRequired', '请选择数据库文件')
+      }
+    } else {
+      // 常规数据库需要 host/port/username
+      if (!formData.host?.trim()) {
+        newErrors.host = t('database.errors.hostRequired')
+      }
+      if (!formData.port || formData.port < 1 || formData.port > 65535) {
+        newErrors.port = t('database.errors.portInvalid')
+      }
+      if (!formData.username?.trim()) {
+        newErrors.username = t('database.errors.usernameRequired')
+      }
     }
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
-  }, [formData, t])
+  }, [formData, selectedDbType, t])
 
   const handleSave = useCallback(() => {
     if (!validate()) return
@@ -350,126 +361,182 @@ export function DatabaseConnectionDialog({
                   )}
                 </div>
 
-                {/* Host and Port */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2">
-                    <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
-                      {t('database.host')}
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.host}
-                      onChange={(e) => handleChange('host', e.target.value)}
-                      placeholder="localhost"
-                      className={cn(
-                        'w-full px-3 py-2 rounded border text-sm',
-                        'focus:outline-none focus:border-accent-primary',
-                        inputBg,
-                        borderColor,
-                        textPrimary,
-                        errors.host && 'border-status-error'
-                      )}
-                    />
-                    {errors.host && (
-                      <p className="text-xs text-status-error mt-1">{errors.host}</p>
-                    )}
-                  </div>
+                {/* SQLite: 文件路径选择 */}
+                {selectedDbType?.isFileDatabase ? (
                   <div>
                     <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
-                      {t('database.port')}
+                      {t('database.filePath', '数据库文件')}
                     </label>
-                    <input
-                      type="number"
-                      value={formData.port}
-                      onChange={(e) =>
-                        handleChange('port', parseInt(e.target.value) || selectedDbType?.defaultPort || 3306)
-                      }
-                      className={cn(
-                        'w-full px-3 py-2 rounded border text-sm',
-                        'focus:outline-none focus:border-accent-primary',
-                        inputBg,
-                        borderColor,
-                        textPrimary,
-                        errors.port && 'border-status-error'
-                      )}
-                    />
-                  </div>
-                </div>
-
-                {/* Username */}
-                <div>
-                  <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
-                    {t('database.username')}
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.username}
-                    onChange={(e) => handleChange('username', e.target.value)}
-                    placeholder="root"
-                    className={cn(
-                      'w-full px-3 py-2 rounded border text-sm',
-                      'focus:outline-none focus:border-accent-primary',
-                      inputBg,
-                      borderColor,
-                      textPrimary,
-                      errors.username && 'border-status-error'
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={formData.database}
+                        onChange={(e) => handleChange('database', e.target.value)}
+                        placeholder="/path/to/database.db"
+                        className={cn(
+                          'flex-1 px-3 py-2 rounded border text-sm',
+                          'focus:outline-none focus:border-accent-primary',
+                          inputBg,
+                          borderColor,
+                          textPrimary,
+                          errors.database && 'border-status-error'
+                        )}
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const selected = await openDialog({
+                            multiple: false,
+                            filters: [
+                              { name: 'SQLite Database', extensions: ['db', 'sqlite', 'sqlite3', 'db3'] },
+                              { name: 'All Files', extensions: ['*'] },
+                            ],
+                          })
+                          if (selected && typeof selected === 'string') {
+                            handleChange('database', selected)
+                          }
+                        }}
+                        className={cn(
+                          'px-3 py-2 rounded border text-sm transition-colors',
+                          borderColor,
+                          textPrimary,
+                          hoverBg
+                        )}
+                      >
+                        <FolderOpen className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {errors.database && (
+                      <p className="text-xs text-status-error mt-1">{errors.database}</p>
                     )}
-                  />
-                  {errors.username && (
-                    <p className="text-xs text-status-error mt-1">{errors.username}</p>
-                  )}
-                </div>
-
-                {/* Password */}
-                <div>
-                  <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
-                    {t('database.password')}
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={formData.password}
-                      onChange={(e) => handleChange('password', e.target.value)}
-                      className={cn(
-                        'w-full px-3 py-2 pr-10 rounded border text-sm',
-                        'focus:outline-none focus:border-accent-primary',
-                        inputBg,
-                        borderColor,
-                        textPrimary
-                      )}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className={cn('absolute right-2 top-1/2 -translate-y-1/2 p-1', textSecondary)}
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
+                    <p className={cn('text-xs mt-1', textSecondary)}>
+                      {t('database.sqliteHint', '选择现有数据库文件，或输入新文件路径创建')}
+                    </p>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    {/* Host and Port */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-2">
+                        <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                          {t('database.host')}
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.host}
+                          onChange={(e) => handleChange('host', e.target.value)}
+                          placeholder="localhost"
+                          className={cn(
+                            'w-full px-3 py-2 rounded border text-sm',
+                            'focus:outline-none focus:border-accent-primary',
+                            inputBg,
+                            borderColor,
+                            textPrimary,
+                            errors.host && 'border-status-error'
+                          )}
+                        />
+                        {errors.host && (
+                          <p className="text-xs text-status-error mt-1">{errors.host}</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                          {t('database.port')}
+                        </label>
+                        <input
+                          type="number"
+                          value={formData.port}
+                          onChange={(e) =>
+                            handleChange('port', parseInt(e.target.value) || selectedDbType?.defaultPort || 3306)
+                          }
+                          className={cn(
+                            'w-full px-3 py-2 rounded border text-sm',
+                            'focus:outline-none focus:border-accent-primary',
+                            inputBg,
+                            borderColor,
+                            textPrimary,
+                            errors.port && 'border-status-error'
+                          )}
+                        />
+                      </div>
+                    </div>
 
-                {/* Database / Service Name (Oracle) */}
-                <div>
-                  <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
-                    {formData.dbType === 'oracle'
-                      ? t('database.serviceName', 'Service Name')
-                      : t('database.database')}
-                    <span className={cn('ml-1 text-xs', textSecondary)}>({t('common.optional')})</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.database}
-                    onChange={(e) => handleChange('database', e.target.value)}
-                    placeholder={formData.dbType === 'oracle' ? 'ORCL' : 'mysql'}
-                    className={cn(
-                      'w-full px-3 py-2 rounded border text-sm',
-                      'focus:outline-none focus:border-accent-primary',
-                      inputBg,
-                      borderColor,
-                      textPrimary
-                    )}
-                  />
-                </div>
+                    {/* Username */}
+                    <div>
+                      <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                        {t('database.username')}
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.username}
+                        onChange={(e) => handleChange('username', e.target.value)}
+                        placeholder="root"
+                        className={cn(
+                          'w-full px-3 py-2 rounded border text-sm',
+                          'focus:outline-none focus:border-accent-primary',
+                          inputBg,
+                          borderColor,
+                          textPrimary,
+                          errors.username && 'border-status-error'
+                        )}
+                      />
+                      {errors.username && (
+                        <p className="text-xs text-status-error mt-1">{errors.username}</p>
+                      )}
+                    </div>
+
+                    {/* Password */}
+                    <div>
+                      <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                        {t('database.password')}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={formData.password}
+                          onChange={(e) => handleChange('password', e.target.value)}
+                          className={cn(
+                            'w-full px-3 py-2 pr-10 rounded border text-sm',
+                            'focus:outline-none focus:border-accent-primary',
+                            inputBg,
+                            borderColor,
+                            textPrimary
+                          )}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className={cn('absolute right-2 top-1/2 -translate-y-1/2 p-1', textSecondary)}
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Database / Service Name (Oracle) */}
+                    <div>
+                      <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                        {formData.dbType === 'oracle'
+                          ? t('database.serviceName', 'Service Name')
+                          : t('database.database')}
+                        <span className={cn('ml-1 text-xs', textSecondary)}>({t('common.optional')})</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.database}
+                        onChange={(e) => handleChange('database', e.target.value)}
+                        placeholder={formData.dbType === 'oracle' ? 'ORCL' : 'mysql'}
+                        className={cn(
+                          'w-full px-3 py-2 rounded border text-sm',
+                          'focus:outline-none focus:border-accent-primary',
+                          inputBg,
+                          borderColor,
+                          textPrimary
+                        )}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Footer */}

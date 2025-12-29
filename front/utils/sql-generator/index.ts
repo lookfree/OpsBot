@@ -10,6 +10,10 @@ import { toMariaDB } from './mariadb'
 import { toPostgres } from './postgresql'
 import { toOracle } from './oracle'
 import { toMSSQL } from './mssql'
+import { toKingBase } from './kingbase'
+import { toDM } from './dm'
+import { toSQLite } from './sqlite'
+import { toClickHouse } from './clickhouse'
 
 /**
  * 根据图表数据生成对应数据库的 SQL
@@ -26,9 +30,14 @@ export function generateSQL(diagram: DiagramData): string {
       return toOracle(diagram)
     case 'mssql':
       return toMSSQL(diagram)
+    case 'kingbase':
+      return toKingBase(diagram)
+    case 'dm':
+      return toDM(diagram)
     case 'sqlite':
-      // TODO: 实现 SQLite 生成器
-      return toMySQL(diagram) // 临时使用 MySQL
+      return toSQLite(diagram)
+    case 'clickhouse':
+      return toClickHouse(diagram)
     default:
       return toMySQL(diagram)
   }
@@ -40,6 +49,10 @@ export { toMariaDB } from './mariadb'
 export { toPostgres } from './postgresql'
 export { toOracle } from './oracle'
 export { toMSSQL } from './mssql'
+export { toKingBase } from './kingbase'
+export { toDM } from './dm'
+export { toSQLite } from './sqlite'
+export { toClickHouse } from './clickhouse'
 
 // 导出共享工具函数
 export {

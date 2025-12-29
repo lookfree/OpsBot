@@ -10,6 +10,10 @@ import { mariadbTypes, mariadbTypeCategories } from './mariadb'
 import { postgresqlTypes, postgresqlTypeCategories } from './postgresql'
 import { oracleTypes, oracleTypeCategories } from './oracle'
 import { mssqlTypes, mssqlTypeCategories } from './mssql'
+import { kingbaseTypes, kingbaseTypeCategories } from './kingbase'
+import { dmTypes, dmTypeCategories } from './dm'
+import { sqliteTypes, sqliteTypeCategories } from './sqlite'
+import { clickhouseTypes, clickhouseTypeCategories } from './clickhouse'
 
 // ============================================================================
 // 类型映射表
@@ -24,8 +28,10 @@ const dbToTypesMap: Record<DatabaseType, DataTypeMap> = {
   postgresql: postgresqlTypes,
   oracle: oracleTypes,
   mssql: mssqlTypes,
-  // 以下数据库类型暂时使用 MySQL 类型作为占位符，待后续实现
-  sqlite: mysqlTypes,  // 待实现
+  kingbase: kingbaseTypes,
+  dm: dmTypes,
+  sqlite: sqliteTypes,
+  clickhouse: clickhouseTypes,
 }
 
 /**
@@ -37,7 +43,10 @@ const dbToCategoriesMap: Record<DatabaseType, Record<string, string[]>> = {
   postgresql: postgresqlTypeCategories,
   oracle: oracleTypeCategories,
   mssql: mssqlTypeCategories,
-  sqlite: mysqlTypeCategories,
+  kingbase: kingbaseTypeCategories,
+  dm: dmTypeCategories,
+  sqlite: sqliteTypeCategories,
+  clickhouse: clickhouseTypeCategories,
 }
 
 // ============================================================================
@@ -231,3 +240,7 @@ export { mariadbTypes, mariadbTypeCategories } from './mariadb'
 export { postgresqlTypes, postgresqlTypeCategories } from './postgresql'
 export { oracleTypes, oracleTypeCategories } from './oracle'
 export { mssqlTypes, mssqlTypeCategories } from './mssql'
+export { kingbaseTypes, kingbaseTypeCategories } from './kingbase'
+export { dmTypes, dmTypeCategories } from './dm'
+export { sqliteTypes, sqliteTypeCategories } from './sqlite'
+export { clickhouseTypes, clickhouseTypeCategories } from './clickhouse'

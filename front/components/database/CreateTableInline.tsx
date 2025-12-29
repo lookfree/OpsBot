@@ -6,11 +6,19 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Plus, ChevronDown, ChevronUp, Save, Trash2 } from 'lucide-react'
+import { Plus, ChevronDown, ChevronUp, Save, Trash2, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { invoke } from '@tauri-apps/api/core'
 import { cn } from '@/lib/utils'
 import { useThemeStore, useConnectionStore } from '@/stores'
 import { dbExecuteSql } from '@/services/database'
+
+// ClickHouse cluster info from backend
+interface ClusterInfo {
+  name: string
+  shard_count: number
+  replica_count: number
+}
 import type { DatabaseConnection } from '@/types'
 import {
   getEngines,
@@ -107,6 +115,18 @@ export function CreateTableInline({
   const [error, setError] = useState<string | null>(null)
   const [showSqlPreview, setShowSqlPreview] = useState(false)
 
+  // ClickHouse distributed table options
+  const [chTableType, setChTableType] = useState<'local' | 'distributed'>('local')
+  const [chCluster, setChCluster] = useState('')
+  const [chShardingKey, setChShardingKey] = useState('rand()')
+  const [chLocalTableName, setChLocalTableName] = useState('')
+  const [chClusters, setChClusters] = useState<ClusterInfo[]>([])
+  const [chClustersLoading, setChClustersLoading] = useState(false)
+
+  // Database type flags (defined early for use in useEffect)
+  const isClickHouse = dbType === 'clickhouse'
+  const isOracle = dbType === 'oracle'
+
   useEffect(() => {
     setTableName('')
     setTableComment('')
@@ -119,7 +139,38 @@ export function CreateTableInline({
     setTriggers([])
     setActiveTab('columns')
     setError(null)
+    // Reset ClickHouse distributed table options
+    setChTableType('local')
+    setChCluster('')
+    setChShardingKey('rand()')
+    setChLocalTableName('')
+    setChClusters([])
   }, [database])
+
+  // Fetch ClickHouse clusters when distributed table is selected
+  useEffect(() => {
+    if (!isClickHouse || chTableType !== 'distributed') return
+    if (chClusters.length > 0) return // Already loaded
+
+    const fetchClusters = async () => {
+      setChClustersLoading(true)
+      try {
+        const clusters = await invoke<ClusterInfo[]>('db_get_clickhouse_clusters', {
+          connectionId,
+        })
+        setChClusters(clusters)
+        // Auto-select first cluster if available
+        if (clusters.length > 0 && !chCluster) {
+          setChCluster(clusters[0].name)
+        }
+      } catch (err) {
+        console.error('Failed to load clusters:', err)
+      } finally {
+        setChClustersLoading(false)
+      }
+    }
+    fetchClusters()
+  }, [isClickHouse, chTableType, connectionId, chCluster, chClusters.length])
 
   // Get dynamic configuration based on database type
   const columnTypes = useMemo(() => getDataTypeNames(dbType as DatabaseType), [dbType])
@@ -129,7 +180,6 @@ export function CreateTableInline({
   const fkActions = useMemo(() => getForeignKeyActions(dbType as DatabaseType), [dbType])
 
   // Oracle doesn't support ON UPDATE for foreign keys
-  const isOracle = dbType === 'oracle'
   const supportsOnUpdate = !isOracle
 
   // Use dialect's quote functions
@@ -263,6 +313,7 @@ export function CreateTableInline({
     const defs: string[] = []
     const isPostgres = dbType === 'postgresql'
     const isMySQLLike = dbType === 'mysql' || dbType === 'mariadb'
+    const isCH = dbType === 'clickhouse'
 
     validColumns.forEach((col) => {
       let def = `  ${q(col.name)} ${col.type}`
@@ -272,14 +323,15 @@ export function CreateTableInline({
         def += col.scale ? `(${col.length},${col.scale})` : `(${col.length})`
       }
       if (!col.nullable) def += ' NOT NULL'
-      if (col.autoIncrement) {
+      if (col.autoIncrement && !isCH) {
         // PostgreSQL uses SERIAL/BIGSERIAL, MySQL uses AUTO_INCREMENT, Oracle uses GENERATED AS IDENTITY
+        // ClickHouse doesn't support auto increment
         if (isOracle) def += ' GENERATED ALWAYS AS IDENTITY'
         else if (!isPostgres) def += ' AUTO_INCREMENT'
       }
       if (col.defaultValue) def += ` DEFAULT ${col.defaultValue}`
-      // COMMENT syntax is MySQL/MariaDB-specific (inline)
-      if (col.comment && isMySQLLike) def += ` COMMENT '${col.comment.replace(/'/g, "''")}'`
+      // COMMENT syntax is MySQL/MariaDB/ClickHouse-specific (inline)
+      if (col.comment && (isMySQLLike || isCH)) def += ` COMMENT '${col.comment.replace(/'/g, "''")}'`
       defs.push(def)
     })
 
@@ -305,13 +357,43 @@ export function CreateTableInline({
       defs.push(`  CONSTRAINT ${q(chk.name)} CHECK (${chk.expression})`)
     })
 
-    let sql = `CREATE TABLE ${qTable(database, tableName)} (\n${defs.join(',\n')}\n)`
-    // Engine and charset are MySQL/MariaDB-specific
-    if (isMySQLLike) {
-      sql += ` ENGINE=${engine} DEFAULT CHARSET=${charset}`
-      if (tableComment) sql += ` COMMENT='${tableComment.replace(/'/g, "''")}'`
+    let sql = ''
+
+    // ClickHouse distributed table requires special handling
+    if (isCH && chTableType === 'distributed') {
+      // Generate SQL for distributed table (creates both local and distributed tables)
+      const localName = chLocalTableName.trim() || `${tableName}_local`
+
+      // First create the local table
+      sql = `-- Create local table on each node\n`
+      sql += `CREATE TABLE ${qTable(database, localName)} ON CLUSTER ${q(chCluster)} (\n${defs.join(',\n')}\n)`
+      sql += `\nENGINE = ${engine || 'MergeTree'}`
+      const orderByCols = pkCols.length > 0 ? pkCols : [q(validColumns[0].name)]
+      sql += `\nORDER BY (${orderByCols.join(', ')})`
+      if (tableComment) sql += `\nCOMMENT '${tableComment.replace(/'/g, "''")}'`
+      sql += ';\n\n'
+
+      // Then create the distributed table
+      sql += `-- Create distributed table\n`
+      sql += `CREATE TABLE ${qTable(database, tableName)} ON CLUSTER ${q(chCluster)} AS ${qTable(database, localName)}`
+      sql += `\nENGINE = Distributed(${q(chCluster)}, ${q(database)}, ${q(localName)}, ${chShardingKey || 'rand()'})`
+      sql += ';'
+    } else {
+      sql = `CREATE TABLE ${qTable(database, tableName)} (\n${defs.join(',\n')}\n)`
+      // Engine and charset are MySQL/MariaDB-specific
+      if (isMySQLLike) {
+        sql += ` ENGINE=${engine} DEFAULT CHARSET=${charset}`
+        if (tableComment) sql += ` COMMENT='${tableComment.replace(/'/g, "''")}'`
+      } else if (isCH) {
+        // ClickHouse requires ENGINE and ORDER BY for MergeTree family
+        sql += `\nENGINE = ${engine || 'MergeTree'}`
+        // Use primary key columns for ORDER BY if available, otherwise use first column
+        const orderByCols = pkCols.length > 0 ? pkCols : [q(validColumns[0].name)]
+        sql += `\nORDER BY (${orderByCols.join(', ')})`
+        if (tableComment) sql += `\nCOMMENT '${tableComment.replace(/'/g, "''")}'`
+      }
+      sql += ';'
     }
-    sql += ';'
 
     // PostgreSQL and Oracle index creation is separate
     if (isPostgres || isOracle) {
@@ -362,7 +444,9 @@ export function CreateTableInline({
     }
   }
 
-  const canCreate = tableName.trim() && columns.some((c) => c.name.trim())
+  // ClickHouse distributed tables require cluster name
+  const canCreate = tableName.trim() && columns.some((c) => c.name.trim()) &&
+    (!isClickHouse || chTableType !== 'distributed' || chCluster.trim())
   const canAdd = activeTab !== 'advanced'
   const availableColumns = columns.filter(c => c.name.trim()).map(c => c.name)
 
@@ -379,14 +463,16 @@ export function CreateTableInline({
     inputBg, borderColor, textPrimary
   )
 
-  const tabs: { key: TabType; label: string }[] = [
-    { key: 'columns', label: t('database.columns') },
-    { key: 'indexes', label: t('database.indexes') },
-    { key: 'foreignKeys', label: t('database.foreignKeys') },
-    { key: 'constraints', label: t('database.constraints') },
-    { key: 'triggers', label: t('database.triggers') },
-    { key: 'advanced', label: t('database.advanced') },
+  // ClickHouse doesn't support foreign keys, CHECK constraints, or triggers
+  const allTabs: { key: TabType; label: string; supported: boolean }[] = [
+    { key: 'columns', label: t('database.columns'), supported: true },
+    { key: 'indexes', label: t('database.indexes'), supported: true },
+    { key: 'foreignKeys', label: t('database.foreignKeys'), supported: !isClickHouse },
+    { key: 'constraints', label: t('database.constraints'), supported: !isClickHouse },
+    { key: 'triggers', label: t('database.triggers'), supported: !isClickHouse },
+    { key: 'advanced', label: t('database.advanced'), supported: true },
   ]
+  const tabs = allTabs.filter(tab => tab.supported)
 
   return (
     <div className="flex flex-col h-full">
@@ -468,7 +554,7 @@ export function CreateTableInline({
                 <th className={cn('px-2 py-2 text-left font-medium w-16', textSecondary)}>{t('database.length')}</th>
                 <th className={cn('px-2 py-2 text-center font-medium w-10', textSecondary)}>NN</th>
                 <th className={cn('px-2 py-2 text-center font-medium w-10', textSecondary)}>PK</th>
-                <th className={cn('px-2 py-2 text-center font-medium w-10', textSecondary)}>AI</th>
+                {!isClickHouse && <th className={cn('px-2 py-2 text-center font-medium w-10', textSecondary)}>AI</th>}
                 <th className={cn('px-2 py-2 text-left font-medium w-24', textSecondary)}>{t('database.defaultValue')}</th>
                 <th className={cn('px-2 py-2 text-left font-medium', textSecondary)}>{t('database.comment')}</th>
                 <th className="w-10"></th>
@@ -518,14 +604,16 @@ export function CreateTableInline({
                       className="w-4 h-4"
                     />
                   </td>
-                  <td className="px-2 py-1 text-center">
-                    <input
-                      type="checkbox"
-                      checked={col.autoIncrement}
-                      onChange={(e) => updateColumn(col.id, { autoIncrement: e.target.checked })}
-                      className="w-4 h-4"
-                    />
-                  </td>
+                  {!isClickHouse && (
+                    <td className="px-2 py-1 text-center">
+                      <input
+                        type="checkbox"
+                        checked={col.autoIncrement}
+                        onChange={(e) => updateColumn(col.id, { autoIncrement: e.target.checked })}
+                        className="w-4 h-4"
+                      />
+                    </td>
+                  )}
                   <td className="px-2 py-1">
                     <input
                       type="text"
@@ -833,8 +921,18 @@ export function CreateTableInline({
         {/* Advanced Tab */}
         {activeTab === 'advanced' && (
           <div className="p-4">
-            <div className="grid grid-cols-3 gap-4 max-w-2xl">
-              {/* Engine selector - MySQL/MariaDB only */}
+            <div className="grid grid-cols-3 gap-4 max-w-3xl">
+              {/* ClickHouse table type selector */}
+              {isClickHouse && (
+                <div>
+                  <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.tableType', { defaultValue: 'Table Type' })}</label>
+                  <select className={cn(inputClass, 'w-full')} value={chTableType} onChange={(e) => setChTableType(e.target.value as 'local' | 'distributed')}>
+                    <option value="local">{t('database.localTable', { defaultValue: 'Local Table' })}</option>
+                    <option value="distributed">{t('database.distributedTable', { defaultValue: 'Distributed Table' })}</option>
+                  </select>
+                </div>
+              )}
+              {/* Engine selector - MySQL/MariaDB/ClickHouse */}
               {engines.length > 0 && (
                 <div>
                   <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.engine')}</label>
@@ -852,13 +950,72 @@ export function CreateTableInline({
                   </select>
                 </div>
               )}
+              {/* ClickHouse distributed table options */}
+              {isClickHouse && chTableType === 'distributed' && (
+                <>
+                  <div>
+                    <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.clusterName', { defaultValue: 'Cluster Name' })}</label>
+                    <div className="relative">
+                      <select
+                        className={cn(inputClass, 'w-full', chClustersLoading && 'opacity-50')}
+                        value={chCluster}
+                        onChange={(e) => setChCluster(e.target.value)}
+                        disabled={chClustersLoading}
+                      >
+                        {chClusters.length === 0 && !chClustersLoading && (
+                          <option value="">{t('database.noClusters', { defaultValue: 'No clusters found' })}</option>
+                        )}
+                        {chClusters.map((cluster) => (
+                          <option key={cluster.name} value={cluster.name}>
+                            {cluster.name} ({cluster.shard_count} shards, {cluster.replica_count} replicas)
+                          </option>
+                        ))}
+                      </select>
+                      {chClustersLoading && (
+                        <Loader2 className="absolute right-8 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-accent-primary" />
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.shardingKey', { defaultValue: 'Sharding Key' })}</label>
+                    <input
+                      type="text"
+                      placeholder="rand()"
+                      className={cn(inputClass, 'w-full')}
+                      value={chShardingKey}
+                      onChange={(e) => setChShardingKey(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className={cn('block text-sm mb-1', textSecondary)}>{t('database.localTableName', { defaultValue: 'Local Table Name' })}</label>
+                    <input
+                      type="text"
+                      placeholder={tableName ? `${tableName}_local` : 'auto'}
+                      className={cn(inputClass, 'w-full')}
+                      value={chLocalTableName}
+                      onChange={(e) => setChLocalTableName(e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
               {/* Show message if no advanced options available */}
-              {engines.length === 0 && charsets.length === 0 && (
+              {engines.length === 0 && charsets.length === 0 && !isClickHouse && (
                 <div className={cn('col-span-3 text-center py-4', textSecondary)}>
                   {t('database.noAdvancedOptions', { defaultValue: 'No advanced options available for this database type' })}
                 </div>
               )}
             </div>
+            {/* ClickHouse sharding key examples */}
+            {isClickHouse && chTableType === 'distributed' && (
+              <div className={cn('mt-4 p-3 rounded text-xs', codeBg, textSecondary)}>
+                <div className="font-medium mb-1">{t('database.shardingKeyExamples', { defaultValue: 'Common Sharding Keys:' })}</div>
+                <ul className="space-y-1 ml-2">
+                  <li><code>rand()</code> - {t('database.shardingRandom', { defaultValue: 'Random distribution' })}</li>
+                  <li><code>xxHash64(user_id)</code> - {t('database.shardingHash', { defaultValue: 'Hash by user ID' })}</li>
+                  <li><code>intHash64(order_id)</code> - {t('database.shardingIntHash', { defaultValue: 'Hash by integer order ID' })}</li>
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>

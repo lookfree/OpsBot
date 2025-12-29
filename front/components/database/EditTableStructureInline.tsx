@@ -279,6 +279,7 @@ export function EditTableStructureInline({
     const tbl = qTable(database, tableName)
     const isPg = dbType === 'postgresql'
     const isOracle = dbType === 'oracle'
+    const isCH = dbType === 'clickhouse'
 
     // Drop indexes first
     indexes.filter(i => i.isDeleted && !i.isNew && i.originalName !== 'PRIMARY').forEach(i => {
@@ -310,7 +311,7 @@ export function EditTableStructureInline({
         // MySQL uses MODIFY/CHANGE COLUMN
         let def = `${q(c.name)} ${c.type}${c.length ? `(${c.length})` : ''}`
         if (!c.nullable) def += ' NOT NULL'
-        if (c.autoIncrement) def += ' AUTO_INCREMENT'
+        if (!isCH && c.autoIncrement) def += ' AUTO_INCREMENT'
         if (c.defaultValue) def += ` DEFAULT ${c.defaultValue}`
         if (c.comment) def += ` COMMENT '${c.comment.replace(/'/g, "''")}'`
         stmts.push(c.name !== c.originalName
@@ -323,7 +324,7 @@ export function EditTableStructureInline({
     columns.filter(c => c.isNew && !c.isDeleted && c.name.trim()).forEach(c => {
       let def = `${q(c.name)} ${c.type}${c.length ? `(${c.length})` : ''}`
       if (!c.nullable) def += ' NOT NULL'
-      if (!isPg && c.autoIncrement) def += ' AUTO_INCREMENT'
+      if (!isPg && !isCH && c.autoIncrement) def += ' AUTO_INCREMENT'
       if (c.defaultValue) def += ` DEFAULT ${c.defaultValue}`
       if (!isPg && c.comment) def += ` COMMENT '${c.comment.replace(/'/g, "''")}'`
       stmts.push(`ALTER TABLE ${tbl} ADD COLUMN ${def};`)
@@ -418,14 +419,17 @@ export function EditTableStructureInline({
 
   const inputClass = cn('px-2 py-1 rounded text-sm border focus:outline-none focus:border-accent-primary', inputBg, borderColor, textPrimary)
 
-  const tabs: { key: TabType; label: string }[] = [
-    { key: 'columns', label: t('database.columns') },
-    { key: 'indexes', label: t('database.indexes') },
-    { key: 'foreignKeys', label: t('database.foreignKeys') },
-    { key: 'constraints', label: t('database.constraints') },
-    { key: 'triggers', label: t('database.triggers') },
-    { key: 'advanced', label: t('database.advanced') },
+  // ClickHouse doesn't support foreign keys, CHECK constraints, or triggers
+  const isClickHouse = dbType === 'clickhouse'
+  const allTabs: { key: TabType; label: string; supported: boolean }[] = [
+    { key: 'columns', label: t('database.columns'), supported: true },
+    { key: 'indexes', label: t('database.indexes'), supported: true },
+    { key: 'foreignKeys', label: t('database.foreignKeys'), supported: !isClickHouse },
+    { key: 'constraints', label: t('database.constraints'), supported: !isClickHouse },
+    { key: 'triggers', label: t('database.triggers'), supported: !isClickHouse },
+    { key: 'advanced', label: t('database.advanced'), supported: true },
   ]
+  const tabs = allTabs.filter(tab => tab.supported)
 
   return (
     <div className="flex flex-col h-full">
@@ -483,7 +487,7 @@ export function EditTableStructureInline({
                     <th className={cn('px-2 py-2 text-left font-medium w-28', textSecondary)}>{t('database.type')}</th>
                     <th className={cn('px-2 py-2 text-left font-medium w-16', textSecondary)}>{t('database.length')}</th>
                     <th className={cn('px-2 py-2 text-center font-medium w-10', textSecondary)}>NN</th>
-                    <th className={cn('px-2 py-2 text-center font-medium w-10', textSecondary)}>AI</th>
+                    {!isClickHouse && <th className={cn('px-2 py-2 text-center font-medium w-10', textSecondary)}>AI</th>}
                     <th className={cn('px-2 py-2 text-left font-medium w-24', textSecondary)}>{t('database.defaultValue')}</th>
                     <th className={cn('px-2 py-2 text-left font-medium', textSecondary)}>{t('database.comment')}</th>
                     <th className="w-10"></th>
@@ -515,10 +519,12 @@ export function EditTableStructureInline({
                         <input type="checkbox" checked={!col.nullable} onChange={(e) => updateColumn(col.id, { nullable: !e.target.checked })}
                           disabled={col.isDeleted} className="w-4 h-4" />
                       </td>
-                      <td className="px-2 py-1 text-center">
-                        <input type="checkbox" checked={col.autoIncrement} onChange={(e) => updateColumn(col.id, { autoIncrement: e.target.checked })}
-                          disabled={col.isDeleted} className="w-4 h-4" />
-                      </td>
+                      {!isClickHouse && (
+                        <td className="px-2 py-1 text-center">
+                          <input type="checkbox" checked={col.autoIncrement} onChange={(e) => updateColumn(col.id, { autoIncrement: e.target.checked })}
+                            disabled={col.isDeleted} className="w-4 h-4" />
+                        </td>
+                      )}
                       <td className="px-2 py-1">
                         <input type="text" value={col.defaultValue} onChange={(e) => updateColumn(col.id, { defaultValue: e.target.value })}
                           disabled={col.isDeleted} placeholder="NULL" className={cn(inputClass, 'w-full')} />
