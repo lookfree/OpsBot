@@ -228,8 +228,6 @@ export function RedisFavoriteDialog({
 
   if (!isOpen) return null
 
-  const editingItem = editingId ? favorites.find(f => f.id === editingId) : null
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div

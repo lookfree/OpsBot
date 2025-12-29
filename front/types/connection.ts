@@ -122,7 +122,7 @@ export interface DockerConnection extends ConnectionBase {
 export type MiddlewareType = 'redis' | 'kafka' | 'elasticsearch' | 'clickhouse'
 
 // Redis模式
-export type RedisMode = 'Standalone' | 'Cluster' | 'Sentinel'
+export type RedisMode = 'standalone' | 'cluster' | 'sentinel'
 
 // Redis TLS配置
 export interface RedisTlsConfig {

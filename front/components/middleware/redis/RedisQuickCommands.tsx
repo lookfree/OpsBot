@@ -29,7 +29,7 @@ const QuickCommandButton = memo(function QuickCommandButton({
   cmd,
   onClick,
   disabled,
-  styles,
+  styles: _styles,
 }: {
   cmd: RedisQuickCommand
   onClick: () => void

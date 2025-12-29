@@ -52,7 +52,7 @@ export function RedisMonitor({ connectionId, styles }: RedisMonitorProps) {
   const [isPaused, setIsPaused] = useState(false)
   const [refreshInterval, setRefreshInterval] = useState(1000) // 1 second
   const [history, setHistory] = useState<MetricHistory[]>([])
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Fetch Redis info
   const fetchInfo = useCallback(async () => {

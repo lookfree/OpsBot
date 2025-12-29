@@ -50,7 +50,7 @@ export function RedisConnectionDialog({
     tlsRejectUnauthorized: boolean
   }>({
     name: '',
-    mode: 'Standalone',
+    mode: 'standalone',
     host: '127.0.0.1',
     port: 6379,
     nodes: [''],
@@ -76,7 +76,7 @@ export function RedisConnectionDialog({
         const rc = connection.redisConfig
         setFormData({
           name: connection.name,
-          mode: rc.mode || 'Standalone',
+          mode: rc.mode || 'standalone',
           host: rc.host || '127.0.0.1',
           port: rc.port || 6379,
           nodes: rc.nodes?.length ? rc.nodes : [''],
@@ -91,7 +91,7 @@ export function RedisConnectionDialog({
       } else {
         setFormData({
           name: '',
-          mode: 'Standalone',
+          mode: 'standalone',
           host: '127.0.0.1',
           port: 6379,
           nodes: [''],
@@ -146,14 +146,14 @@ export function RedisConnectionDialog({
       newErrors.name = t('redis.errors.nameRequired', 'Connection name is required')
     }
 
-    if (formData.mode === 'Standalone') {
+    if (formData.mode === 'standalone') {
       if (!formData.host?.trim()) {
         newErrors.host = t('redis.errors.hostRequired', 'Host is required')
       }
       if (!formData.port || formData.port < 1 || formData.port > 65535) {
         newErrors.port = t('redis.errors.invalidPort', 'Invalid port number')
       }
-    } else if (formData.mode === 'Cluster') {
+    } else if (formData.mode === 'cluster') {
       const validNodes = formData.nodes.filter((n) => n.trim())
       if (validNodes.length === 0) {
         newErrors.nodes = t('redis.errors.nodesRequired', 'At least one cluster node is required')
@@ -164,7 +164,7 @@ export function RedisConnectionDialog({
           break
         }
       }
-    } else if (formData.mode === 'Sentinel') {
+    } else if (formData.mode === 'sentinel') {
       const validSentinels = formData.sentinels.filter((s) => s.trim())
       if (validSentinels.length === 0) {
         newErrors.sentinels = t('redis.errors.sentinelsRequired', 'At least one sentinel node is required')
@@ -197,12 +197,12 @@ export function RedisConnectionDialog({
         : undefined,
     }
 
-    if (formData.mode === 'Standalone') {
+    if (formData.mode === 'standalone') {
       config.host = formData.host
       config.port = formData.port
-    } else if (formData.mode === 'Cluster') {
+    } else if (formData.mode === 'cluster') {
       config.nodes = formData.nodes.filter((n) => n.trim())
-    } else if (formData.mode === 'Sentinel') {
+    } else if (formData.mode === 'sentinel') {
       config.sentinels = formData.sentinels.filter((s) => s.trim())
       config.sentinelPassword = formData.sentinelPassword || undefined
       config.masterName = formData.masterName
@@ -355,14 +355,14 @@ export function RedisConnectionDialog({
                   textPrimary
                 )}
               >
-                <option value="Standalone">{t('redis.mode.standalone', 'Standalone')}</option>
-                <option value="Cluster">{t('redis.mode.cluster', 'Cluster')}</option>
-                <option value="Sentinel">{t('redis.mode.sentinel', 'Sentinel')}</option>
+                <option value="standalone">{t('redis.mode.standalone', 'Standalone')}</option>
+                <option value="cluster">{t('redis.mode.cluster', 'Cluster')}</option>
+                <option value="sentinel">{t('redis.mode.sentinel', 'Sentinel')}</option>
               </select>
             </div>
 
             {/* Standalone Config */}
-            {formData.mode === 'Standalone' && (
+            {formData.mode === 'standalone' && (
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
                   <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
@@ -408,7 +408,7 @@ export function RedisConnectionDialog({
             )}
 
             {/* Cluster Nodes */}
-            {formData.mode === 'Cluster' && (
+            {formData.mode === 'cluster' && (
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className={cn('text-sm font-medium', textSecondary)}>
@@ -456,7 +456,7 @@ export function RedisConnectionDialog({
             )}
 
             {/* Sentinel Config */}
-            {formData.mode === 'Sentinel' && (
+            {formData.mode === 'sentinel' && (
               <>
                 <div>
                   <div className="flex items-center justify-between mb-1">
@@ -584,7 +584,7 @@ export function RedisConnectionDialog({
             </div>
 
             {/* Database (only for non-cluster mode) */}
-            {formData.mode !== 'Cluster' && (
+            {formData.mode !== 'cluster' && (
               <div>
                 <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
                   {t('redis.database', 'Database')}

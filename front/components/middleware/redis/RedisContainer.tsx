@@ -83,7 +83,7 @@ export function RedisContainer({ connectionId, className }: RedisContainerProps)
       const rc = connection.redisConfig
       const request: RedisConnectRequest = {
         connectionId: connection.id,
-        mode: rc.mode || 'Standalone',
+        mode: rc.mode || 'standalone',
         host: rc.host,
         port: rc.port,
         nodes: rc.nodes,
