@@ -55,7 +55,6 @@ redis = { version = "0.27", features = ["tokio-comp", "cluster-async"], optional
 bollard = "0.18"
 hyper = "1.4"
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
-hyperlocal = "0.9"
 http-body-util = "0.1"
 
 # Error handling
@@ -81,13 +80,26 @@ ring = "0.17"
 base64 = "0.22"
 
 [features]
-default = ["oracle", "mssql", "dm", "clickhouse", "kafka", "redis"]
-oracle = ["dep:oracle"]
+# Default features: cross-platform pure-Rust dependencies only
+# Native dependencies (oracle, dm, kafka) require system libraries and are opt-in
+default = ["mssql", "clickhouse", "redis"]
+
+# Platform-specific features requiring native libraries
+oracle = ["dep:oracle"]      # Requires Oracle Instant Client
+dm = ["dep:odbc-api"]        # Requires unixODBC
+kafka = ["dep:rdkafka"]      # Requires librdkafka (builds from source with cmake)
+
+# Cross-platform features (pure Rust)
 mssql = ["dep:tiberius"]
-dm = ["dep:odbc-api"]
 clickhouse = ["dep:clickhouse", "dep:reqwest"]
-kafka = ["dep:rdkafka"]
 redis = ["dep:redis"]
+
+# Linux CI build: includes DM (ODBC) and Kafka (cmake build)
+# Does not include Oracle which requires Oracle Instant Client
+linux-ci = ["mssql", "clickhouse", "redis", "dm", "kafka"]
+
+# All features for full functionality (requires all native libraries)
+full = ["oracle", "mssql", "dm", "clickhouse", "kafka", "redis"]
 
 [profile.release]
 strip = true

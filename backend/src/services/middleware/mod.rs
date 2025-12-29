@@ -13,9 +13,11 @@ mod redis;
 mod redis_ops;
 #[cfg(feature = "redis")]
 mod redis_session;
+#[cfg(feature = "kafka")]
 mod session;
 mod traits;
 
+#[cfg(feature = "kafka")]
 pub use session::MiddlewareSession;
 #[cfg(feature = "kafka")]
 pub use traits::MessageQueueDriver;
