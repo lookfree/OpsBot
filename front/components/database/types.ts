@@ -2,7 +2,7 @@
  * Database Component Types
  */
 
-import type { TableStructure, QueryResult } from '@/services/database'
+import type { TableStructure, QueryResult, QueryColumn } from '@/services/database'
 
 // Schema node types
 export type SchemaNodeType =
@@ -36,4 +36,4 @@ export interface ThemeStyles {
   isDark: boolean
 }
 
-export type { QueryResult }
+export type { QueryResult, QueryColumn }
