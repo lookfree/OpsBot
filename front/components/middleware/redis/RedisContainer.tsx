@@ -251,6 +251,7 @@ export function RedisContainer({ connectionId, className }: RedisContainerProps)
             onRefresh={loadServerInfo}
             onSelectDatabase={handleSelectDatabase}
             currentDb={currentDb}
+            isClusterMode={connection?.redisConfig?.mode === 'cluster'}
             styles={styles}
           />
         )}
@@ -267,6 +268,7 @@ export function RedisContainer({ connectionId, className }: RedisContainerProps)
                 databases={databases}
                 currentDb={currentDb}
                 onSelectDatabase={handleSelectDatabase}
+                isClusterMode={connection?.redisConfig?.mode === 'cluster'}
                 styles={styles}
               />
             </div>

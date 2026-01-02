@@ -109,37 +109,25 @@ export function DockerIcon({ className }: IconProps) {
   )
 }
 
+// Elasticsearch Icon - Official Elastic logo
+export function ElasticsearchIcon({ className }: IconProps) {
+  return (
+    <img
+      src="/assets/icons/elasticsearch-icon.svg"
+      alt="Elasticsearch"
+      className={cn('w-4 h-4', className)}
+    />
+  )
+}
+
 // Redis Icon - Redis cube logo
 export function RedisIcon({ className }: IconProps) {
   return (
-    <svg
-      viewBox="0 0 24 24"
+    <img
+      src="/assets/icons/redis-icon.svg"
+      alt="Redis"
       className={cn('w-4 h-4', className)}
-      fill="none"
-    >
-      {/* Redis red cube logo */}
-      <path
-        d="M21.9 11.8L12 17.3 2.1 11.8c-.2-.1-.2-.4 0-.6L12 5.7l9.9 5.5c.2.2.2.5 0 .6z"
-        fill="#DC382D"
-      />
-      <path
-        d="M12 17.3v4.2l-9.9-5.5c-.2-.1-.2-.4 0-.6L12 21.5z"
-        fill="#A41E11"
-      />
-      <path
-        d="M12 17.3v4.2l9.9-5.5c.2-.1.2-.4 0-.6L12 21.5z"
-        fill="#8C1B0F"
-      />
-      <path
-        d="M21.9 8L12 13.5 2.1 8c-.2-.1-.2-.4 0-.6L12 2l9.9 5.5c.2.1.2.4 0 .5z"
-        fill="#DC382D"
-      />
-      <path
-        d="M12 13.5V8l5 2.7z"
-        fill="#FFF"
-        opacity="0.3"
-      />
-    </svg>
+    />
   )
 }
 

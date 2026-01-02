@@ -168,6 +168,68 @@ pub struct RedisScanResponse {
     pub finished: bool,
 }
 
+// ============ Cluster Scan Models ============
+
+/// Cluster node information (for SCAN)
+#[derive(Debug, Clone)]
+pub struct ClusterNodeInfo {
+    pub node_id: String,
+    pub address: String, // host:port
+    pub is_master: bool,
+}
+
+/// Cluster SCAN state (composite cursor)
+#[derive(Debug, Clone)]
+pub struct ClusterScanState {
+    pub node_index: usize,   // Current node index being scanned
+    pub node_cursor: String, // Cursor within current node
+    pub total_nodes: usize,  // Total number of master nodes
+}
+
+impl ClusterScanState {
+    /// Parse composite cursor
+    /// Format: "nodeIndex:nodeCursor" (e.g., "0:1234", "1:0")
+    /// Initial cursor "0" is treated as "0:0"
+    pub fn from_cursor(cursor: &str) -> Result<Self, String> {
+        if cursor == "0" {
+            return Ok(Self {
+                node_index: 0,
+                node_cursor: "0".to_string(),
+                total_nodes: 0, // Will be filled when scanning
+            });
+        }
+
+        let parts: Vec<&str> = cursor.split(':').collect();
+        if parts.len() != 2 {
+            return Err(format!("Invalid cluster cursor format: {}", cursor));
+        }
+
+        Ok(Self {
+            node_index: parts[0]
+                .parse()
+                .map_err(|_| format!("Invalid node index: {}", parts[0]))?,
+            node_cursor: parts[1].to_string(),
+            total_nodes: 0,
+        })
+    }
+
+    /// Generate composite cursor
+    pub fn to_cursor(&self) -> String {
+        format!("{}:{}", self.node_index, self.node_cursor)
+    }
+
+    /// Check if scan is finished (all nodes scanned)
+    pub fn is_finished(&self) -> bool {
+        self.node_index >= self.total_nodes
+    }
+
+    /// Move to next node
+    pub fn next_node(&mut self) {
+        self.node_index += 1;
+        self.node_cursor = "0".to_string();
+    }
+}
+
 // ============ Value Models ============
 
 /// Redis stream entry
@@ -181,13 +243,11 @@ pub struct RedisStreamEntry {
 /// Redis value (supports all types)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
-#[serde(rename_all = "lowercase")]
 pub enum RedisValue {
     String(String),
     List(Vec<String>),
     Set(Vec<String>),
     Hash(Vec<(String, String)>),
-    #[serde(rename = "zset")]
     ZSet(Vec<(String, f64)>), // (member, score)
     Stream(Vec<RedisStreamEntry>),
     None,

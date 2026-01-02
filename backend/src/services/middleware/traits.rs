@@ -3,8 +3,17 @@
 //! Defines the interface for middleware drivers using the strategy pattern.
 //! - MessageQueueDriver: For message queue systems (Kafka, RabbitMQ, etc.)
 //! - CacheDriver: For cache/KV store systems (Redis, Memcached, etc.)
+//! - SearchEngineDriver: For search engines (Elasticsearch, OpenSearch, etc.)
 
 use async_trait::async_trait;
+
+#[cfg(feature = "elasticsearch")]
+use crate::models::{
+    EsBulkOperation, EsBulkResponse, EsClusterHealth, EsClusterStats, EsConnectionInfo,
+    EsCreateDocRequest, EsCreateIndexRequest, EsDocResponse, EsDocument, EsIndexStats,
+    EsIndexSummary, EsNodeInfo, EsSearchRequest, EsSearchResponse, EsShardInfo,
+    EsSqlResponse, EsUpdateDocRequest,
+};
 
 #[cfg(feature = "kafka")]
 use crate::models::{
@@ -188,4 +197,106 @@ pub trait CacheDriver: Send + Sync {
 
     /// Flush all databases
     async fn flush_all(&self, async_mode: bool) -> Result<(), String>;
+}
+
+// ============ Search Engine Driver Trait ============
+
+/// Search engine driver trait - defines the interface for all search engine implementations
+#[cfg(feature = "elasticsearch")]
+#[async_trait]
+pub trait SearchEngineDriver: Send + Sync {
+    // ============ Connection & Lifecycle ============
+
+    /// Test the connection and return connection info
+    async fn test_connection(&self) -> Result<EsConnectionInfo, String>;
+
+    /// Close the connection
+    async fn close(&self);
+
+    // ============ Cluster Operations ============
+
+    /// Get cluster health status
+    async fn get_cluster_health(&self) -> Result<EsClusterHealth, String>;
+
+    /// Get cluster statistics
+    async fn get_cluster_stats(&self) -> Result<EsClusterStats, String>;
+
+    /// Get nodes information
+    async fn get_nodes(&self) -> Result<Vec<EsNodeInfo>, String>;
+
+    /// Get shards information
+    async fn get_shards(&self) -> Result<Vec<EsShardInfo>, String>;
+
+    // ============ Index Operations ============
+
+    /// Get all indices (optionally filtered by pattern)
+    async fn get_indices(&self, pattern: Option<&str>) -> Result<Vec<EsIndexSummary>, String>;
+
+    /// Get index mapping
+    async fn get_index_mapping(&self, index: &str) -> Result<serde_json::Value, String>;
+
+    /// Get index settings
+    async fn get_index_settings(&self, index: &str) -> Result<serde_json::Value, String>;
+
+    /// Get index statistics
+    async fn get_index_stats(&self, index: &str) -> Result<EsIndexStats, String>;
+
+    /// Create a new index
+    async fn create_index(&self, request: EsCreateIndexRequest) -> Result<(), String>;
+
+    /// Delete an index
+    async fn delete_index(&self, index: &str) -> Result<(), String>;
+
+    /// Open an index
+    async fn open_index(&self, index: &str) -> Result<(), String>;
+
+    /// Close an index
+    async fn close_index(&self, index: &str) -> Result<(), String>;
+
+    /// Refresh an index
+    async fn refresh_index(&self, index: &str) -> Result<(), String>;
+
+    /// Update index mapping (add new fields only)
+    /// Note: ES doesn't support modifying existing field mappings
+    async fn update_index_mapping(
+        &self,
+        index: &str,
+        mapping: serde_json::Value,
+    ) -> Result<(), String>;
+
+    /// Update index settings (dynamic settings only)
+    /// Note: Some settings (like number_of_shards) cannot be changed after creation
+    async fn update_index_settings(
+        &self,
+        index: &str,
+        settings: serde_json::Value,
+    ) -> Result<(), String>;
+
+    // ============ Document Operations ============
+
+    /// Get a document by ID
+    async fn get_document(&self, index: &str, id: &str) -> Result<EsDocument, String>;
+
+    /// Create a new document
+    async fn create_document(&self, request: EsCreateDocRequest) -> Result<EsDocResponse, String>;
+
+    /// Update an existing document
+    async fn update_document(&self, request: EsUpdateDocRequest) -> Result<EsDocResponse, String>;
+
+    /// Delete a document by ID
+    async fn delete_document(&self, index: &str, id: &str) -> Result<(), String>;
+
+    /// Execute bulk operations
+    async fn bulk_operation(
+        &self,
+        operations: Vec<EsBulkOperation>,
+    ) -> Result<EsBulkResponse, String>;
+
+    // ============ Search Operations ============
+
+    /// Execute a search query
+    async fn search(&self, request: EsSearchRequest) -> Result<EsSearchResponse, String>;
+
+    /// Execute a SQL query (ES 6.3+)
+    async fn sql_query(&self, query: &str) -> Result<EsSqlResponse, String>;
 }

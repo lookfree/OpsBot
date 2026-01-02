@@ -10,7 +10,9 @@ use super::keys;
 
 /// Get value with auto type detection
 pub async fn get_value(driver: &RedisDriver, key: &str) -> Result<RedisValue, String> {
+    log::info!("Redis get_value: fetching type for key={}", key);
     let key_type = keys::get_key_type(driver, key).await?;
+    log::info!("Redis get_value: key={} type={}", key, key_type);
 
     match key_type.as_str() {
         "string" => get_string(driver, key).await,
@@ -40,7 +42,9 @@ pub async fn set_value(driver: &RedisDriver, request: RedisSetRequest) -> Result
 // ============ String Operations ============
 
 async fn get_string(driver: &RedisDriver, key: &str) -> Result<RedisValue, String> {
+    log::info!("Redis GET: key={}", key);
     let value: String = driver.execute_raw("GET", &[key]).await?;
+    log::info!("Redis GET: key={} value_len={}", key, value.len());
     Ok(RedisValue::String(value))
 }
 

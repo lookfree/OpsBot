@@ -622,3 +622,429 @@ export async function mwRedisFlushDb(connectionId: string, asyncMode: boolean = 
 export async function mwRedisFlushAll(connectionId: string, asyncMode: boolean = false): Promise<void> {
   return invoke('mw_redis_flush_all', { connectionId, asyncMode })
 }
+
+// ============================================================
+// ============ Elasticsearch Types ============
+// ============================================================
+
+// ============ ES Auth Types ============
+
+export type EsAuthType = 'none' | 'basic' | 'api_key' | 'cloud'
+
+// ============ ES TLS Config ============
+
+export interface EsTlsConfig {
+  enabled: boolean
+  verifyCertificate?: boolean
+  caCert?: string
+  clientCert?: string
+  clientKey?: string
+}
+
+// ============ ES Connection Types ============
+
+export type EsVersion = 'auto' | '5' | '6' | '7' | '8' | '9'
+
+export interface EsConnectRequest {
+  connectionId: string
+  nodes: string[]
+  /** ES version for compatibility. 'auto' for auto detection */
+  version?: EsVersion
+  authType: EsAuthType
+  username?: string
+  password?: string
+  apiKey?: string
+  cloudId?: string
+  tls?: EsTlsConfig
+  /** Whether to use system proxy (default: false for direct connection) */
+  useProxy?: boolean
+}
+
+export interface EsConnectionInfo {
+  connectionId: string
+  clusterName: string
+  clusterUuid: string
+  version: string
+  connectedAt: string
+}
+
+// ============ ES Cluster Types ============
+
+export interface EsClusterHealth {
+  clusterName: string
+  status: string
+  numberOfNodes: number
+  numberOfDataNodes: number
+  activePrimaryShards: number
+  activeShards: number
+  relocatingShards: number
+  initializingShards: number
+  unassignedShards: number
+  delayedUnassignedShards: number
+  numberOfPendingTasks: number
+  numberOfInFlightFetch: number
+  taskMaxWaitingInQueueMillis: number
+  activeShardsPercentAsNumber: number
+}
+
+export interface EsClusterStats {
+  clusterName: string
+  clusterUuid: string
+  status: string
+  indicesCount: number
+  totalShards: number
+  docsCount: number
+  storeSizeBytes: number
+  storeSize: string
+}
+
+export interface EsNodeInfo {
+  id: string
+  name: string
+  ip: string
+  roles: string[]
+  version: string
+  heapPercent: number
+  heapCurrent: string
+  heapMax: string
+  diskPercent?: number
+  diskUsed?: string
+  diskTotal?: string
+  cpuPercent?: number
+  load1m?: number
+  master: boolean
+}
+
+export interface EsShardInfo {
+  index: string
+  shard: number
+  primary: boolean
+  state: string
+  docs?: number
+  size?: string
+  node?: string
+  unassignedReason?: string
+}
+
+// ============ ES Index Types ============
+
+export interface EsIndexSummary {
+  name: string
+  health: string
+  status: string
+  uuid: string
+  docsCount: number
+  docsDeleted: number
+  storeSize: string
+  primaryShards: number
+  replicaShards: number
+}
+
+export interface EsIndexStats {
+  name: string
+  docsCount: number
+  docsDeleted: number
+  storeSizeBytes: number
+  storeSize: string
+  primaryShards: number
+  replicaShards: number
+  indexingTotal: number
+  searchQueryTotal: number
+}
+
+export interface EsCreateIndexRequest {
+  name: string
+  settings?: Record<string, unknown>
+  mappings?: Record<string, unknown>
+}
+
+// ============ ES Document Types ============
+
+export interface EsDocument {
+  index: string
+  id: string
+  version: number
+  source: Record<string, unknown>
+}
+
+export interface EsDocResponse {
+  index: string
+  id: string
+  version: number
+  result: string
+}
+
+export interface EsCreateDocRequest {
+  index: string
+  id?: string
+  source: Record<string, unknown>
+}
+
+export interface EsUpdateDocRequest {
+  index: string
+  id: string
+  doc: Record<string, unknown>
+}
+
+export type EsBulkOperationType = 'index' | 'create' | 'update' | 'delete'
+
+export interface EsBulkOperation {
+  operation: EsBulkOperationType
+  index: string
+  id?: string
+  source?: Record<string, unknown>
+}
+
+export interface EsBulkItemResponse {
+  operation: string
+  index: string
+  id: string
+  status: number
+  error?: string
+}
+
+export interface EsBulkResponse {
+  took: number
+  errors: boolean
+  items: EsBulkItemResponse[]
+}
+
+// ============ ES Search Types ============
+
+export interface EsSearchRequest {
+  index: string
+  query: Record<string, unknown>
+  from?: number
+  size?: number
+  sort?: unknown[]
+  source?: unknown
+}
+
+export interface EsSearchHit {
+  index: string
+  id: string
+  score?: number
+  source: Record<string, unknown>
+}
+
+export interface EsSearchResponse {
+  took: number
+  timedOut: boolean
+  total: number
+  maxScore?: number
+  hits: EsSearchHit[]
+}
+
+export interface EsSqlColumn {
+  name: string
+  columnType: string
+}
+
+export interface EsSqlResponse {
+  columns: EsSqlColumn[]
+  rows: unknown[][]
+}
+
+// ============================================================
+// ============ Elasticsearch Functions ============
+// ============================================================
+
+// ============ ES Connection Functions ============
+
+/**
+ * Connect to Elasticsearch cluster
+ */
+export async function mwEsConnect(request: EsConnectRequest): Promise<EsConnectionInfo> {
+  return invoke<EsConnectionInfo>('mw_es_connect', { request })
+}
+
+/**
+ * Disconnect from Elasticsearch
+ */
+export async function mwEsDisconnect(connectionId: string): Promise<void> {
+  return invoke('mw_es_disconnect', { connectionId })
+}
+
+/**
+ * Test Elasticsearch connection
+ */
+export async function mwEsTestConnection(request: EsConnectRequest): Promise<EsConnectionInfo> {
+  return invoke<EsConnectionInfo>('mw_es_test_connection', { request })
+}
+
+/**
+ * Check if Elasticsearch connection is active
+ */
+export async function mwEsIsConnected(connectionId: string): Promise<boolean> {
+  return invoke<boolean>('mw_es_is_connected', { connectionId })
+}
+
+// ============ ES Cluster Functions ============
+
+/**
+ * Get Elasticsearch cluster health
+ */
+export async function mwEsGetClusterHealth(connectionId: string): Promise<EsClusterHealth> {
+  return invoke<EsClusterHealth>('mw_es_get_cluster_health', { connectionId })
+}
+
+/**
+ * Get Elasticsearch cluster statistics
+ */
+export async function mwEsGetClusterStats(connectionId: string): Promise<EsClusterStats> {
+  return invoke<EsClusterStats>('mw_es_get_cluster_stats', { connectionId })
+}
+
+/**
+ * Get Elasticsearch nodes
+ */
+export async function mwEsGetNodes(connectionId: string): Promise<EsNodeInfo[]> {
+  return invoke<EsNodeInfo[]>('mw_es_get_nodes', { connectionId })
+}
+
+/**
+ * Get Elasticsearch shards
+ */
+export async function mwEsGetShards(connectionId: string): Promise<EsShardInfo[]> {
+  return invoke<EsShardInfo[]>('mw_es_get_shards', { connectionId })
+}
+
+// ============ ES Index Functions ============
+
+/**
+ * List Elasticsearch indices
+ */
+export async function mwEsListIndices(connectionId: string, pattern?: string): Promise<EsIndexSummary[]> {
+  return invoke<EsIndexSummary[]>('mw_es_list_indices', { connectionId, pattern })
+}
+
+/**
+ * Get Elasticsearch index mapping
+ */
+export async function mwEsGetIndexMapping(connectionId: string, indexName: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('mw_es_get_index_mapping', { connectionId, indexName })
+}
+
+/**
+ * Get Elasticsearch index settings
+ */
+export async function mwEsGetIndexSettings(connectionId: string, indexName: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('mw_es_get_index_settings', { connectionId, indexName })
+}
+
+/**
+ * Get Elasticsearch index statistics
+ */
+export async function mwEsGetIndexStats(connectionId: string, indexName: string): Promise<EsIndexStats> {
+  return invoke<EsIndexStats>('mw_es_get_index_stats', { connectionId, indexName })
+}
+
+/**
+ * Create Elasticsearch index
+ */
+export async function mwEsCreateIndex(connectionId: string, request: EsCreateIndexRequest): Promise<void> {
+  return invoke('mw_es_create_index', { connectionId, request })
+}
+
+/**
+ * Delete Elasticsearch index
+ */
+export async function mwEsDeleteIndex(connectionId: string, indexName: string): Promise<void> {
+  return invoke('mw_es_delete_index', { connectionId, indexName })
+}
+
+/**
+ * Open Elasticsearch index
+ */
+export async function mwEsOpenIndex(connectionId: string, indexName: string): Promise<void> {
+  return invoke('mw_es_open_index', { connectionId, indexName })
+}
+
+/**
+ * Close Elasticsearch index
+ */
+export async function mwEsCloseIndex(connectionId: string, indexName: string): Promise<void> {
+  return invoke('mw_es_close_index', { connectionId, indexName })
+}
+
+/**
+ * Refresh Elasticsearch index
+ */
+export async function mwEsRefreshIndex(connectionId: string, indexName: string): Promise<void> {
+  return invoke('mw_es_refresh_index', { connectionId, indexName })
+}
+
+/**
+ * Update Elasticsearch index mapping (add new fields only)
+ */
+export async function mwEsUpdateIndexMapping(
+  connectionId: string,
+  indexName: string,
+  mapping: Record<string, unknown>
+): Promise<void> {
+  return invoke('mw_es_update_index_mapping', { connectionId, indexName, mapping })
+}
+
+/**
+ * Update Elasticsearch index settings (dynamic settings only)
+ */
+export async function mwEsUpdateIndexSettings(
+  connectionId: string,
+  indexName: string,
+  settings: Record<string, unknown>
+): Promise<void> {
+  return invoke('mw_es_update_index_settings', { connectionId, indexName, settings })
+}
+
+// ============ ES Document Functions ============
+
+/**
+ * Get Elasticsearch document by ID
+ */
+export async function mwEsGetDocument(connectionId: string, index: string, id: string): Promise<EsDocument> {
+  return invoke<EsDocument>('mw_es_get_document', { connectionId, index, id })
+}
+
+/**
+ * Create Elasticsearch document
+ */
+export async function mwEsCreateDocument(connectionId: string, request: EsCreateDocRequest): Promise<EsDocResponse> {
+  return invoke<EsDocResponse>('mw_es_create_document', { connectionId, request })
+}
+
+/**
+ * Update Elasticsearch document
+ */
+export async function mwEsUpdateDocument(connectionId: string, request: EsUpdateDocRequest): Promise<EsDocResponse> {
+  return invoke<EsDocResponse>('mw_es_update_document', { connectionId, request })
+}
+
+/**
+ * Delete Elasticsearch document
+ */
+export async function mwEsDeleteDocument(connectionId: string, index: string, id: string): Promise<void> {
+  return invoke('mw_es_delete_document', { connectionId, index, id })
+}
+
+/**
+ * Execute bulk Elasticsearch operations
+ */
+export async function mwEsBulkOperation(connectionId: string, operations: EsBulkOperation[]): Promise<EsBulkResponse> {
+  return invoke<EsBulkResponse>('mw_es_bulk_operation', { connectionId, operations })
+}
+
+// ============ ES Search Functions ============
+
+/**
+ * Execute Elasticsearch DSL search
+ */
+export async function mwEsSearch(connectionId: string, request: EsSearchRequest): Promise<EsSearchResponse> {
+  return invoke<EsSearchResponse>('mw_es_search', { connectionId, request })
+}
+
+/**
+ * Execute Elasticsearch SQL query
+ */
+export async function mwEsSqlQuery(connectionId: string, sql: string): Promise<EsSqlResponse> {
+  return invoke<EsSqlResponse>('mw_es_sql_query', { connectionId, sql })
+}

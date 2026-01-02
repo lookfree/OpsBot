@@ -5,7 +5,7 @@
 pub mod crypto_service;
 pub mod database;
 pub mod docker;
-#[cfg(any(feature = "kafka", feature = "redis"))]
+#[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 pub mod middleware;
 pub mod sftp_service;
 pub mod ssh_service;
@@ -13,7 +13,7 @@ pub mod ssh_service;
 pub use crypto_service::CryptoService;
 pub use database::DatabaseService;
 pub use docker::DockerService;
-#[cfg(any(feature = "kafka", feature = "redis"))]
+#[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 pub use middleware::MiddlewareService;
 pub use sftp_service::*;
 pub use ssh_service::*;

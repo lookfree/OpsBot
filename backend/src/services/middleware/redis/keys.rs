@@ -2,11 +2,12 @@
 //!
 //! Handles key scanning, TTL management, deletion, and renaming.
 
-use crate::models::{RedisKeyInfo, RedisScanRequest, RedisScanResponse};
+use crate::models::{ClusterScanState, RedisKeyInfo, RedisScanRequest, RedisScanResponse};
 
 use super::driver::{RedisConnection, RedisDriver};
 
 /// Scan keys with cursor-based pagination
+/// For cluster mode, uses composite cursor format: "nodeIndex:nodeCursor"
 pub async fn scan_keys(
     driver: &RedisDriver,
     request: RedisScanRequest,
@@ -14,24 +15,129 @@ pub async fn scan_keys(
     let pattern = request.pattern.as_deref().unwrap_or("*");
     let count = request.count.unwrap_or(100);
 
-    // Build SCAN command arguments
-    let cursor_str = request.cursor.clone();
+    // Check if cluster mode - use sequential node scanning
+    if driver.is_cluster_mode() {
+        return scan_keys_cluster(driver, &request.cursor, pattern, count).await;
+    }
+
+    // Standalone/Sentinel mode - use existing logic
+    scan_keys_standalone(driver, &request.cursor, pattern, count, request.key_type.as_deref()).await
+}
+
+/// Scan keys in standalone/sentinel mode
+async fn scan_keys_standalone(
+    driver: &RedisDriver,
+    cursor: &str,
+    pattern: &str,
+    count: i64,
+    key_type: Option<&str>,
+) -> Result<RedisScanResponse, String> {
     let count_str = count.to_string();
 
-    let mut args: Vec<&str> = vec![&cursor_str, "MATCH", pattern, "COUNT", &count_str];
+    let mut args: Vec<&str> = vec![cursor, "MATCH", pattern, "COUNT", &count_str];
 
     // Add TYPE filter if specified (Redis 6.0+)
-    let type_filter = request.key_type.as_deref();
-    if let Some(kt) = type_filter {
+    if let Some(kt) = key_type {
         args.push("TYPE");
         args.push(kt);
     }
 
+    log::info!("Redis SCAN (standalone): cursor={}, pattern={}, count={}", cursor, pattern, count);
+
     // Execute SCAN
-    let result: (String, Vec<String>) = driver.execute_raw("SCAN", &args).await?;
-    let (new_cursor, keys) = result;
+    let (new_cursor, keys) = driver.execute_scan(&args).await?;
+
+    log::info!("Redis SCAN (standalone): got {} keys, new_cursor={}", keys.len(), new_cursor);
 
     // Get key metadata
+    let key_infos = get_keys_metadata(driver, keys).await;
+
+    Ok(RedisScanResponse {
+        finished: new_cursor == "0",
+        cursor: new_cursor,
+        keys: key_infos,
+    })
+}
+
+/// Scan keys in cluster mode with composite cursor
+/// Composite cursor format: "nodeIndex:nodeCursor" (e.g., "0:1234", "1:0")
+async fn scan_keys_cluster(
+    driver: &RedisDriver,
+    cursor: &str,
+    pattern: &str,
+    count: i64,
+) -> Result<RedisScanResponse, String> {
+    // Parse composite cursor
+    let mut state = ClusterScanState::from_cursor(cursor)?;
+
+    // Get master nodes list
+    let masters = driver.get_cluster_masters().await?;
+    if masters.is_empty() {
+        return Err("No master nodes found in cluster".to_string());
+    }
+    state.total_nodes = masters.len();
+
+    log::info!(
+        "Redis SCAN (cluster): cursor={}, node_index={}/{}, node_cursor={}, pattern={}",
+        cursor, state.node_index, state.total_nodes, state.node_cursor, pattern
+    );
+
+    // If already finished all nodes
+    if state.is_finished() {
+        return Ok(RedisScanResponse {
+            finished: true,
+            cursor: "0".to_string(),
+            keys: vec![],
+        });
+    }
+
+    // Get current node address
+    let current_node = &masters[state.node_index];
+
+    // Scan current node
+    let (next_node_cursor, keys) = driver
+        .scan_single_node(
+            &current_node.address,
+            &state.node_cursor,
+            Some(pattern),
+            Some(count),
+        )
+        .await?;
+
+    // Update state based on scan result
+    if next_node_cursor == "0" {
+        // Current node finished, move to next node
+        state.next_node();
+    } else {
+        // Continue scanning current node
+        state.node_cursor = next_node_cursor;
+    }
+
+    // Check if all nodes are finished
+    let finished = state.is_finished();
+    let next_cursor = if finished {
+        "0".to_string()
+    } else {
+        state.to_cursor()
+    };
+
+    log::info!(
+        "Redis SCAN (cluster): got {} keys, next_cursor={}, finished={}",
+        keys.len(), next_cursor, finished
+    );
+
+    // Get key metadata
+    let key_infos = get_keys_metadata(driver, keys).await;
+
+    Ok(RedisScanResponse {
+        finished,
+        cursor: next_cursor,
+        keys: key_infos,
+    })
+}
+
+/// Get metadata for a list of keys (type, ttl)
+async fn get_keys_metadata(driver: &RedisDriver, keys: Vec<String>) -> Vec<RedisKeyInfo> {
     let mut key_infos = Vec::with_capacity(keys.len());
     for key in keys {
         let key_type = get_key_type(driver, &key).await.unwrap_or_else(|_| "unknown".to_string());
@@ -44,17 +150,18 @@ pub async fn scan_keys(
             size: None, // Memory usage requires DEBUG OBJECT or MEMORY USAGE
         });
     }
-
-    Ok(RedisScanResponse {
-        finished: new_cursor == "0",
-        cursor: new_cursor,
-        keys: key_infos,
-    })
+    key_infos
 }
 
 /// Get total key count using DBSIZE
 pub async fn get_key_count(driver: &RedisDriver) -> Result<i64, String> {
-    driver.execute_raw("DBSIZE", &[]).await
+    log::info!("Redis DBSIZE: fetching key count");
+
+    // Use cluster-aware execute_dbsize method
+    let count = driver.execute_dbsize().await?;
+
+    log::info!("Redis DBSIZE: got count={}", count);
+    Ok(count)
 }
 
 /// Get key type

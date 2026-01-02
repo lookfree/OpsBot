@@ -19,8 +19,11 @@ import {
   mwKafkaDisconnect,
   mwRedisConnect,
   mwRedisDisconnect,
+  mwEsConnect,
+  mwEsDisconnect,
   type SecurityProtocol as MwSecurityProtocol,
-  type RedisMode
+  type RedisMode,
+  type EsAuthType
 } from '@/services/middleware'
 import { MiddlewareTypeSelector } from './MiddlewareTypeSelector'
 import { getMiddlewareTypeById, type MiddlewareTypeConfig } from '@/config/middlewareTypes'
@@ -36,6 +39,7 @@ interface MiddlewareConnectionDialogProps {
 type DialogStep = 'select-type' | 'connection-form'
 type SecurityProtocol = 'PLAINTEXT' | 'SASL_PLAINTEXT' | 'SASL_SSL' | 'SSL'
 type SaslMechanism = 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512'
+type EsVersion = 'auto' | '5' | '6' | '7' | '8' | '9'
 
 export function MiddlewareConnectionDialog({
   open,
@@ -55,7 +59,7 @@ export function MiddlewareConnectionDialog({
     connection ? getMiddlewareTypeById(connection.middlewareType) || null : null
   )
 
-  // Form data for Kafka and Redis
+  // Form data for Kafka, Redis, and Elasticsearch
   const [formData, setFormData] = useState<{
     name: string
     // Kafka fields
@@ -68,14 +72,24 @@ export function MiddlewareConnectionDialog({
     redisMode: RedisMode
     redisHost: string
     redisPort: number
-    redisNodes: string[]
-    redisSentinels: string[]
+    redisNodesText: string          // 集群节点（多行文本）
+    redisSentinelsText: string      // 哨兵节点（多行文本）
     redisSentinelPassword: string
     redisMasterName: string
     redisPassword: string
     redisDb: number
     redisTlsEnabled: boolean
     redisTlsRejectUnauthorized: boolean
+    // Elasticsearch fields
+    esNodesText: string
+    esVersion: EsVersion
+    esAuthType: EsAuthType
+    esUsername: string
+    esPassword: string
+    esApiKey: string
+    esTlsEnabled: boolean
+    esTlsVerifyCertificate: boolean
+    esUseProxy: boolean
   }>({
     name: connection?.name || '',
     // Kafka defaults
@@ -88,14 +102,24 @@ export function MiddlewareConnectionDialog({
     redisMode: connection?.redisConfig?.mode || 'standalone',
     redisHost: connection?.redisConfig?.host || '127.0.0.1',
     redisPort: connection?.redisConfig?.port || 6379,
-    redisNodes: connection?.redisConfig?.nodes?.length ? connection.redisConfig.nodes : [''],
-    redisSentinels: connection?.redisConfig?.sentinels?.length ? connection.redisConfig.sentinels : [''],
+    redisNodesText: connection?.redisConfig?.nodes?.length ? connection.redisConfig.nodes.join('\n') : '',
+    redisSentinelsText: connection?.redisConfig?.sentinels?.length ? connection.redisConfig.sentinels.join('\n') : '',
     redisSentinelPassword: connection?.redisConfig?.sentinelPassword || '',
     redisMasterName: connection?.redisConfig?.masterName || 'mymaster',
     redisPassword: connection?.redisConfig?.password || '',
     redisDb: connection?.redisConfig?.db || 0,
     redisTlsEnabled: connection?.redisConfig?.tls?.enabled || false,
     redisTlsRejectUnauthorized: connection?.redisConfig?.tls?.rejectUnauthorized ?? true,
+    // Elasticsearch defaults
+    esNodesText: connection?.esConfig?.nodes?.length ? connection.esConfig.nodes.join('\n') : 'http://localhost:9200',
+    esVersion: connection?.esConfig?.version || 'auto',
+    esAuthType: connection?.esConfig?.username ? 'basic' : (connection?.esConfig?.apiKey ? 'api_key' : 'none'),
+    esUsername: connection?.esConfig?.username || '',
+    esPassword: connection?.esConfig?.password || '',
+    esApiKey: connection?.esConfig?.apiKey || '',
+    esTlsEnabled: false,
+    esTlsVerifyCertificate: true,
+    esUseProxy: false,
   })
 
   const [showPassword, setShowPassword] = useState(false)
@@ -121,14 +145,24 @@ export function MiddlewareConnectionDialog({
           redisMode: connection.redisConfig?.mode || 'standalone',
           redisHost: connection.redisConfig?.host || '127.0.0.1',
           redisPort: connection.redisConfig?.port || 6379,
-          redisNodes: connection.redisConfig?.nodes?.length ? connection.redisConfig.nodes : [''],
-          redisSentinels: connection.redisConfig?.sentinels?.length ? connection.redisConfig.sentinels : [''],
+          redisNodesText: connection.redisConfig?.nodes?.length ? connection.redisConfig.nodes.join('\n') : '',
+          redisSentinelsText: connection.redisConfig?.sentinels?.length ? connection.redisConfig.sentinels.join('\n') : '',
           redisSentinelPassword: connection.redisConfig?.sentinelPassword || '',
           redisMasterName: connection.redisConfig?.masterName || 'mymaster',
           redisPassword: connection.redisConfig?.password || '',
           redisDb: connection.redisConfig?.db || 0,
           redisTlsEnabled: connection.redisConfig?.tls?.enabled || false,
           redisTlsRejectUnauthorized: connection.redisConfig?.tls?.rejectUnauthorized ?? true,
+          // Elasticsearch
+          esNodesText: connection.esConfig?.nodes?.length ? connection.esConfig.nodes.join('\n') : 'http://localhost:9200',
+          esVersion: connection.esConfig?.version || 'auto',
+          esAuthType: connection.esConfig?.username ? 'basic' : (connection.esConfig?.apiKey ? 'api_key' : 'none'),
+          esUsername: connection.esConfig?.username || '',
+          esPassword: connection.esConfig?.password || '',
+          esApiKey: connection.esConfig?.apiKey || '',
+          esTlsEnabled: false,
+          esTlsVerifyCertificate: true,
+          esUseProxy: false,
         })
       } else {
         setStep('select-type')
@@ -145,14 +179,24 @@ export function MiddlewareConnectionDialog({
           redisMode: 'standalone',
           redisHost: '127.0.0.1',
           redisPort: 6379,
-          redisNodes: [''],
-          redisSentinels: [''],
+          redisNodesText: '',
+          redisSentinelsText: '',
           redisSentinelPassword: '',
           redisMasterName: 'mymaster',
           redisPassword: '',
           redisDb: 0,
           redisTlsEnabled: false,
           redisTlsRejectUnauthorized: true,
+          // Elasticsearch defaults
+          esNodesText: 'http://localhost:9200',
+          esVersion: 'auto',
+          esAuthType: 'none',
+          esUsername: '',
+          esPassword: '',
+          esApiKey: '',
+          esTlsEnabled: false,
+          esTlsVerifyCertificate: true,
+          esUseProxy: false,
         })
       }
       setErrors({})
@@ -205,27 +249,20 @@ export function MiddlewareConnectionDialog({
     setErrors((prev) => ({ ...prev, bootstrapServers: '' }))
   }, [])
 
-  // Redis node handlers
-  const handleAddRedisNode = useCallback((field: 'redisNodes' | 'redisSentinels') => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: [...prev[field], ''],
-    }))
+  // Parse Redis nodes from textarea (each line is a node)
+  const parseRedisNodes = useCallback((text: string): string[] => {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
   }, [])
 
-  const handleRemoveRedisNode = useCallback((field: 'redisNodes' | 'redisSentinels', index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: prev[field].filter((_, i) => i !== index),
-    }))
-  }, [])
-
-  const handleRedisNodeChange = useCallback((field: 'redisNodes' | 'redisSentinels', index: number, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: prev[field].map((n, i) => (i === index ? value : n)),
-    }))
-    setErrors((prev) => ({ ...prev, [field]: '' }))
+  // Elasticsearch nodes text helper - parse nodes from textarea
+  const parseEsNodes = useCallback((text: string): string[] => {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
   }, [])
 
   const validate = useCallback(() => {
@@ -268,24 +305,24 @@ export function MiddlewareConnectionDialog({
           newErrors.redisPort = t('redis.errors.invalidPort', 'Invalid port number')
         }
       } else if (formData.redisMode === 'cluster') {
-        const validNodes = formData.redisNodes.filter((n) => n.trim())
+        const validNodes = parseRedisNodes(formData.redisNodesText)
         if (validNodes.length === 0) {
-          newErrors.redisNodes = t('redis.errors.nodesRequired', 'At least one cluster node is required')
+          newErrors.redisNodesText = t('redis.errors.nodesRequired', 'At least one cluster node is required')
         }
         for (const node of validNodes) {
-          if (!/^[\w.-]+:\d+$/.test(node.trim())) {
-            newErrors.redisNodes = t('redis.errors.invalidNodeFormat', 'Invalid node format (use host:port)')
+          if (!/^[\w.-]+:\d+$/.test(node)) {
+            newErrors.redisNodesText = t('redis.errors.invalidNodeFormat', 'Invalid node format (use host:port)')
             break
           }
         }
       } else if (formData.redisMode === 'sentinel') {
-        const validSentinels = formData.redisSentinels.filter((s) => s.trim())
+        const validSentinels = parseRedisNodes(formData.redisSentinelsText)
         if (validSentinels.length === 0) {
-          newErrors.redisSentinels = t('redis.errors.sentinelsRequired', 'At least one sentinel node is required')
+          newErrors.redisSentinelsText = t('redis.errors.sentinelsRequired', 'At least one sentinel node is required')
         }
         for (const sentinel of validSentinels) {
-          if (!/^[\w.-]+:\d+$/.test(sentinel.trim())) {
-            newErrors.redisSentinels = t('redis.errors.invalidSentinelFormat', 'Invalid sentinel format (use host:port)')
+          if (!/^[\w.-]+:\d+$/.test(sentinel)) {
+            newErrors.redisSentinelsText = t('redis.errors.invalidSentinelFormat', 'Invalid sentinel format (use host:port)')
             break
           }
         }
@@ -293,11 +330,43 @@ export function MiddlewareConnectionDialog({
           newErrors.redisMasterName = t('redis.errors.masterNameRequired', 'Master name is required')
         }
       }
+    } else if (selectedMwType?.id === 'elasticsearch') {
+      // Elasticsearch validation
+      const validNodes = parseEsNodes(formData.esNodesText)
+      if (validNodes.length === 0) {
+        newErrors.esNodesText = t('elasticsearch.errors.nodesRequired', 'At least one node URL is required')
+      }
+
+      // Validate node URL format (http:// or https:// or host:port)
+      for (const node of validNodes) {
+        // Support formats: http://host:port, https://host:port, or host:port
+        if (!/^(https?:\/\/)?[\w.-]+(:\d+)?/.test(node)) {
+          newErrors.esNodesText = t('elasticsearch.errors.invalidNodeFormat', 'Invalid node format (use http://host:port or host:port)')
+          break
+        }
+      }
+
+      // Validate basic auth credentials
+      if (formData.esAuthType === 'basic') {
+        if (!formData.esUsername?.trim()) {
+          newErrors.esUsername = t('elasticsearch.errors.usernameRequired', 'Username is required for basic auth')
+        }
+        if (!formData.esPassword?.trim()) {
+          newErrors.esPassword = t('elasticsearch.errors.passwordRequired', 'Password is required for basic auth')
+        }
+      }
+
+      // Validate API key
+      if (formData.esAuthType === 'api_key') {
+        if (!formData.esApiKey?.trim()) {
+          newErrors.esApiKey = t('elasticsearch.errors.apiKeyRequired', 'API Key is required')
+        }
+      }
     }
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
-  }, [formData, selectedMwType, t])
+  }, [formData, selectedMwType, t, parseEsNodes, parseRedisNodes])
 
   // Build Redis config from form data
   const buildRedisConfig = useCallback(() => {
@@ -317,15 +386,36 @@ export function MiddlewareConnectionDialog({
       config.host = formData.redisHost
       config.port = formData.redisPort
     } else if (formData.redisMode === 'cluster') {
-      config.nodes = formData.redisNodes.filter((n) => n.trim())
+      config.nodes = parseRedisNodes(formData.redisNodesText)
     } else if (formData.redisMode === 'sentinel') {
-      config.sentinels = formData.redisSentinels.filter((s) => s.trim())
+      config.sentinels = parseRedisNodes(formData.redisSentinelsText)
       config.sentinelPassword = formData.redisSentinelPassword || undefined
       config.masterName = formData.redisMasterName
     }
 
     return config
-  }, [formData])
+  }, [formData, parseRedisNodes])
+
+  // Build Elasticsearch config from form data
+  const buildEsConfig = useCallback(() => {
+    // Parse nodes from textarea, normalize format
+    const nodes = parseEsNodes(formData.esNodesText).map(node => {
+      // If node doesn't have protocol, add http://
+      if (!/^https?:\/\//.test(node)) {
+        return `http://${node}`
+      }
+      return node
+    })
+
+    const config: MiddlewareConnection['esConfig'] = {
+      nodes,
+      version: formData.esVersion !== 'auto' ? formData.esVersion : undefined,
+      username: formData.esAuthType === 'basic' ? formData.esUsername || undefined : undefined,
+      password: formData.esAuthType === 'basic' ? formData.esPassword || undefined : undefined,
+      apiKey: formData.esAuthType === 'api_key' ? formData.esApiKey || undefined : undefined,
+    }
+    return config
+  }, [formData, parseEsNodes])
 
   const handleSave = useCallback(() => {
     if (!validate() || !selectedMwType) return
@@ -377,6 +467,26 @@ export function MiddlewareConnectionDialog({
         const newConnection = createConnection(connectionData as any) as MiddlewareConnection
         onSave?.(newConnection)
       }
+    } else if (selectedMwType.id === 'elasticsearch') {
+      const esConfig = buildEsConfig()
+
+      if (connection) {
+        updateConnection(connection.id, { name: formData.name, esConfig })
+        onSave?.(connection)
+      } else {
+        const connectionData = {
+          name: formData.name,
+          moduleType: ModuleType.Middleware,
+          middlewareType: 'elasticsearch' as const,
+          folderId: folderId ?? null,
+          order: 0,
+          tags: [] as string[],
+          lastConnectedAt: null,
+          esConfig,
+        }
+        const newConnection = createConnection(connectionData as any) as MiddlewareConnection
+        onSave?.(newConnection)
+      }
     }
 
     onOpenChange(false)
@@ -389,6 +499,7 @@ export function MiddlewareConnectionDialog({
     createConnection,
     updateConnection,
     buildRedisConfig,
+    buildEsConfig,
     onSave,
     onOpenChange,
   ])
@@ -447,6 +558,34 @@ export function MiddlewareConnectionDialog({
             .replace('{{version}}', connectionInfo.version || 'unknown')
             .replace('{{keys}}', String(connectionInfo.totalKeys)),
         })
+      } else if (selectedMwType.id === 'elasticsearch') {
+        const esConfig = buildEsConfig()
+        const connectionInfo = await mwEsConnect({
+          connectionId: connection?.id || 'test',
+          nodes: esConfig.nodes!,
+          authType: formData.esAuthType,
+          username: esConfig.username,
+          password: esConfig.password,
+          apiKey: esConfig.apiKey,
+          tls: formData.esTlsEnabled
+            ? {
+                enabled: true,
+                verifyCertificate: formData.esTlsVerifyCertificate,
+              }
+            : undefined,
+          useProxy: formData.esUseProxy,
+        })
+
+        if (!connection?.id) {
+          await mwEsDisconnect('test')
+        }
+
+        setTestResult({
+          success: true,
+          message: t('elasticsearch.connectionSuccess', 'Connection successful! Cluster: {{cluster}}, Version: {{version}}')
+            .replace('{{cluster}}', connectionInfo.clusterName || 'unknown')
+            .replace('{{version}}', connectionInfo.version || 'unknown'),
+        })
       }
     } catch (err) {
       setTestResult({
@@ -456,7 +595,7 @@ export function MiddlewareConnectionDialog({
     } finally {
       setTesting(false)
     }
-  }, [validate, formData, connection, selectedMwType, buildRedisConfig, t])
+  }, [validate, formData, connection, selectedMwType, buildRedisConfig, buildEsConfig, t])
 
   // Theme styles
   const dialogBg = isDark ? 'bg-dark-bg-primary' : 'bg-light-bg-primary'
@@ -811,102 +950,38 @@ export function MiddlewareConnectionDialog({
                       </div>
                     )}
 
-                    {/* Cluster Nodes */}
+                    {/* Cluster Nodes - Textarea */}
                     {formData.redisMode === 'cluster' && (
                       <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className={cn('text-sm font-medium', textSecondary)}>
-                            {t('redis.clusterNodes', 'Cluster Nodes')}
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => handleAddRedisNode('redisNodes')}
-                            className={cn('p-1 rounded transition-colors', hoverBg, 'text-accent-primary')}
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                        <div className="space-y-2">
-                          {formData.redisNodes.map((node, index) => (
-                            <div key={index} className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                value={node}
-                                onChange={(e) => handleRedisNodeChange('redisNodes', index, e.target.value)}
-                                placeholder="host:port"
-                                className={cn(
-                                  'flex-1 px-3 py-2 rounded border text-sm font-mono',
-                                  'focus:outline-none focus:border-accent-primary',
-                                  inputBg,
-                                  borderColor,
-                                  textPrimary,
-                                  errors.redisNodes && 'border-status-error'
-                                )}
-                              />
-                              {formData.redisNodes.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveRedisNode('redisNodes', index)}
-                                  className={cn('p-2 rounded transition-colors', hoverBg, 'text-status-error')}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                        {errors.redisNodes && <p className="text-xs text-status-error mt-1">{errors.redisNodes}</p>}
+                        <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                          {t('redis.clusterNodes', 'Cluster Nodes')}
+                        </label>
+                        <textarea
+                          value={formData.redisNodesText}
+                          onChange={(e) => handleChange('redisNodesText', e.target.value)}
+                          placeholder={t('redis.clusterNodesPlaceholder', 'Enter cluster nodes, one per line\nExample:\n192.168.1.101:7001\n192.168.1.102:7002\n192.168.1.103:7003')}
+                          rows={5}
+                          className={cn(
+                            'w-full px-3 py-2 rounded border text-sm font-mono',
+                            'focus:outline-none focus:border-accent-primary',
+                            'resize-none',
+                            inputBg,
+                            borderColor,
+                            textPrimary,
+                            errors.redisNodesText && 'border-status-error'
+                          )}
+                        />
+                        <p className={cn('text-xs mt-1', textSecondary)}>
+                          {t('redis.clusterNodesHint', 'One node per line. Format: host:port. At least one node is required, the client will auto-discover other nodes.')}
+                        </p>
+                        {errors.redisNodesText && <p className="text-xs text-status-error mt-1">{errors.redisNodesText}</p>}
                       </div>
                     )}
 
                     {/* Sentinel Config */}
                     {formData.redisMode === 'sentinel' && (
                       <>
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className={cn('text-sm font-medium', textSecondary)}>
-                              {t('redis.sentinelNodes', 'Sentinel Nodes')}
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => handleAddRedisNode('redisSentinels')}
-                              className={cn('p-1 rounded transition-colors', hoverBg, 'text-accent-primary')}
-                            >
-                              <Plus className="w-4 h-4" />
-                            </button>
-                          </div>
-                          <div className="space-y-2">
-                            {formData.redisSentinels.map((sentinel, index) => (
-                              <div key={index} className="flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={sentinel}
-                                  onChange={(e) => handleRedisNodeChange('redisSentinels', index, e.target.value)}
-                                  placeholder="host:port"
-                                  className={cn(
-                                    'flex-1 px-3 py-2 rounded border text-sm font-mono',
-                                    'focus:outline-none focus:border-accent-primary',
-                                    inputBg,
-                                    borderColor,
-                                    textPrimary,
-                                    errors.redisSentinels && 'border-status-error'
-                                  )}
-                                />
-                                {formData.redisSentinels.length > 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveRedisNode('redisSentinels', index)}
-                                    className={cn('p-2 rounded transition-colors', hoverBg, 'text-status-error')}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                          {errors.redisSentinels && <p className="text-xs text-status-error mt-1">{errors.redisSentinels}</p>}
-                        </div>
-
+                        {/* Master Name - 放在最前面 */}
                         <div>
                           <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
                             {t('redis.masterName', 'Master Name')}
@@ -928,15 +1003,42 @@ export function MiddlewareConnectionDialog({
                           {errors.redisMasterName && <p className="text-xs text-status-error mt-1">{errors.redisMasterName}</p>}
                         </div>
 
+                        {/* Sentinel Nodes - Textarea */}
+                        <div>
+                          <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                            {t('redis.sentinelNodes', 'Sentinel Nodes')}
+                          </label>
+                          <textarea
+                            value={formData.redisSentinelsText}
+                            onChange={(e) => handleChange('redisSentinelsText', e.target.value)}
+                            placeholder={t('redis.sentinelNodesPlaceholder', 'Enter sentinel nodes, one per line\nExample:\n192.168.1.101:26379\n192.168.1.102:26379\n192.168.1.103:26379')}
+                            rows={4}
+                            className={cn(
+                              'w-full px-3 py-2 rounded border text-sm font-mono',
+                              'focus:outline-none focus:border-accent-primary',
+                              'resize-none',
+                              inputBg,
+                              borderColor,
+                              textPrimary,
+                              errors.redisSentinelsText && 'border-status-error'
+                            )}
+                          />
+                          <p className={cn('text-xs mt-1', textSecondary)}>
+                            {t('redis.sentinelNodesHint', 'One sentinel per line. Format: host:port. It is recommended to fill in all sentinel nodes for high availability.')}
+                          </p>
+                          {errors.redisSentinelsText && <p className="text-xs text-status-error mt-1">{errors.redisSentinelsText}</p>}
+                        </div>
+
+                        {/* Sentinel Password */}
                         <div>
                           <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
                             {t('redis.sentinelPassword', 'Sentinel Password')}
+                            <span className={cn('ml-1 text-xs', textSecondary)}>({t('redis.optional', 'Optional')})</span>
                           </label>
                           <input
                             type="password"
                             value={formData.redisSentinelPassword}
                             onChange={(e) => handleChange('redisSentinelPassword', e.target.value)}
-                            placeholder={t('redis.optional', 'Optional')}
                             className={cn(
                               'w-full px-3 py-2 rounded border text-sm',
                               'focus:outline-none focus:border-accent-primary',
@@ -1032,6 +1134,224 @@ export function MiddlewareConnectionDialog({
                           </label>
                         </div>
                       )}
+                    </div>
+                  </>
+                )}
+
+                {/* Elasticsearch specific fields */}
+                {selectedMwType?.id === 'elasticsearch' && (
+                  <>
+                    {/* Cluster Nodes - Textarea */}
+                    <div>
+                      <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                        {t('elasticsearch.clusterNodes', 'Cluster Nodes')}
+                      </label>
+                      <textarea
+                        value={formData.esNodesText}
+                        onChange={(e) => handleChange('esNodesText', e.target.value)}
+                        placeholder={t('elasticsearch.nodesPlaceholder', 'Enter cluster nodes, one per line\nExample:\n192.168.1.100:9200\nhttp://192.168.1.101:9200\nhttps://192.168.1.102:9200')}
+                        rows={4}
+                        className={cn(
+                          'w-full px-3 py-2 rounded border text-sm font-mono',
+                          'focus:outline-none focus:border-accent-primary',
+                          'resize-none',
+                          inputBg,
+                          borderColor,
+                          textPrimary,
+                          errors.esNodesText && 'border-status-error'
+                        )}
+                      />
+                      <p className={cn('text-xs mt-1', textSecondary)}>
+                        {t('elasticsearch.nodesHint', 'One node per line. Format: host:port or http(s)://host:port')}
+                      </p>
+                      {errors.esNodesText && <p className="text-xs text-status-error mt-1">{errors.esNodesText}</p>}
+                    </div>
+
+                    {/* ES Version Selector */}
+                    <div>
+                      <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                        {t('elasticsearch.version', 'Elasticsearch Version')}
+                      </label>
+                      <select
+                        value={formData.esVersion}
+                        onChange={(e) => handleChange('esVersion', e.target.value as EsVersion)}
+                        className={cn(
+                          'w-full px-3 py-2 rounded border text-sm',
+                          'focus:outline-none focus:border-accent-primary',
+                          inputBg,
+                          borderColor,
+                          textPrimary
+                        )}
+                      >
+                        <option value="auto">{t('elasticsearch.version.auto', 'Auto Detect')}</option>
+                        <option value="9">9.x</option>
+                        <option value="8">8.x</option>
+                        <option value="7">7.x</option>
+                        <option value="6">6.x</option>
+                        <option value="5">5.x ({t('elasticsearch.version.compatibility', 'Compatibility Mode')})</option>
+                      </select>
+                      <p className={cn('text-xs mt-1', textSecondary)}>
+                        {t('elasticsearch.versionHint', 'Auto detect recommended. Manual selection for custom ES distributions.')}
+                      </p>
+                    </div>
+
+                    {/* Auth Type */}
+                    <div>
+                      <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                        {t('elasticsearch.authType', 'Authentication')}
+                      </label>
+                      <select
+                        value={formData.esAuthType}
+                        onChange={(e) => handleChange('esAuthType', e.target.value as EsAuthType)}
+                        className={cn(
+                          'w-full px-3 py-2 rounded border text-sm',
+                          'focus:outline-none focus:border-accent-primary',
+                          inputBg,
+                          borderColor,
+                          textPrimary
+                        )}
+                      >
+                        <option value="none">{t('elasticsearch.auth.none', 'No Authentication')}</option>
+                        <option value="basic">{t('elasticsearch.auth.basic', 'Basic Auth (Username/Password)')}</option>
+                        <option value="api_key">{t('elasticsearch.auth.apiKey', 'API Key')}</option>
+                      </select>
+                    </div>
+
+                    {/* Basic Auth Fields */}
+                    {formData.esAuthType === 'basic' && (
+                      <>
+                        <div>
+                          <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                            {t('elasticsearch.username', 'Username')}
+                          </label>
+                          <input
+                            type="text"
+                            value={formData.esUsername}
+                            onChange={(e) => handleChange('esUsername', e.target.value)}
+                            placeholder="elastic"
+                            className={cn(
+                              'w-full px-3 py-2 rounded border text-sm',
+                              'focus:outline-none focus:border-accent-primary',
+                              inputBg,
+                              borderColor,
+                              textPrimary,
+                              errors.esUsername && 'border-status-error'
+                            )}
+                          />
+                          {errors.esUsername && <p className="text-xs text-status-error mt-1">{errors.esUsername}</p>}
+                        </div>
+
+                        <div>
+                          <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                            {t('elasticsearch.password', 'Password')}
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showPassword ? 'text' : 'password'}
+                              value={formData.esPassword}
+                              onChange={(e) => handleChange('esPassword', e.target.value)}
+                              className={cn(
+                                'w-full px-3 py-2 pr-10 rounded border text-sm',
+                                'focus:outline-none focus:border-accent-primary',
+                                inputBg,
+                                borderColor,
+                                textPrimary,
+                                errors.esPassword && 'border-status-error'
+                              )}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(!showPassword)}
+                              className={cn('absolute right-2 top-1/2 -translate-y-1/2 p-1', textSecondary)}
+                            >
+                              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                          {errors.esPassword && <p className="text-xs text-status-error mt-1">{errors.esPassword}</p>}
+                        </div>
+                      </>
+                    )}
+
+                    {/* API Key Field */}
+                    {formData.esAuthType === 'api_key' && (
+                      <div>
+                        <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                          {t('elasticsearch.apiKey', 'API Key')}
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            value={formData.esApiKey}
+                            onChange={(e) => handleChange('esApiKey', e.target.value)}
+                            placeholder="Base64 encoded API key"
+                            className={cn(
+                              'w-full px-3 py-2 pr-10 rounded border text-sm font-mono',
+                              'focus:outline-none focus:border-accent-primary',
+                              inputBg,
+                              borderColor,
+                              textPrimary,
+                              errors.esApiKey && 'border-status-error'
+                            )}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className={cn('absolute right-2 top-1/2 -translate-y-1/2 p-1', textSecondary)}
+                          >
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        {errors.esApiKey && <p className="text-xs text-status-error mt-1">{errors.esApiKey}</p>}
+                      </div>
+                    )}
+
+                    {/* TLS Settings */}
+                    <div className={cn('p-3 rounded border', borderColor)}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <input
+                          type="checkbox"
+                          id="esTlsEnabled"
+                          checked={formData.esTlsEnabled}
+                          onChange={(e) => handleChange('esTlsEnabled', e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        <label htmlFor="esTlsEnabled" className={cn('text-sm font-medium', textPrimary)}>
+                          {t('elasticsearch.enableTls', 'Enable TLS/SSL')}
+                        </label>
+                      </div>
+                      {formData.esTlsEnabled && (
+                        <div className="flex items-center gap-2 mt-2 ml-6">
+                          <input
+                            type="checkbox"
+                            id="esTlsVerify"
+                            checked={formData.esTlsVerifyCertificate}
+                            onChange={(e) => handleChange('esTlsVerifyCertificate', e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          <label htmlFor="esTlsVerify" className={cn('text-sm', textSecondary)}>
+                            {t('elasticsearch.verifyCertificate', 'Verify server certificate')}
+                          </label>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Use Proxy */}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="esUseProxy"
+                          checked={formData.esUseProxy}
+                          onChange={(e) => handleChange('esUseProxy', e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        <label htmlFor="esUseProxy" className={cn('text-sm font-medium', textPrimary)}>
+                          {t('elasticsearch.useProxy', 'Use system proxy')}
+                        </label>
+                      </div>
+                      <p className={cn('text-xs mt-1 ml-6', textSecondary)}>
+                        {t('elasticsearch.useProxyHint', 'Enable if the server is only accessible through a proxy')}
+                      </p>
                     </div>
                   </>
                 )}

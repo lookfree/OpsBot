@@ -5,6 +5,8 @@
 pub mod connection;
 pub mod database;
 pub mod docker;
+#[cfg(feature = "elasticsearch")]
+pub mod elasticsearch;
 #[cfg(feature = "kafka")]
 pub mod middleware;
 #[cfg(feature = "redis")]
@@ -15,6 +17,8 @@ pub mod ssh;
 pub use connection::*;
 pub use database::*;
 pub use docker::*;
+#[cfg(feature = "elasticsearch")]
+pub use elasticsearch::*;
 #[cfg(feature = "kafka")]
 pub use middleware::*;
 #[cfg(feature = "redis")]

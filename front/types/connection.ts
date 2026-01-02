@@ -156,6 +156,7 @@ export interface MiddlewareConnection extends ConnectionBase {
   }
   esConfig?: {
     nodes: string[]
+    version?: 'auto' | '5' | '6' | '7' | '8' | '9'
     username?: string
     password?: string
     apiKey?: string

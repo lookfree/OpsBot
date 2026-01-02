@@ -8,12 +8,13 @@ import { cn } from '@/lib/utils'
 import { useTabStore, useConnectionStore } from '@/stores'
 import { TabBar } from './TabBar'
 import { Server, Database, Container, Settings2, AlertTriangle, Table2, Layers } from 'lucide-react'
-import { getDatabaseIcon, KafkaIcon, RedisIcon } from '@/components/icons/DatabaseIcons'
+import { getDatabaseIcon, KafkaIcon, RedisIcon, ElasticsearchIcon } from '@/components/icons/DatabaseIcons'
 import { TerminalContainer } from '@/components/terminal'
 import { DatabaseContainer } from '@/components/database'
 import { ERDiagramDesigner } from '@/components/database/designer'
 import { KafkaContainer } from '@/components/kafka'
 import { RedisContainer } from '@/components/middleware/redis'
+import { ElasticsearchContainer } from '@/components/middleware/elasticsearch'
 import { DockerContainer } from '@/components/docker'
 import { SshConnectionDialog } from '@/components/ssh'
 import { sshConnect } from '@/services'
@@ -108,6 +109,8 @@ export function MainContent({ className }: MainContentProps) {
         segments.push({ icon: KafkaIcon, label: mwConn.name, type: 'middleware' })
       } else if (mwConn.middlewareType === 'redis') {
         segments.push({ icon: RedisIcon, label: mwConn.name, type: 'middleware' })
+      } else if (mwConn.middlewareType === 'elasticsearch') {
+        segments.push({ icon: ElasticsearchIcon, label: mwConn.name, type: 'middleware' })
       } else {
         segments.push({ icon: Settings2, label: mwConn.name, type: 'middleware' })
       }
@@ -361,6 +364,16 @@ function TabContent({
     if (middlewareType === 'redis') {
       return (
         <RedisContainer
+          key={tab.id}
+          connectionId={tab.connectionId}
+          className="h-full"
+        />
+      )
+    }
+
+    if (middlewareType === 'elasticsearch') {
+      return (
+        <ElasticsearchContainer
           key={tab.id}
           connectionId={tab.connectionId}
           className="h-full"

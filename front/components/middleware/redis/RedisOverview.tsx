@@ -34,6 +34,7 @@ interface RedisOverviewProps {
   onRefresh: () => void
   onSelectDatabase: (db: number) => void
   currentDb: number
+  isClusterMode?: boolean
   styles: ThemeStyles
 }
 
@@ -43,6 +44,7 @@ export function RedisOverview({
   onRefresh,
   onSelectDatabase,
   currentDb,
+  isClusterMode = false,
   styles,
 }: RedisOverviewProps) {
   const { t } = useTranslation()
@@ -208,7 +210,7 @@ export function RedisOverview({
                       {db.expires.toLocaleString()}
                     </td>
                     <td className="px-4 py-2 text-center">
-                      {db.db !== currentDb && (
+                      {db.db !== currentDb && !isClusterMode && (
                         <button
                           onClick={() => onSelectDatabase(db.db)}
                           className="px-2 py-1 text-xs rounded bg-accent-primary/20 text-accent-primary hover:bg-accent-primary/30 transition-colors"
@@ -216,9 +218,28 @@ export function RedisOverview({
                           {t('redis.select', 'Select')}
                         </button>
                       )}
+                      {isClusterMode && db.db !== 0 && (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
                     </td>
                   </tr>
                 ))
+              ) : isClusterMode ? (
+                // Cluster mode: only show DB0
+                <tr className={cn('border-b', styles.borderColor, 'bg-accent-primary/10')}>
+                  <td className="px-4 py-2 text-sm">
+                    <span className="font-mono">DB0</span>
+                    <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-accent-primary text-white">
+                      {t('redis.current', 'Current')}
+                    </span>
+                    <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-orange-500/20 text-orange-500">
+                      {t('redis.clusterMode', '集群')}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-sm text-right font-mono">-</td>
+                  <td className="px-4 py-2 text-sm text-right font-mono">-</td>
+                  <td className="px-4 py-2 text-center">-</td>
+                </tr>
               ) : (
                 // Show all 16 databases with 0 keys if no data
                 Array.from({ length: 16 }, (_, i) => (

@@ -40,7 +40,7 @@ import {
   Globe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getDatabaseIcon, KafkaIcon, DockerIcon, RedisIcon } from '@/components/icons/DatabaseIcons'
+import { getDatabaseIcon, KafkaIcon, DockerIcon, RedisIcon, ElasticsearchIcon } from '@/components/icons/DatabaseIcons'
 import { useConnectionStore, useTabStore, createTabFromConnection, MAX_FOLDER_DEPTH } from '@/stores'
 import { sshDisconnect } from '@/services'
 import { dbConnect, dbDisconnect, dbGetDatabases, dbGetSchemas, dbGetObjectsCount, dbGetTables, dbGetViews, dbGetRoutines, dbGetTableDdl, dbDropTable, dbRenameTable } from '@/services/database'
@@ -181,7 +181,6 @@ export function ConnectionTree({
   onEditConnection,
   onCreateConnection,
 }: ConnectionTreeProps) {
-  const { t } = useTranslation()
   const {
     folders,
     toggleFolderExpand,
@@ -558,6 +557,9 @@ function TreeNodeItem({
       }
       if (mwConnection.middlewareType === 'redis') {
         return RedisIcon
+      }
+      if (mwConnection.middlewareType === 'elasticsearch') {
+        return ElasticsearchIcon
       }
     }
     return connectionIcons[moduleType]

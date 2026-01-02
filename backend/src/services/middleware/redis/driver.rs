@@ -3,6 +3,7 @@
 //! Main entry point for Redis operations.
 //! Handles connection management and delegates to specialized modules.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,8 +12,8 @@ use redis::Client;
 use tokio::sync::Mutex;
 
 use crate::models::{
-    RedisCommandResult, RedisConnectRequest, RedisDatabaseInfo, RedisInfo, RedisMode,
-    RedisScanRequest, RedisScanResponse, RedisSetRequest, RedisValue,
+    ClusterNodeInfo, RedisCommandResult, RedisConnectRequest, RedisDatabaseInfo, RedisInfo,
+    RedisMode, RedisScanRequest, RedisScanResponse, RedisSetRequest, RedisValue,
 };
 use crate::services::middleware::traits::CacheDriver;
 
@@ -62,10 +63,14 @@ impl RedisDriver {
 
     /// Connect to Redis cluster
     async fn connect_cluster(config: &RedisConnectRequest) -> Result<RedisConnection, String> {
-        let nodes = config
+        let raw_nodes = config
             .nodes
             .as_ref()
-            .ok_or("Cluster nodes required")?
+            .ok_or("Cluster nodes required")?;
+
+        log::info!("Redis cluster: received {} raw nodes: {:?}", raw_nodes.len(), raw_nodes);
+
+        let nodes = raw_nodes
             .iter()
             .map(|n| {
                 // Build URL with password if provided
@@ -89,6 +94,16 @@ impl RedisDriver {
                 }
             })
             .collect::<Vec<_>>();
+
+        log::info!("Redis cluster: connecting to nodes: {:?}", nodes.iter().map(|n| {
+            // Hide password in log
+            if n.contains("@") {
+                let parts: Vec<&str> = n.split("@").collect();
+                format!("{}://***@{}", parts[0].split("://").next().unwrap_or("redis"), parts.get(1).unwrap_or(&""))
+            } else {
+                n.clone()
+            }
+        }).collect::<Vec<_>>());
 
         let client = redis::cluster::ClusterClient::new(nodes)
             .map_err(|e| format!("Failed to create cluster client: {}", e))?;
@@ -201,22 +216,33 @@ impl RedisDriver {
         cmd: &str,
         args: &[&str],
     ) -> Result<T, String> {
+        log::debug!("Redis execute_raw: cmd={} args={:?}", cmd, args);
+
         let mut conn = self.get_connection().await;
         let mut redis_cmd = redis::cmd(cmd);
         for arg in args {
             redis_cmd.arg(*arg);
         }
 
-        match &mut *conn {
+        let result = match &mut *conn {
             RedisConnection::Standalone(c) => redis_cmd
                 .query_async(c)
                 .await
-                .map_err(|e| format!("Command failed: {}", e)),
+                .map_err(|e| {
+                    log::error!("Redis standalone command failed: cmd={} error={}", cmd, e);
+                    format!("Command failed: {}", e)
+                }),
             RedisConnection::Cluster(c) => redis_cmd
                 .query_async(c)
                 .await
-                .map_err(|e| format!("Command failed: {}", e)),
-        }
+                .map_err(|e| {
+                    log::error!("Redis cluster command failed: cmd={} error={}", cmd, e);
+                    format!("Command failed: {}", e)
+                }),
+        };
+
+        log::debug!("Redis execute_raw: cmd={} success={}", cmd, result.is_ok());
+        result
     }
 
     /// Execute a raw Redis command with String args
@@ -240,6 +266,137 @@ impl RedisDriver {
                 .query_async(c)
                 .await
                 .map_err(|e| format!("Command failed: {}", e)),
+        }
+    }
+
+    /// Execute INFO command - handles cluster mode returning Map<node, info>
+    /// For cluster mode, picks the first master node's response
+    pub(crate) async fn execute_info(&self, section: Option<&str>) -> Result<String, String> {
+        log::debug!("Redis execute_info: section={:?}", section);
+
+        let mut conn = self.get_connection().await;
+        let mut redis_cmd = redis::cmd("INFO");
+        if let Some(sec) = section {
+            redis_cmd.arg(sec);
+        }
+
+        match &mut *conn {
+            RedisConnection::Standalone(c) => redis_cmd
+                .query_async::<String>(c)
+                .await
+                .map_err(|e| {
+                    log::error!("Redis standalone INFO failed: {}", e);
+                    format!("INFO failed: {}", e)
+                }),
+            RedisConnection::Cluster(c) => {
+                // Cluster mode returns HashMap<String, String> where key is node address
+                let result: HashMap<String, String> = redis_cmd
+                    .query_async(c)
+                    .await
+                    .map_err(|e| {
+                        log::error!("Redis cluster INFO failed: {}", e);
+                        format!("INFO failed: {}", e)
+                    })?;
+
+                log::debug!("Redis cluster INFO: got {} node responses", result.len());
+
+                // Return the first node's response (preferably a master)
+                if let Some((node, info)) = result.into_iter().next() {
+                    log::debug!("Using INFO from node: {}", node);
+                    Ok(info)
+                } else {
+                    Err("No nodes returned INFO".to_string())
+                }
+            }
+        }
+    }
+
+    /// Execute DBSIZE command - for cluster mode, sums up all nodes
+    pub(crate) async fn execute_dbsize(&self) -> Result<i64, String> {
+        log::debug!("Redis execute_dbsize");
+
+        let mut conn = self.get_connection().await;
+        let redis_cmd = redis::cmd("DBSIZE");
+
+        match &mut *conn {
+            RedisConnection::Standalone(c) => redis_cmd
+                .clone()
+                .query_async::<i64>(c)
+                .await
+                .map_err(|e| {
+                    log::error!("Redis standalone DBSIZE failed: {}", e);
+                    format!("DBSIZE failed: {}", e)
+                }),
+            RedisConnection::Cluster(c) => {
+                // Try as i64 first (redis-rs may already aggregate)
+                match redis_cmd.clone().query_async::<i64>(c).await {
+                    Ok(total) => {
+                        log::debug!("Redis cluster DBSIZE: got aggregated total {}", total);
+                        Ok(total)
+                    }
+                    Err(_) => {
+                        // Fallback: try as HashMap<String, i64>
+                        let result: HashMap<String, i64> = redis_cmd
+                            .clone()
+                            .query_async(c)
+                            .await
+                            .map_err(|e| {
+                                log::error!("Redis cluster DBSIZE failed: {}", e);
+                                format!("DBSIZE failed: {}", e)
+                            })?;
+
+                        let total: i64 = result.values().sum();
+                        log::debug!("Redis cluster DBSIZE: total {} from {} nodes", total, result.len());
+                        Ok(total)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Execute SCAN command - for cluster mode, handles aggregated response
+    /// Returns (cursor, keys) tuple
+    pub(crate) async fn execute_scan(&self, args: &[&str]) -> Result<(String, Vec<String>), String> {
+        log::debug!("Redis execute_scan: args={:?}", args);
+
+        let mut conn = self.get_connection().await;
+        let mut redis_cmd = redis::cmd("SCAN");
+        for arg in args {
+            redis_cmd.arg(*arg);
+        }
+
+        match &mut *conn {
+            RedisConnection::Standalone(c) => redis_cmd
+                .query_async::<(String, Vec<String>)>(c)
+                .await
+                .map_err(|e| {
+                    log::error!("Redis standalone SCAN failed: {}", e);
+                    format!("SCAN failed: {}", e)
+                }),
+            RedisConnection::Cluster(c) => {
+                // Cluster mode: redis-rs aggregates SCAN from all nodes
+                // It returns a flat Vec<String> of all keys (already aggregated)
+                match redis_cmd.clone().query_async::<Vec<String>>(c).await {
+                    Ok(keys) => {
+                        log::debug!("Redis cluster SCAN: got {} aggregated keys", keys.len());
+                        // All keys returned at once, cursor is "0" (finished)
+                        Ok(("0".to_string(), keys))
+                    }
+                    Err(e1) => {
+                        // Fallback: try as tuple (some versions may return this)
+                        match redis_cmd.clone().query_async::<(String, Vec<String>)>(c).await {
+                            Ok(result) => {
+                                log::debug!("Redis cluster SCAN: got cursor={} keys={}", result.0, result.1.len());
+                                Ok(result)
+                            }
+                            Err(e2) => {
+                                log::error!("Redis cluster SCAN failed: vec={}, tuple={}", e1, e2);
+                                Err(format!("SCAN failed: {}", e1))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -365,6 +522,118 @@ impl CacheDriver for RedisDriver {
         let args: &[&str] = if async_mode { &["ASYNC"] } else { &[] };
         let _: () = self.execute_raw("FLUSHALL", args).await?;
         Ok(())
+    }
+}
+
+// ============ Cluster SCAN Methods ============
+impl RedisDriver {
+    /// Check if current connection is cluster mode
+    pub fn is_cluster_mode(&self) -> bool {
+        matches!(self.config.mode, RedisMode::Cluster)
+    }
+
+    /// Get list of master nodes in cluster
+    /// Returns Vec<ClusterNodeInfo> with node_id, address (host:port), is_master
+    pub async fn get_cluster_masters(&self) -> Result<Vec<ClusterNodeInfo>, String> {
+        if !self.is_cluster_mode() {
+            return Err("Not in cluster mode".to_string());
+        }
+
+        // Execute CLUSTER NODES command
+        let nodes_output: String = self.execute_raw("CLUSTER", &["NODES"]).await?;
+
+        let mut masters = Vec::new();
+        for line in nodes_output.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 3 {
+                continue;
+            }
+
+            let node_id = parts[0].to_string();
+            let address_part = parts[1]; // format: host:port@cport or host:port
+            let flags = parts[2];
+
+            // Extract host:port (remove @cport if present)
+            let address = if let Some(at_pos) = address_part.find('@') {
+                address_part[..at_pos].to_string()
+            } else {
+                address_part.to_string()
+            };
+
+            // Check if this is a master node
+            let is_master = flags.contains("master") && !flags.contains("fail");
+
+            if is_master {
+                masters.push(ClusterNodeInfo {
+                    node_id,
+                    address,
+                    is_master: true,
+                });
+            }
+        }
+
+        log::debug!("Cluster masters found: {:?}", masters.iter().map(|n| &n.address).collect::<Vec<_>>());
+        Ok(masters)
+    }
+
+    /// Create a direct connection to a specific node (for SCAN)
+    async fn connect_to_node(&self, address: &str) -> Result<MultiplexedConnection, String> {
+        let scheme = if self.config.tls.as_ref().map(|t| t.enabled).unwrap_or(false) {
+            "rediss"
+        } else {
+            "redis"
+        };
+
+        let url = if let Some(password) = &self.config.password {
+            format!("{}://:{}@{}", scheme, urlencoding::encode(password), address)
+        } else {
+            format!("{}://{}", scheme, address)
+        };
+
+        let client = Client::open(url)
+            .map_err(|e| format!("Failed to create client for node {}: {}", address, e))?;
+
+        client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| format!("Failed to connect to node {}: {}", address, e))
+    }
+
+    /// Scan keys on a single cluster node
+    /// Returns (next_cursor, keys) - cursor is "0" when this node is finished
+    pub async fn scan_single_node(
+        &self,
+        address: &str,
+        cursor: &str,
+        pattern: Option<&str>,
+        count: Option<i64>,
+    ) -> Result<(String, Vec<String>), String> {
+        let mut conn = self.connect_to_node(address).await?;
+
+        let mut cmd = redis::cmd("SCAN");
+        cmd.arg(cursor);
+
+        if let Some(p) = pattern {
+            cmd.arg("MATCH").arg(p);
+        }
+
+        if let Some(c) = count {
+            cmd.arg("COUNT").arg(c);
+        }
+
+        let result: (String, Vec<String>) = cmd
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| format!("SCAN failed on node {}: {}", address, e))?;
+
+        log::debug!(
+            "Scanned node {}: cursor={} -> {} keys",
+            address,
+            cursor,
+            result.1.len()
+        );
+
+        Ok(result)
     }
 }
 

@@ -13,18 +13,21 @@ use super::driver::RedisDriver;
 
 /// Get Redis INFO
 pub async fn get_info(driver: &RedisDriver, section: Option<&str>) -> Result<RedisInfo, String> {
-    let info_str: String = if let Some(sec) = section {
-        driver.execute_raw("INFO", &[sec]).await?
-    } else {
-        driver.execute_raw("INFO", &[]).await?
-    };
+    log::info!("Redis INFO: fetching section={:?}", section);
+
+    // Use the cluster-aware execute_info method
+    let info_str = driver.execute_info(section).await?;
+
+    log::info!("Redis INFO: got {} bytes response", info_str.len());
+    log::debug!("Redis INFO raw (first 500 chars): {}", &info_str[..info_str.len().min(500)]);
 
     parse_info(&info_str)
 }
 
 /// Get database list with key counts
 pub async fn get_databases(driver: &RedisDriver) -> Result<Vec<RedisDatabaseInfo>, String> {
-    let info_str: String = driver.execute_raw("INFO", &["keyspace"]).await?;
+    // Use the cluster-aware execute_info method
+    let info_str = driver.execute_info(Some("keyspace")).await?;
     let keyspace = parse_keyspace(&info_str);
 
     // Always show db0-db15, even if empty

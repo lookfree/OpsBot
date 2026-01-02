@@ -19,6 +19,14 @@ use crate::models::{
     RedisValue,
 };
 
+#[cfg(feature = "elasticsearch")]
+use crate::models::{
+    EsBulkOperation, EsBulkResponse, EsClusterHealth, EsClusterStats, EsConnectRequest,
+    EsConnectionInfo, EsCreateDocRequest, EsCreateIndexRequest, EsDocResponse, EsDocument,
+    EsIndexStats, EsIndexSummary, EsNodeInfo, EsSearchRequest, EsSearchResponse, EsShardInfo,
+    EsSqlResponse, EsUpdateDocRequest,
+};
+
 use crate::services::MiddlewareService;
 
 /// State wrapper for middleware service
@@ -505,4 +513,317 @@ pub async fn mw_redis_flush_all(
     async_mode: bool,
 ) -> Result<(), String> {
     state.0.redis_flush_all(&connection_id, async_mode).await
+}
+
+// ============ Elasticsearch Connection Commands ============
+
+/// Connect to Elasticsearch cluster
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_connect(
+    state: State<'_, MiddlewareServiceState>,
+    request: EsConnectRequest,
+) -> Result<EsConnectionInfo, String> {
+    state.0.connect_elasticsearch(request).await
+}
+
+/// Disconnect from Elasticsearch
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_disconnect(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+) -> Result<(), String> {
+    state.0.disconnect_elasticsearch(&connection_id).await
+}
+
+/// Test Elasticsearch connection
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_test_connection(
+    state: State<'_, MiddlewareServiceState>,
+    request: EsConnectRequest,
+) -> Result<EsConnectionInfo, String> {
+    state.0.test_elasticsearch_connection(request).await
+}
+
+/// Check if Elasticsearch connection is active
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_is_connected(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+) -> Result<bool, String> {
+    Ok(state.0.is_elasticsearch_connected(&connection_id))
+}
+
+// ============ Elasticsearch Cluster Commands ============
+
+/// Get Elasticsearch cluster health
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_cluster_health(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+) -> Result<EsClusterHealth, String> {
+    state.0.es_get_cluster_health(&connection_id).await
+}
+
+/// Get Elasticsearch cluster statistics
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_cluster_stats(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+) -> Result<EsClusterStats, String> {
+    state.0.es_get_cluster_stats(&connection_id).await
+}
+
+/// Get Elasticsearch nodes
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_nodes(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+) -> Result<Vec<EsNodeInfo>, String> {
+    state.0.es_get_nodes(&connection_id).await
+}
+
+/// Get Elasticsearch shards
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_shards(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+) -> Result<Vec<EsShardInfo>, String> {
+    state.0.es_get_shards(&connection_id).await
+}
+
+// ============ Elasticsearch Index Commands ============
+
+/// List Elasticsearch indices
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_list_indices(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    pattern: Option<String>,
+) -> Result<Vec<EsIndexSummary>, String> {
+    state.0.es_get_indices(&connection_id, pattern).await
+}
+
+/// Get Elasticsearch index mapping
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_index_mapping(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+) -> Result<serde_json::Value, String> {
+    state
+        .0
+        .es_get_index_mapping(&connection_id, &index_name)
+        .await
+}
+
+/// Get Elasticsearch index settings
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_index_settings(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+) -> Result<serde_json::Value, String> {
+    state
+        .0
+        .es_get_index_settings(&connection_id, &index_name)
+        .await
+}
+
+/// Get Elasticsearch index statistics
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_index_stats(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+) -> Result<EsIndexStats, String> {
+    state
+        .0
+        .es_get_index_stats(&connection_id, &index_name)
+        .await
+}
+
+/// Create Elasticsearch index
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_create_index(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    request: EsCreateIndexRequest,
+) -> Result<(), String> {
+    state.0.es_create_index(&connection_id, request).await
+}
+
+/// Delete Elasticsearch index
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_delete_index(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+) -> Result<(), String> {
+    state.0.es_delete_index(&connection_id, &index_name).await
+}
+
+/// Open Elasticsearch index
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_open_index(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+) -> Result<(), String> {
+    state.0.es_open_index(&connection_id, &index_name).await
+}
+
+/// Close Elasticsearch index
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_close_index(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+) -> Result<(), String> {
+    state.0.es_close_index(&connection_id, &index_name).await
+}
+
+/// Refresh Elasticsearch index
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_refresh_index(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+) -> Result<(), String> {
+    state.0.es_refresh_index(&connection_id, &index_name).await
+}
+
+/// Update Elasticsearch index mapping (add new fields only)
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_update_index_mapping(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+    mapping: serde_json::Value,
+) -> Result<(), String> {
+    state
+        .0
+        .es_update_index_mapping(&connection_id, &index_name, mapping)
+        .await
+}
+
+/// Update Elasticsearch index settings (dynamic settings only)
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_update_index_settings(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index_name: String,
+    settings: serde_json::Value,
+) -> Result<(), String> {
+    state
+        .0
+        .es_update_index_settings(&connection_id, &index_name, settings)
+        .await
+}
+
+// ============ Elasticsearch Document Commands ============
+
+/// Get Elasticsearch document by ID
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_get_document(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index: String,
+    id: String,
+) -> Result<EsDocument, String> {
+    state.0.es_get_document(&connection_id, &index, &id).await
+}
+
+/// Create Elasticsearch document
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_create_document(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    request: EsCreateDocRequest,
+) -> Result<EsDocResponse, String> {
+    state.0.es_create_document(&connection_id, request).await
+}
+
+/// Update Elasticsearch document
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_update_document(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    request: EsUpdateDocRequest,
+) -> Result<EsDocResponse, String> {
+    state.0.es_update_document(&connection_id, request).await
+}
+
+/// Delete Elasticsearch document
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_delete_document(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    index: String,
+    id: String,
+) -> Result<(), String> {
+    state
+        .0
+        .es_delete_document(&connection_id, &index, &id)
+        .await
+}
+
+/// Bulk Elasticsearch operations
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_bulk_operation(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    operations: Vec<EsBulkOperation>,
+) -> Result<EsBulkResponse, String> {
+    state
+        .0
+        .es_bulk_operation(&connection_id, operations)
+        .await
+}
+
+// ============ Elasticsearch Search Commands ============
+
+/// Execute Elasticsearch DSL search
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_search(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    request: EsSearchRequest,
+) -> Result<EsSearchResponse, String> {
+    state.0.es_search(&connection_id, request).await
+}
+
+/// Execute Elasticsearch SQL query
+#[cfg(feature = "elasticsearch")]
+#[tauri::command]
+pub async fn mw_es_sql_query(
+    state: State<'_, MiddlewareServiceState>,
+    connection_id: String,
+    sql: String,
+) -> Result<EsSqlResponse, String> {
+    state.0.es_sql_query(&connection_id, &sql).await
 }

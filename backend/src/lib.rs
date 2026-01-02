@@ -11,10 +11,10 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use commands::{CryptoServiceState, DatabaseServiceState, DockerServiceState, SftpServiceState, SshServiceState};
-#[cfg(any(feature = "kafka", feature = "redis"))]
+#[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 use commands::MiddlewareServiceState;
 use services::{CryptoService, DatabaseService, DockerService, SftpService, SshService};
-#[cfg(any(feature = "kafka", feature = "redis"))]
+#[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 use services::MiddlewareService;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -25,7 +25,7 @@ pub fn run() {
     let database_service = Arc::new(DatabaseService::new());
     let docker_service = Arc::new(DockerService::new(ssh_service.clone()));
     let crypto_service = Arc::new(CryptoService::new());
-    #[cfg(any(feature = "kafka", feature = "redis"))]
+    #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
     let middleware_service = Arc::new(MiddlewareService::new());
 
     let builder = tauri::Builder::default()
@@ -38,7 +38,7 @@ pub fn run() {
         .manage(DockerServiceState(docker_service))
         .manage(CryptoServiceState(crypto_service));
 
-    #[cfg(any(feature = "kafka", feature = "redis"))]
+    #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
     let builder = builder.manage(MiddlewareServiceState(middleware_service));
 
     builder
@@ -235,6 +235,59 @@ pub fn run() {
             commands::mw_redis_flush_db,
             #[cfg(feature = "redis")]
             commands::mw_redis_flush_all,
+            // Middleware commands (Elasticsearch)
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_connect,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_disconnect,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_test_connection,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_is_connected,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_cluster_health,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_cluster_stats,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_nodes,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_shards,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_list_indices,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_index_mapping,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_index_settings,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_index_stats,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_create_index,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_delete_index,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_open_index,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_close_index,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_refresh_index,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_update_index_mapping,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_update_index_settings,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_get_document,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_create_document,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_update_document,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_delete_document,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_bulk_operation,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_search,
+            #[cfg(feature = "elasticsearch")]
+            commands::mw_es_sql_query,
             // Utility commands
             commands::append_to_file,
             // Crypto commands (password-based for export/import)

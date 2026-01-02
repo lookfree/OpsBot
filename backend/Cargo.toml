@@ -51,6 +51,10 @@ rdkafka = { version = "0.36", features = ["cmake-build", "ssl-vendored"], option
 # Note: TLS disabled temporarily due to redis 0.27 dependency issues
 redis = { version = "0.27", features = ["tokio-comp", "cluster-async"], optional = true }
 
+# Middleware - Search Engine
+elasticsearch = { version = "8.5.0-alpha.1", optional = true }
+url = { version = "2.5", optional = true }
+
 # Docker
 bollard = "0.18"
 hyper = "1.4"
@@ -82,7 +86,7 @@ base64 = "0.22"
 [features]
 # Default features: cross-platform pure-Rust dependencies only
 # Native dependencies (oracle, dm, kafka) require system libraries and are opt-in
-default = ["mssql", "clickhouse", "redis"]
+default = ["mssql", "clickhouse", "redis", "elasticsearch"]
 
 # Platform-specific features requiring native libraries
 oracle = ["dep:oracle"]      # Requires Oracle Instant Client
@@ -93,13 +97,14 @@ kafka = ["dep:rdkafka"]      # Requires librdkafka (builds from source with cmak
 mssql = ["dep:tiberius"]
 clickhouse = ["dep:clickhouse", "dep:reqwest"]
 redis = ["dep:redis"]
+elasticsearch = ["dep:elasticsearch", "dep:url"]
 
 # Linux CI build: includes DM (ODBC) and Kafka (cmake build)
 # Does not include Oracle which requires Oracle Instant Client
-linux-ci = ["mssql", "clickhouse", "redis", "dm", "kafka"]
+linux-ci = ["mssql", "clickhouse", "redis", "dm", "kafka", "elasticsearch"]
 
 # All features for full functionality (requires all native libraries)
-full = ["oracle", "mssql", "dm", "clickhouse", "kafka", "redis"]
+full = ["oracle", "mssql", "dm", "clickhouse", "kafka", "redis", "elasticsearch"]
 
 [profile.release]
 strip = true

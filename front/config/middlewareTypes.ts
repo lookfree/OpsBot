@@ -60,7 +60,7 @@ export const MIDDLEWARE_TYPES: MiddlewareTypeConfig[] = [
     name: 'Elasticsearch',
     icon: '/assets/icons/elasticsearch-icon.svg',
     defaultPort: 9200,
-    enabled: false,
+    enabled: true,
     category: 'search',
     description: 'Distributed search and analytics engine',
   },

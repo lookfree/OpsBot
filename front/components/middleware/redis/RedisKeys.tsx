@@ -43,6 +43,7 @@ interface RedisKeysProps {
   databases: RedisDatabaseInfo[]
   currentDb: number
   onSelectDatabase: (db: number) => void
+  isClusterMode?: boolean
   styles: ThemeStyles
 }
 
@@ -64,6 +65,7 @@ export function RedisKeys({
   databases,
   currentDb,
   onSelectDatabase,
+  isClusterMode = false,
   styles,
 }: RedisKeysProps) {
   const { t } = useTranslation()
@@ -182,18 +184,24 @@ export function RedisKeys({
     <div className={cn('flex flex-col h-full', styles.textPrimary)}>
       {/* Database Selector */}
       <div className={cn('flex items-center gap-2 p-2 border-b', styles.borderColor, styles.bgSecondary)}>
-        <Database className="w-4 h-4 text-accent-primary" />
+        <Database className={cn('w-4 h-4', isClusterMode ? 'text-gray-400' : 'text-accent-primary')} />
         <select
           value={currentDb}
           onChange={(e) => onSelectDatabase(Number(e.target.value))}
+          disabled={isClusterMode}
+          title={isClusterMode ? t('redis.clusterDbHint', '集群模式仅支持 DB0') : undefined}
           className={cn(
             'flex-1 px-2 py-1 rounded border text-sm',
             'focus:outline-none focus:border-accent-primary',
             styles.borderColor,
-            styles.isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-primary'
+            isClusterMode
+              ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-800'
+              : styles.isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-primary'
           )}
         >
-          {databases.length > 0
+          {isClusterMode ? (
+            <option value={0}>DB0 ({t('redis.clusterOnly', '集群模式')})</option>
+          ) : databases.length > 0
             ? databases.map((db) => (
                 <option key={db.db} value={db.db}>
                   DB{db.db} ({db.keys} {t('redis.keys', '键')})
@@ -205,6 +213,11 @@ export function RedisKeys({
                 </option>
               ))}
         </select>
+        {isClusterMode && (
+          <span className={cn('text-xs', styles.textSecondary)} title={t('redis.clusterDbHint', '集群模式仅支持 DB0')}>
+            {t('redis.clusterMode', '集群')}
+          </span>
+        )}
       </div>
 
       {/* Toolbar */}
