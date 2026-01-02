@@ -2,7 +2,7 @@
  * 连接树组件
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
@@ -83,6 +83,86 @@ const connectionIcons: Record<ModuleType, React.ComponentType<{ className?: stri
   [ModuleType.Docker]: Container,
   [ModuleType.Middleware]: Settings2,
 }
+
+// Global drag state for cross-component communication (mouse-based drag)
+interface DragState {
+  connectionId: string | null
+  moduleType: ModuleType | null
+  isDragging: boolean
+  startX: number
+  startY: number
+}
+
+const dragState: DragState = {
+  connectionId: null,
+  moduleType: null,
+  isDragging: false,
+  startX: 0,
+  startY: 0,
+}
+
+// Drag threshold to distinguish click from drag
+const DRAG_THRESHOLD = 5
+
+// Global listeners for drag
+let dragOverlayElement: HTMLDivElement | null = null
+let currentDropTarget: string | null = null
+
+function createDragOverlay(name: string) {
+  if (dragOverlayElement) return
+  dragOverlayElement = document.createElement('div')
+  dragOverlayElement.className = 'fixed pointer-events-none z-50 bg-dark-accent/90 text-white px-2 py-1 rounded text-sm shadow-lg'
+  dragOverlayElement.textContent = name
+  dragOverlayElement.style.display = 'none'
+  document.body.appendChild(dragOverlayElement)
+}
+
+function updateDragOverlay(x: number, y: number) {
+  if (dragOverlayElement) {
+    dragOverlayElement.style.display = 'block'
+    dragOverlayElement.style.left = `${x + 15}px`
+    dragOverlayElement.style.top = `${y + 15}px`
+  }
+}
+
+function removeDragOverlay() {
+  if (dragOverlayElement) {
+    dragOverlayElement.remove()
+    dragOverlayElement = null
+  }
+}
+
+// Event emitter for drop targets
+type DropTargetCallback = (folderId: string | null, isOver: boolean) => void
+const dropTargetCallbacks = new Map<string, DropTargetCallback>()
+
+function registerDropTarget(id: string, callback: DropTargetCallback) {
+  dropTargetCallbacks.set(id, callback)
+}
+
+function unregisterDropTarget(id: string) {
+  dropTargetCallbacks.delete(id)
+}
+
+function notifyDropTargets(folderId: string | null, isOver: boolean) {
+  // First, clear all previous highlights
+  dropTargetCallbacks.forEach((cb, id) => {
+    if (id !== folderId) {
+      cb(id, false)
+    }
+  })
+  // Then highlight the current target
+  if (folderId && dropTargetCallbacks.has(folderId)) {
+    dropTargetCallbacks.get(folderId)?.(folderId, isOver)
+  }
+}
+
+// Export drag state and functions for Sidebar to use
+export function getDragState() {
+  return dragState
+}
+
+export { registerDropTarget, unregisterDropTarget }
 
 interface ConnectionTreeProps {
   nodes: TreeNode[]
@@ -255,32 +335,13 @@ export function ConnectionTree({
               console.log('Connection copied:', newConnection)
             }
           }}
-          onMoveTo={() => {
+          onMoveTo={(targetFolderId) => {
             if (node.type === 'connection') {
-              // 获取该模块类型下的所有文件夹
-              const moduleFolders = folders.filter(f => f.moduleType === moduleType)
-              const folderOptions = [
-                { id: '', name: t('sidebar.rootFolder') },
-                ...moduleFolders.map(f => ({ id: f.id, name: f.name }))
-              ]
-
-              // 简单的文件夹选择（后续可以改为更好的UI）
-              setTimeout(() => {
-                const options = folderOptions.map((f, i) => `${i}: ${f.name}`).join('\n')
-                const input = window.prompt(
-                  `${t('sidebar.selectTargetFolder')}\n${options}`,
-                  '0'
-                )
-                if (input !== null) {
-                  const index = parseInt(input)
-                  if (!isNaN(index) && index >= 0 && index < folderOptions.length) {
-                    const targetFolderId = folderOptions[index].id || null
-                    moveConnection(node.id, targetFolderId)
-                  }
-                }
-              }, 0)
+              console.log('[MoveTo] Moving connection:', node.id, 'to folder:', targetFolderId)
+              moveConnection(node.id, targetFolderId)
             }
           }}
+          availableFolders={folders.filter(f => f.moduleType === moduleType)}
           onOpenInNewWindow={() => {
             // TODO: 实现在新窗口打开功能
             // 需要使用 Tauri 的多窗口 API
@@ -291,6 +352,9 @@ export function ConnectionTree({
             console.log('Database table action:', action, dbName, tableName, schemaName)
             // 这里可以根据 action 类型打开相应的对话框或执行操作
             // action: 'editData' | 'viewDDL' | 'createTable' | 'editStructure' | 'rename' | 'drop'
+          }}
+          onDropConnection={(connectionId, targetFolderId) => {
+            moveConnection(connectionId, targetFolderId)
           }}
         />
         )
@@ -321,9 +385,11 @@ interface TreeNodeItemProps {
   onEditConnection?: (connection: any) => void
   onCreateConnectionInFolder?: (folderId: string | null) => void
   onCopy: () => void
-  onMoveTo: () => void
+  onMoveTo: (targetFolderId: string | null) => void
   onOpenInNewWindow: () => void
   onDbTableAction?: (action: DbTableAction, dbName: string, tableName: string, schemaName?: string) => void
+  onDropConnection?: (connectionId: string, targetFolderId: string | null) => void
+  availableFolders?: { id: string; name: string }[]
 }
 
 function TreeNodeItem({
@@ -348,6 +414,8 @@ function TreeNodeItem({
   onMoveTo,
   onOpenInNewWindow,
   onDbTableAction: _onDbTableAction,
+  onDropConnection,
+  availableFolders = [],
 }: TreeNodeItemProps) {
   const { t } = useTranslation()
   const { setConnectionStatus } = useConnectionStore()
@@ -355,6 +423,109 @@ function TreeNodeItem({
   const isFolder = node.type === 'folder'
   const isConnection = node.type === 'connection'
   const isDatabaseConnection = isConnection && moduleType === ModuleType.Database
+
+  // Drag and drop state (mouse-based)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+  const nodeRef = useRef<HTMLDivElement>(null)
+
+  // Register folder as drop target
+  useEffect(() => {
+    if (isFolder) {
+      registerDropTarget(node.id, (_folderId, isOver) => {
+        setIsDragOver(isOver)
+      })
+      return () => {
+        unregisterDropTarget(node.id)
+      }
+    }
+  }, [isFolder, node.id])
+
+  // Mouse-based drag handlers for connections
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!isConnection) return
+    // Only left click
+    if (e.button !== 0) return
+
+    // Don't start drag if clicking on buttons or other interactive elements
+    const target = e.target as HTMLElement
+    if (target.closest('button')) return
+
+    dragState.connectionId = node.id
+    dragState.moduleType = moduleType
+    dragState.startX = e.clientX
+    dragState.startY = e.clientY
+    dragState.isDragging = false
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const dx = Math.abs(moveEvent.clientX - dragState.startX)
+      const dy = Math.abs(moveEvent.clientY - dragState.startY)
+
+      // Start dragging after threshold
+      if (!dragState.isDragging && (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD)) {
+        dragState.isDragging = true
+        setIsDragging(true)
+        createDragOverlay(node.name)
+        document.body.style.cursor = 'grabbing'
+        document.body.style.userSelect = 'none'
+      }
+
+      if (dragState.isDragging) {
+        updateDragOverlay(moveEvent.clientX, moveEvent.clientY)
+
+        // Find drop target under cursor
+        const elementsUnderCursor = document.elementsFromPoint(moveEvent.clientX, moveEvent.clientY)
+        let foundTarget = false
+
+        for (const elem of elementsUnderCursor) {
+          const folderElem = elem.closest('[data-folder-id]') as HTMLElement
+          if (folderElem) {
+            const folderId = folderElem.dataset.folderId
+            const folderModuleType = folderElem.dataset.moduleType
+
+            // Only accept same module type
+            if (folderId && folderModuleType === moduleType) {
+              currentDropTarget = folderId
+              notifyDropTargets(folderId, true)
+              foundTarget = true
+              break
+            }
+          }
+        }
+
+        if (!foundTarget) {
+          currentDropTarget = null
+          notifyDropTargets(null, false)
+        }
+      }
+    }
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+
+      if (dragState.isDragging && currentDropTarget && onDropConnection) {
+        // Handle root folder case: "root:xxx" means move to root (null)
+        const targetFolderId = currentDropTarget.startsWith('root:') ? null : currentDropTarget
+        console.log('[Drag] Moving connection:', dragState.connectionId, 'to folder:', targetFolderId)
+        onDropConnection(dragState.connectionId!, targetFolderId)
+      }
+
+      // Reset state
+      dragState.isDragging = false
+      dragState.connectionId = null
+      dragState.moduleType = null
+      setIsDragging(false)
+      currentDropTarget = null
+      notifyDropTargets(null, false)
+      removeDragOverlay()
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }
 
   // Database tree state (for database connections)
   const [dbExpanded, setDbExpanded] = useState(false)
@@ -1049,24 +1220,36 @@ function TreeNodeItem({
 
   return (
     <>
+    <div
+      ref={nodeRef}
+      className={cn(
+        'tree-item group',
+        isDragOver && 'bg-dark-accent/20 border border-dark-accent border-dashed',
+        isDragging && 'opacity-50',
+        isConnection && 'cursor-grab'
+      )}
+      style={{ paddingLeft: `${paddingLeft}px` }}
+      data-folder-id={isFolder ? node.id : undefined}
+      data-module-type={isFolder ? moduleType : undefined}
+      onMouseDown={handleMouseDown}
+      onClick={() => {
+        // Don't trigger click if we were dragging
+        if (dragState.isDragging) return
+        if (isFolder) {
+          onToggleExpand()
+        } else if (isDatabaseConnection) {
+          handleDbConnectionClick()
+        }
+      }}
+      onDoubleClick={() => {
+        if (isConnection && !isDatabaseConnection) {
+          onConnect()
+        }
+      }}
+    >
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
-        <div
-          className="tree-item group"
-          style={{ paddingLeft: `${paddingLeft}px` }}
-          onClick={() => {
-            if (isFolder) {
-              onToggleExpand()
-            } else if (isDatabaseConnection) {
-              handleDbConnectionClick()
-            }
-          }}
-          onDoubleClick={() => {
-            if (isConnection && !isDatabaseConnection) {
-              onConnect()
-            }
-          }}
-        >
+        <div className="flex items-center flex-1 min-w-0">
           {/* 展开/折叠图标 */}
           {(isFolder || isDatabaseConnection) && (
             <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
@@ -1291,13 +1474,37 @@ function TreeNodeItem({
           {isConnection && (
             <>
               <ContextMenu.Separator className="context-menu-separator h-px my-1" />
-              <ContextMenu.Item
-                className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
-                onSelect={onMoveTo}
-              >
-                <Move className="w-4 h-4" />
-                {t('sidebar.moveTo')}
-              </ContextMenu.Item>
+              <ContextMenu.Sub>
+                <ContextMenu.SubTrigger className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none">
+                  <Move className="w-4 h-4" />
+                  {t('sidebar.moveTo')}
+                  <ChevronRight className="w-3 h-3 ml-auto" />
+                </ContextMenu.SubTrigger>
+                <ContextMenu.Portal>
+                  <ContextMenu.SubContent className="context-menu min-w-[140px] rounded-md shadow-lg py-1 z-50">
+                    <ContextMenu.Item
+                      className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                      onSelect={() => onMoveTo(null)}
+                    >
+                      <Folder className="w-4 h-4" />
+                      {t('sidebar.rootFolder', '根目录')}
+                    </ContextMenu.Item>
+                    {availableFolders.length > 0 && (
+                      <ContextMenu.Separator className="context-menu-separator h-px my-1" />
+                    )}
+                    {availableFolders.map((folder) => (
+                      <ContextMenu.Item
+                        key={folder.id}
+                        className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
+                        onSelect={() => onMoveTo(folder.id)}
+                      >
+                        <Folder className="w-4 h-4" />
+                        {folder.name}
+                      </ContextMenu.Item>
+                    ))}
+                  </ContextMenu.SubContent>
+                </ContextMenu.Portal>
+              </ContextMenu.Sub>
               <ContextMenu.Item
                 className="context-menu-item flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none"
                 onSelect={onOpenInNewWindow}
@@ -1310,6 +1517,7 @@ function TreeNodeItem({
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
+    </div>
 
     {/* 删除确认对话框 */}
     <ConfirmDialog

@@ -2,7 +2,7 @@
  * 侧边栏组件
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as ContextMenu from '@radix-ui/react-context-menu'
@@ -23,7 +23,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useConnectionStore, useTabStore } from '@/stores'
 import { ModuleType } from '@/types'
-import { ConnectionTree } from './ConnectionTree'
+import { ConnectionTree, registerDropTarget, unregisterDropTarget } from './ConnectionTree'
 import { SettingsDropdown } from '@/components/settings'
 import { SshConnectionDialog } from '@/components/ssh'
 import { DatabaseConnectionDialog } from '@/components/database'
@@ -52,6 +52,27 @@ export function Sidebar({ className }: SidebarProps) {
   const getTreeNodes = useConnectionStore((state) => state.getTreeNodes)
   const createFolder = useConnectionStore((state) => state.createFolder)
   const addTab = useTabStore((state) => state.addTab)
+
+  // Drag-drop state for root level drop zones (mouse-based)
+  const [dragOverModule, setDragOverModule] = useState<ModuleType | null>(null)
+
+  // Register root drop targets for each module
+  useEffect(() => {
+    const moduleTypes = [ModuleType.SSH, ModuleType.Database, ModuleType.Docker, ModuleType.Middleware]
+
+    moduleTypes.forEach((mt) => {
+      const rootId = `root:${mt}`
+      registerDropTarget(rootId, (_folderId, isOver) => {
+        setDragOverModule(isOver ? mt : null)
+      })
+    })
+
+    return () => {
+      moduleTypes.forEach((mt) => {
+        unregisterDropTarget(`root:${mt}`)
+      })
+    }
+  }, [])
   const [expandedModules, setExpandedModules] = useState<Record<ModuleType, boolean>>({
     [ModuleType.SSH]: true,
     [ModuleType.Database]: true,
@@ -305,11 +326,16 @@ export function Sidebar({ className }: SidebarProps) {
 
           return (
             <div key={moduleNode.id} className="mb-1">
-              {/* 模块标题 - 支持右键菜单 */}
+              {/* 模块标题 - 支持右键菜单和拖放到根目录 */}
               <ContextMenu.Root>
                 <ContextMenu.Trigger asChild>
                   <div
-                    className="tree-item group"
+                    className={cn(
+                      'tree-item group',
+                      dragOverModule === moduleNode.moduleType && 'bg-dark-accent/20 border border-dark-accent border-dashed'
+                    )}
+                    data-folder-id={`root:${moduleNode.moduleType}`}
+                    data-module-type={moduleNode.moduleType}
                     onClick={() => toggleModule(moduleNode.moduleType)}
                   >
                     <span className="w-4 h-4 flex items-center justify-center">
