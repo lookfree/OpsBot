@@ -86,7 +86,8 @@ base64 = "0.22"
 [features]
 # Default features: cross-platform pure-Rust dependencies only
 # Native dependencies (oracle, dm, kafka) require system libraries and are opt-in
-default = ["mssql", "clickhouse", "redis", "elasticsearch"]
+# Note: kafka requires cmake to build rdkafka from source
+default = ["mssql", "clickhouse", "redis", "elasticsearch", "kafka"]
 
 # Platform-specific features requiring native libraries
 oracle = ["dep:oracle"]      # Requires Oracle Instant Client

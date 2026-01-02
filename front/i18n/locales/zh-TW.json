@@ -451,7 +451,9 @@
     "editConnection": "編輯中介軟體連線",
     "selectMiddlewareType": "選擇中介軟體類型",
     "connectionName": "連線名稱",
-    "bootstrapServers": "Bootstrap 伺服器",
+    "kafkaBrokers": "Broker 地址",
+    "kafkaBrokersPlaceholder": "每行輸入一個 Broker 地址\n範例:\n192.168.1.101:9092\n192.168.1.102:9092\n192.168.1.103:9092",
+    "kafkaBrokersHint": "每行一個 Broker 地址，格式: host:port。至少需要一個 Broker 地址。",
     "securityProtocol": "安全協議",
     "saslMechanism": "SASL 機制",
     "username": "使用者名稱",
@@ -462,8 +464,8 @@
     "connectionFailed": "連線失敗",
     "errors": {
       "nameRequired": "連線名稱不能為空",
-      "serversRequired": "至少需要一個伺服器地址",
-      "invalidServerFormat": "伺服器格式無效 (使用 host:port)",
+      "brokersRequired": "至少需要一個 Broker 地址",
+      "invalidBrokerFormat": "Broker 地址格式無效 (使用 host:port)",
       "usernameRequired": "SASL 認證需要使用者名稱",
       "passwordRequired": "SASL 認證需要密碼"
     },

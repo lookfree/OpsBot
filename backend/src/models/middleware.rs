@@ -40,7 +40,7 @@ pub enum SaslMechanism {
 #[serde(rename_all = "camelCase")]
 pub struct KafkaConnectRequest {
     pub connection_id: String,
-    pub bootstrap_servers: Vec<String>,
+    pub brokers: Vec<String>,
     pub security_protocol: Option<SecurityProtocol>,
     pub sasl_mechanism: Option<SaslMechanism>,
     pub username: Option<String>,
@@ -52,7 +52,7 @@ pub struct KafkaConnectRequest {
 #[serde(rename_all = "camelCase")]
 pub struct KafkaConnectionInfo {
     pub connection_id: String,
-    pub bootstrap_servers: Vec<String>,
+    pub brokers: Vec<String>,
     pub connected_at: String,
     pub cluster_id: Option<String>,
 }

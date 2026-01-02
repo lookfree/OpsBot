@@ -451,7 +451,9 @@
     "editConnection": "ミドルウェア接続を編集",
     "selectMiddlewareType": "ミドルウェアタイプを選択",
     "connectionName": "接続名",
-    "bootstrapServers": "Bootstrap サーバー",
+    "kafkaBrokers": "Broker アドレス",
+    "kafkaBrokersPlaceholder": "Broker アドレスを1行ずつ入力\n例:\n192.168.1.101:9092\n192.168.1.102:9092\n192.168.1.103:9092",
+    "kafkaBrokersHint": "1行に1つの Broker アドレス。形式: host:port。少なくとも1つの Broker が必要です。",
     "securityProtocol": "セキュリティプロトコル",
     "saslMechanism": "SASL メカニズム",
     "username": "ユーザー名",
@@ -462,8 +464,8 @@
     "connectionFailed": "接続失敗",
     "errors": {
       "nameRequired": "接続名を入力してください",
-      "serversRequired": "少なくとも1つのサーバーが必要です",
-      "invalidServerFormat": "サーバー形式が無効です (host:port を使用)",
+      "brokersRequired": "少なくとも1つの Broker が必要です",
+      "invalidBrokerFormat": "Broker 形式が無効です (host:port を使用)",
       "usernameRequired": "SASL 認証にはユーザー名が必要です",
       "passwordRequired": "SASL 認証にはパスワードが必要です"
     },

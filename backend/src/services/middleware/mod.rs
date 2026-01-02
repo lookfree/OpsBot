@@ -89,7 +89,7 @@ impl MiddlewareService {
         request: KafkaConnectRequest,
     ) -> Result<KafkaConnectionInfo, String> {
         let driver = KafkaDriver::connect(
-            request.bootstrap_servers.clone(),
+            request.brokers.clone(),
             request.security_protocol.clone(),
             request.sasl_mechanism.clone(),
             request.username.clone(),
@@ -102,7 +102,7 @@ impl MiddlewareService {
         let session = Arc::new(MiddlewareSession::new(
             request.connection_id.clone(),
             MiddlewareType::Kafka,
-            request.bootstrap_servers.clone(),
+            request.brokers.clone(),
             Arc::new(driver),
         ));
 
@@ -112,7 +112,7 @@ impl MiddlewareService {
 
         Ok(KafkaConnectionInfo {
             connection_id: request.connection_id,
-            bootstrap_servers: request.bootstrap_servers,
+            brokers: request.brokers,
             connected_at: session.connected_at.to_rfc3339(),
             cluster_id,
         })
@@ -137,7 +137,7 @@ impl MiddlewareService {
         request: KafkaConnectRequest,
     ) -> Result<(), String> {
         let driver = KafkaDriver::connect(
-            request.bootstrap_servers,
+            request.brokers,
             request.security_protocol,
             request.sasl_mechanism,
             request.username,

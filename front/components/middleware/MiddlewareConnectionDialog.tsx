@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
-import { X, Eye, EyeOff, ChevronLeft, Plus, Trash2 } from 'lucide-react'
+import { X, Eye, EyeOff, ChevronLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore, useThemeStore } from '@/stores'
 import type { MiddlewareConnection } from '@/types'
@@ -62,8 +62,8 @@ export function MiddlewareConnectionDialog({
   // Form data for Kafka, Redis, and Elasticsearch
   const [formData, setFormData] = useState<{
     name: string
-    // Kafka fields
-    bootstrapServers: string[]
+    // Kafka fields (使用多行文本框，与 Redis 集群、ES 节点一致)
+    kafkaBrokersText: string
     securityProtocol: SecurityProtocol
     saslMechanism: SaslMechanism
     username: string
@@ -92,8 +92,8 @@ export function MiddlewareConnectionDialog({
     esUseProxy: boolean
   }>({
     name: connection?.name || '',
-    // Kafka defaults
-    bootstrapServers: connection?.kafkaConfig?.bootstrapServers || ['localhost:9092'],
+    // Kafka defaults (使用多行文本框，与 Redis 集群、ES 节点一致)
+    kafkaBrokersText: connection?.kafkaConfig?.brokers?.join('\n') || 'localhost:9092',
     securityProtocol: (connection?.kafkaConfig?.securityProtocol as SecurityProtocol) || 'PLAINTEXT',
     saslMechanism: (connection?.kafkaConfig?.saslMechanism as SaslMechanism) || 'PLAIN',
     username: connection?.kafkaConfig?.username || '',
@@ -135,8 +135,8 @@ export function MiddlewareConnectionDialog({
         setSelectedMwType(getMiddlewareTypeById(connection.middlewareType) || null)
         setFormData({
           name: connection.name,
-          // Kafka
-          bootstrapServers: connection.kafkaConfig?.bootstrapServers || ['localhost:9092'],
+          // Kafka (使用多行文本框)
+          kafkaBrokersText: connection.kafkaConfig?.brokers?.join('\n') || 'localhost:9092',
           securityProtocol: (connection.kafkaConfig?.securityProtocol as SecurityProtocol) || 'PLAINTEXT',
           saslMechanism: (connection.kafkaConfig?.saslMechanism as SaslMechanism) || 'PLAIN',
           username: connection.kafkaConfig?.username || '',
@@ -169,8 +169,8 @@ export function MiddlewareConnectionDialog({
         setSelectedMwType(null)
         setFormData({
           name: '',
-          // Kafka defaults
-          bootstrapServers: ['localhost:9092'],
+          // Kafka defaults (使用多行文本框)
+          kafkaBrokersText: 'localhost:9092',
           securityProtocol: 'PLAINTEXT',
           saslMechanism: 'PLAIN',
           username: '',
@@ -227,26 +227,12 @@ export function MiddlewareConnectionDialog({
     []
   )
 
-  const handleAddServer = useCallback(() => {
-    setFormData((prev) => ({
-      ...prev,
-      bootstrapServers: [...prev.bootstrapServers, ''],
-    }))
-  }, [])
-
-  const handleRemoveServer = useCallback((index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      bootstrapServers: prev.bootstrapServers.filter((_, i) => i !== index),
-    }))
-  }, [])
-
-  const handleServerChange = useCallback((index: number, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      bootstrapServers: prev.bootstrapServers.map((s, i) => (i === index ? value : s)),
-    }))
-    setErrors((prev) => ({ ...prev, bootstrapServers: '' }))
+  // Parse Kafka brokers from textarea (each line is a broker address)
+  const parseKafkaBrokers = useCallback((text: string): string[] => {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
   }, [])
 
   // Parse Redis nodes from textarea (each line is a node)
@@ -273,15 +259,15 @@ export function MiddlewareConnectionDialog({
     }
 
     if (selectedMwType?.id === 'kafka') {
-      const validServers = formData.bootstrapServers.filter((s) => s.trim())
-      if (validServers.length === 0) {
-        newErrors.bootstrapServers = t('middleware.errors.serversRequired')
+      const validBrokers = parseKafkaBrokers(formData.kafkaBrokersText)
+      if (validBrokers.length === 0) {
+        newErrors.kafkaBrokersText = t('middleware.errors.brokersRequired')
       }
 
-      // Validate server format (host:port)
-      for (const server of validServers) {
-        if (!/^[\w.-]+:\d+$/.test(server.trim())) {
-          newErrors.bootstrapServers = t('middleware.errors.invalidServerFormat')
+      // Validate broker format (host:port)
+      for (const broker of validBrokers) {
+        if (!/^[\w.-]+:\d+$/.test(broker)) {
+          newErrors.kafkaBrokersText = t('middleware.errors.invalidBrokerFormat')
           break
         }
       }
@@ -366,7 +352,7 @@ export function MiddlewareConnectionDialog({
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
-  }, [formData, selectedMwType, t, parseEsNodes, parseRedisNodes])
+  }, [formData, selectedMwType, t, parseKafkaBrokers, parseEsNodes, parseRedisNodes])
 
   // Build Redis config from form data
   const buildRedisConfig = useCallback(() => {
@@ -421,10 +407,10 @@ export function MiddlewareConnectionDialog({
     if (!validate() || !selectedMwType) return
 
     if (selectedMwType.id === 'kafka') {
-      const validServers = formData.bootstrapServers.filter((s) => s.trim())
+      const brokers = parseKafkaBrokers(formData.kafkaBrokersText)
       const kafkaConfig = {
-        bootstrapServers: validServers,
-        securityProtocol: formData.securityProtocol as 'PLAINTEXT' | 'SASL_PLAINTEXT' | 'SASL_SSL',
+        brokers,
+        securityProtocol: formData.securityProtocol as 'PLAINTEXT' | 'SSL' | 'SASL_PLAINTEXT' | 'SASL_SSL',
         saslMechanism: formData.saslMechanism,
         username: formData.username || undefined,
         password: formData.password || undefined,
@@ -498,6 +484,7 @@ export function MiddlewareConnectionDialog({
     folderId,
     createConnection,
     updateConnection,
+    parseKafkaBrokers,
     buildRedisConfig,
     buildEsConfig,
     onSave,
@@ -512,10 +499,10 @@ export function MiddlewareConnectionDialog({
 
     try {
       if (selectedMwType.id === 'kafka') {
-        const validServers = formData.bootstrapServers.filter((s) => s.trim())
+        const brokers = parseKafkaBrokers(formData.kafkaBrokersText)
         const connectionInfo = await mwKafkaConnect({
           connectionId: connection?.id || 'test',
-          bootstrapServers: validServers,
+          brokers,
           securityProtocol: formData.securityProtocol as MwSecurityProtocol,
           saslMechanism: formData.saslMechanism,
           username: formData.username || undefined,
@@ -530,7 +517,7 @@ export function MiddlewareConnectionDialog({
           success: true,
           message: t('middleware.connectionSuccess')
             .replace('{{clusterId}}', connectionInfo.clusterId || 'unknown')
-            .replace('{{brokerCount}}', String(connectionInfo.bootstrapServers.length)),
+            .replace('{{brokerCount}}', String(connectionInfo.brokers?.length || brokers.length)),
         })
       } else if (selectedMwType.id === 'redis') {
         const redisConfig = buildRedisConfig()
@@ -595,7 +582,7 @@ export function MiddlewareConnectionDialog({
     } finally {
       setTesting(false)
     }
-  }, [validate, formData, connection, selectedMwType, buildRedisConfig, buildEsConfig, t])
+  }, [validate, formData, connection, selectedMwType, parseKafkaBrokers, buildRedisConfig, buildEsConfig, t])
 
   // Theme styles
   const dialogBg = isDark ? 'bg-dark-bg-primary' : 'bg-light-bg-primary'
@@ -728,51 +715,31 @@ export function MiddlewareConnectionDialog({
                 {/* Kafka specific fields */}
                 {selectedMwType?.id === 'kafka' && (
                   <>
-                    {/* Bootstrap Servers */}
+                    {/* Kafka Brokers - Textarea (与 Redis 集群、ES 节点一致) */}
                     <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className={cn('text-sm font-medium', textSecondary)}>
-                          {t('middleware.bootstrapServers')}
-                        </label>
-                        <button
-                          type="button"
-                          onClick={handleAddServer}
-                          className={cn('p-1 rounded transition-colors', hoverBg, 'text-accent-primary')}
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="space-y-2">
-                        {formData.bootstrapServers.map((server, index) => (
-                          <div key={index} className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={server}
-                              onChange={(e) => handleServerChange(index, e.target.value)}
-                              placeholder="localhost:9092"
-                              className={cn(
-                                'flex-1 px-3 py-2 rounded border text-sm font-mono',
-                                'focus:outline-none focus:border-accent-primary',
-                                inputBg,
-                                borderColor,
-                                textPrimary,
-                                errors.bootstrapServers && 'border-status-error'
-                              )}
-                            />
-                            {formData.bootstrapServers.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveServer(index)}
-                                className={cn('p-2 rounded transition-colors', hoverBg, 'text-status-error')}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                      {errors.bootstrapServers && (
-                        <p className="text-xs text-status-error mt-1">{errors.bootstrapServers}</p>
+                      <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                        {t('middleware.kafkaBrokers')}
+                      </label>
+                      <textarea
+                        value={formData.kafkaBrokersText}
+                        onChange={(e) => handleChange('kafkaBrokersText', e.target.value)}
+                        placeholder={t('middleware.kafkaBrokersPlaceholder', 'Enter broker addresses, one per line\nExample:\n192.168.1.101:9092\n192.168.1.102:9092\n192.168.1.103:9092')}
+                        rows={4}
+                        className={cn(
+                          'w-full px-3 py-2 rounded border text-sm font-mono',
+                          'focus:outline-none focus:border-accent-primary',
+                          'resize-none',
+                          inputBg,
+                          borderColor,
+                          textPrimary,
+                          errors.kafkaBrokersText && 'border-status-error'
+                        )}
+                      />
+                      <p className={cn('text-xs mt-1', textSecondary)}>
+                        {t('middleware.kafkaBrokersHint', 'One broker per line. Format: host:port. At least one broker is required.')}
+                      </p>
+                      {errors.kafkaBrokersText && (
+                        <p className="text-xs text-status-error mt-1">{errors.kafkaBrokersText}</p>
                       )}
                     </div>
 

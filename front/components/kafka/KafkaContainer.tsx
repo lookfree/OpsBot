@@ -76,7 +76,7 @@ export function KafkaContainer({ connectionId, className }: KafkaContainerProps)
     try {
       const request: KafkaConnectRequest = {
         connectionId: connection.id,
-        bootstrapServers: connection.kafkaConfig.bootstrapServers,
+        brokers: connection.kafkaConfig.brokers,
         securityProtocol: connection.kafkaConfig.securityProtocol,
         saslMechanism: connection.kafkaConfig.saslMechanism as 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512' | undefined,
         username: connection.kafkaConfig.username,

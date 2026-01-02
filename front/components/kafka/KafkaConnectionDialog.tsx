@@ -8,7 +8,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
-import { X, Eye, EyeOff, Plus, Trash2 } from 'lucide-react'
+import { X, Eye, EyeOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore, useThemeStore } from '@/stores'
 import type { MiddlewareConnection } from '@/types'
@@ -40,14 +40,14 @@ export function KafkaConnectionDialog({
 
   const [formData, setFormData] = useState<{
     name: string
-    bootstrapServers: string[]
+    brokersText: string  // 使用多行文本框，与 MiddlewareConnectionDialog 一致
     securityProtocol: SecurityProtocol
     saslMechanism: SaslMechanism
     username: string
     password: string
   }>({
     name: connection?.name || '',
-    bootstrapServers: connection?.kafkaConfig?.bootstrapServers || ['localhost:9092'],
+    brokersText: connection?.kafkaConfig?.brokers?.join('\n') || 'localhost:9092',
     securityProtocol: (connection?.kafkaConfig?.securityProtocol as SecurityProtocol) || 'PLAINTEXT',
     saslMechanism: (connection?.kafkaConfig?.saslMechanism as SaslMechanism) || 'PLAIN',
     username: connection?.kafkaConfig?.username || '',
@@ -65,7 +65,7 @@ export function KafkaConnectionDialog({
       if (connection) {
         setFormData({
           name: connection.name,
-          bootstrapServers: connection.kafkaConfig?.bootstrapServers || ['localhost:9092'],
+          brokersText: connection.kafkaConfig?.brokers?.join('\n') || 'localhost:9092',
           securityProtocol: (connection.kafkaConfig?.securityProtocol as SecurityProtocol) || 'PLAINTEXT',
           saslMechanism: (connection.kafkaConfig?.saslMechanism as SaslMechanism) || 'PLAIN',
           username: connection.kafkaConfig?.username || '',
@@ -74,7 +74,7 @@ export function KafkaConnectionDialog({
       } else {
         setFormData({
           name: '',
-          bootstrapServers: ['localhost:9092'],
+          brokersText: 'localhost:9092',
           securityProtocol: 'PLAINTEXT',
           saslMechanism: 'PLAIN',
           username: '',
@@ -94,26 +94,12 @@ export function KafkaConnectionDialog({
     []
   )
 
-  const handleAddServer = useCallback(() => {
-    setFormData((prev) => ({
-      ...prev,
-      bootstrapServers: [...prev.bootstrapServers, ''],
-    }))
-  }, [])
-
-  const handleRemoveServer = useCallback((index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      bootstrapServers: prev.bootstrapServers.filter((_, i) => i !== index),
-    }))
-  }, [])
-
-  const handleServerChange = useCallback((index: number, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      bootstrapServers: prev.bootstrapServers.map((s, i) => (i === index ? value : s)),
-    }))
-    setErrors((prev) => ({ ...prev, bootstrapServers: '' }))
+  // Parse brokers from textarea
+  const parseBrokers = useCallback((text: string): string[] => {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
   }, [])
 
   const validate = useCallback(() => {
@@ -123,15 +109,15 @@ export function KafkaConnectionDialog({
       newErrors.name = t('kafka.errors.nameRequired', 'Connection name is required')
     }
 
-    const validServers = formData.bootstrapServers.filter((s) => s.trim())
-    if (validServers.length === 0) {
-      newErrors.bootstrapServers = t('kafka.errors.serversRequired', 'At least one bootstrap server is required')
+    const brokers = parseBrokers(formData.brokersText)
+    if (brokers.length === 0) {
+      newErrors.brokersText = t('middleware.errors.brokersRequired', 'At least one broker is required')
     }
 
-    // Validate server format (host:port)
-    for (const server of validServers) {
-      if (!/^[\w.-]+:\d+$/.test(server.trim())) {
-        newErrors.bootstrapServers = t('kafka.errors.invalidServerFormat', 'Invalid server format (use host:port)')
+    // Validate broker format (host:port)
+    for (const broker of brokers) {
+      if (!/^[\w.-]+:\d+$/.test(broker)) {
+        newErrors.brokersText = t('middleware.errors.invalidBrokerFormat', 'Invalid broker format (use host:port)')
         break
       }
     }
@@ -148,18 +134,16 @@ export function KafkaConnectionDialog({
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
-  }, [formData, t])
+  }, [formData, t, parseBrokers])
 
   const handleSave = useCallback(() => {
     if (!validate()) return
 
-    const validServers = formData.bootstrapServers.filter((s) => s.trim())
+    const brokers = parseBrokers(formData.brokersText)
 
-    // Cast to the connection type - the form allows SSL which the connection type doesn't support
-    // but the backend does. Using 'any' cast for compatibility.
     const kafkaConfig = {
-      bootstrapServers: validServers,
-      securityProtocol: formData.securityProtocol as 'PLAINTEXT' | 'SASL_PLAINTEXT' | 'SASL_SSL',
+      brokers,
+      securityProtocol: formData.securityProtocol as 'PLAINTEXT' | 'SSL' | 'SASL_PLAINTEXT' | 'SASL_SSL',
       saslMechanism: formData.saslMechanism,
       username: formData.username || undefined,
       password: formData.password || undefined,
@@ -194,6 +178,7 @@ export function KafkaConnectionDialog({
     folderId,
     createConnection,
     updateConnection,
+    parseBrokers,
     onSave,
     onOpenChange,
   ])
@@ -204,12 +189,12 @@ export function KafkaConnectionDialog({
     setTesting(true)
     setTestResult(null)
 
-    const validServers = formData.bootstrapServers.filter((s) => s.trim())
+    const brokers = parseBrokers(formData.brokersText)
 
     try {
       const connectionInfo = await mwKafkaConnect({
         connectionId: connection?.id || 'test',
-        bootstrapServers: validServers,
+        brokers,
         securityProtocol: formData.securityProtocol as MwSecurityProtocol,
         saslMechanism: formData.saslMechanism,
         username: formData.username || undefined,
@@ -225,7 +210,7 @@ export function KafkaConnectionDialog({
         success: true,
         message: t('kafka.connectionSuccess', 'Connection successful! Cluster: {{clusterId}}, Brokers: {{brokerCount}}')
           .replace('{{clusterId}}', connectionInfo.clusterId || 'unknown')
-          .replace('{{brokerCount}}', String(connectionInfo.bootstrapServers.length)),
+          .replace('{{brokerCount}}', String(connectionInfo.brokers?.length || brokers.length)),
       })
     } catch (err) {
       setTestResult({
@@ -235,7 +220,7 @@ export function KafkaConnectionDialog({
     } finally {
       setTesting(false)
     }
-  }, [validate, formData, connection, t])
+  }, [validate, formData, connection, parseBrokers, t])
 
   // Theme styles
   const dialogBg = isDark ? 'bg-dark-bg-primary' : 'bg-light-bg-primary'
@@ -295,51 +280,30 @@ export function KafkaConnectionDialog({
               {errors.name && <p className="text-xs text-status-error mt-1">{errors.name}</p>}
             </div>
 
-            {/* Bootstrap Servers */}
+            {/* Kafka Brokers */}
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className={cn('text-sm font-medium', textSecondary)}>
-                  {t('kafka.bootstrapServers', 'Bootstrap Servers')}
-                </label>
-                <button
-                  type="button"
-                  onClick={handleAddServer}
-                  className={cn('p-1 rounded transition-colors', hoverBg, 'text-accent-primary')}
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="space-y-2">
-                {formData.bootstrapServers.map((server, index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={server}
-                      onChange={(e) => handleServerChange(index, e.target.value)}
-                      placeholder="localhost:9092"
-                      className={cn(
-                        'flex-1 px-3 py-2 rounded border text-sm font-mono',
-                        'focus:outline-none focus:border-accent-primary',
-                        inputBg,
-                        borderColor,
-                        textPrimary,
-                        errors.bootstrapServers && 'border-status-error'
-                      )}
-                    />
-                    {formData.bootstrapServers.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveServer(index)}
-                        className={cn('p-2 rounded transition-colors', hoverBg, 'text-status-error')}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {errors.bootstrapServers && (
-                <p className="text-xs text-status-error mt-1">{errors.bootstrapServers}</p>
+              <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                {t('middleware.kafkaBrokers', 'Kafka Brokers')}
+              </label>
+              <textarea
+                value={formData.brokersText}
+                onChange={(e) => handleChange('brokersText', e.target.value)}
+                placeholder={t('middleware.kafkaBrokersPlaceholder', 'broker1:9092\nbroker2:9092\nbroker3:9092')}
+                rows={4}
+                className={cn(
+                  'w-full px-3 py-2 rounded border text-sm font-mono',
+                  'focus:outline-none focus:border-accent-primary resize-none',
+                  inputBg,
+                  borderColor,
+                  textPrimary,
+                  errors.brokersText && 'border-status-error'
+                )}
+              />
+              <p className={cn('text-xs mt-1', textSecondary)}>
+                {t('middleware.kafkaBrokersHint', 'Enter one broker address per line, format: host:port')}
+              </p>
+              {errors.brokersText && (
+                <p className="text-xs text-status-error mt-1">{errors.brokersText}</p>
               )}
             </div>
 

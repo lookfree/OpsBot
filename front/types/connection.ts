@@ -148,11 +148,12 @@ export interface MiddlewareConnection extends ConnectionBase {
     tls?: RedisTlsConfig
   }
   kafkaConfig?: {
-    bootstrapServers: string[]
-    securityProtocol?: 'PLAINTEXT' | 'SASL_PLAINTEXT' | 'SASL_SSL'
+    brokers: string[]  // Broker 地址列表（与 Redis nodes、ES nodes 风格一致）
+    securityProtocol?: 'PLAINTEXT' | 'SSL' | 'SASL_PLAINTEXT' | 'SASL_SSL'
     saslMechanism?: string
     username?: string
     password?: string
+    sslCaPath?: string
   }
   esConfig?: {
     nodes: string[]

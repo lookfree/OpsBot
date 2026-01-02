@@ -460,7 +460,9 @@
     "editConnection": "Edit Middleware Connection",
     "selectMiddlewareType": "Select Middleware Type",
     "connectionName": "Connection Name",
-    "bootstrapServers": "Bootstrap Servers",
+    "kafkaBrokers": "Broker Addresses",
+    "kafkaBrokersPlaceholder": "Enter broker addresses, one per line\nExample:\n192.168.1.101:9092\n192.168.1.102:9092\n192.168.1.103:9092",
+    "kafkaBrokersHint": "One broker per line. Format: host:port. At least one broker is required.",
     "securityProtocol": "Security Protocol",
     "saslMechanism": "SASL Mechanism",
     "username": "Username",
@@ -471,8 +473,8 @@
     "connectionFailed": "Connection failed",
     "errors": {
       "nameRequired": "Connection name is required",
-      "serversRequired": "At least one server is required",
-      "invalidServerFormat": "Invalid server format (use host:port)",
+      "brokersRequired": "At least one broker is required",
+      "invalidBrokerFormat": "Invalid broker format (use host:port)",
       "usernameRequired": "Username is required for SASL authentication",
       "passwordRequired": "Password is required for SASL authentication"
     },

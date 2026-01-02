@@ -475,7 +475,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
             </div>
           )}
           <span className={styles.textSecondary}>
-            {t('elasticsearch.doc.totalDocs', { count: totalDocs.toLocaleString() })}
+            {t('elasticsearch.doc.totalDocs', { count: totalDocs })}
           </span>
         </div>
       </div>

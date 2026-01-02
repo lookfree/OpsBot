@@ -460,7 +460,9 @@
     "editConnection": "编辑中间件连接",
     "selectMiddlewareType": "选择中间件类型",
     "connectionName": "连接名称",
-    "bootstrapServers": "Bootstrap 服务器",
+    "kafkaBrokers": "Broker 地址",
+    "kafkaBrokersPlaceholder": "每行输入一个 Broker 地址\n例如:\n192.168.1.101:9092\n192.168.1.102:9092\n192.168.1.103:9092",
+    "kafkaBrokersHint": "每行一个 Broker 地址，格式: host:port。至少需要一个 Broker 地址。",
     "securityProtocol": "安全协议",
     "saslMechanism": "SASL 机制",
     "username": "用户名",
@@ -471,8 +473,8 @@
     "connectionFailed": "连接失败",
     "errors": {
       "nameRequired": "连接名称不能为空",
-      "serversRequired": "至少需要一个服务器地址",
-      "invalidServerFormat": "服务器格式无效 (使用 host:port)",
+      "brokersRequired": "至少需要一个 Broker 地址",
+      "invalidBrokerFormat": "Broker 地址格式无效 (使用 host:port)",
       "usernameRequired": "SASL 认证需要用户名",
       "passwordRequired": "SASL 认证需要密码"
     },

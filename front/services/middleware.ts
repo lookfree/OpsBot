@@ -18,7 +18,7 @@ export type RedisMode = 'standalone' | 'cluster' | 'sentinel'
 
 export interface KafkaConnectRequest {
   connectionId: string
-  bootstrapServers: string[]
+  brokers: string[]
   securityProtocol?: SecurityProtocol
   saslMechanism?: SaslMechanism
   username?: string
@@ -27,7 +27,7 @@ export interface KafkaConnectRequest {
 
 export interface KafkaConnectionInfo {
   connectionId: string
-  bootstrapServers: string[]
+  brokers: string[]
   connectedAt: string
   clusterId?: string
 }
