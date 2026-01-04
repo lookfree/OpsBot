@@ -16,10 +16,38 @@
 
 <div align="center">
 
+### SSH 终端界面
+![SSH Terminal](./screenshots/ssh-terminal.png)
+
+*支持多会话管理、快捷键操作、终端日志记录等功能*
+
+---
+
+### 数据库管理界面
+![Database Management](./screenshots/database-management.png)
+
+*可视化表结构设计、SQL 编辑器、查询结果展示*
+
+---
+
+### 中间件管理界面
+![Middleware Management](./screenshots/middleware-management.png)
+
+*Redis、Kafka、Elasticsearch、ClickHouse 统一管理*
+
+---
+
 ### Docker 管理界面
 ![Docker Management](./screenshots/docker-overview.png)
 
-*展示了 Docker 容器管理、系统信息监控等功能*
+*容器监控、日志查看、交互式终端、镜像管理*
+
+---
+
+### SFTP 文件管理界面
+![SFTP Management](./screenshots/sftp-management.png)
+
+*文件浏览、拖拽上传下载、目录操作*
 
 </div>
 
