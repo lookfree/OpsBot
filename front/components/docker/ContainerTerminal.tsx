@@ -11,6 +11,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { X, Terminal, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useThemeStore } from '@/stores'
@@ -165,6 +166,7 @@ export function ContainerTerminal({
       cursorStyle: 'block',
       scrollback: 10000,
       allowProposedApi: true,
+      rightClickSelectsWord: true, // 禁用右键粘贴菜单，使用 Ctrl+V
     })
 
     // Add addons
@@ -261,11 +263,11 @@ export function ContainerTerminal({
   }, [isDark])
 
   // Copy selection to clipboard
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     if (terminalRef.current) {
       const selection = terminalRef.current.getSelection()
       if (selection) {
-        navigator.clipboard.writeText(selection)
+        await writeText(selection).catch(() => {})
       }
     }
   }, [])
@@ -273,7 +275,7 @@ export function ContainerTerminal({
   // Paste from clipboard
   const handlePaste = useCallback(async () => {
     try {
-      const text = await navigator.clipboard.readText()
+      const text = await readText()
       if (text && execIdRef.current) {
         const encoder = new TextEncoder()
         const bytes = encoder.encode(text)

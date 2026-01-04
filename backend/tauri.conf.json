@@ -24,7 +24,19 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "main-capability",
+          "windows": ["*"],
+          "permissions": [
+            "clipboard-manager:allow-read-text",
+            "clipboard-manager:allow-write-text",
+            "core:event:allow-listen",
+            "core:event:allow-emit"
+          ]
+        }
+      ]
     }
   },
   "bundle": {

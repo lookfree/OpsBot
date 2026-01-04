@@ -196,6 +196,7 @@
     }
   },
   "terminal": {
+    "paste": "貼り付け",
     "clear": "クリア",
     "disconnect": "切断",
     "reconnect": "再接続",

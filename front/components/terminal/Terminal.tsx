@@ -12,6 +12,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { cn } from '@/lib/utils'
 import { useThemeStore } from '@/stores'
 import '@xterm/xterm/css/xterm.css'
@@ -137,6 +138,7 @@ export function Terminal({
       cursorStyle: 'block',
       scrollback: 10000,
       allowProposedApi: true,
+      rightClickSelectsWord: true, // 禁用右键粘贴菜单，使用 Ctrl+V
     })
 
     // Add addons
@@ -278,11 +280,11 @@ export function Terminal({
   }, [fontFamily])
 
   // Copy selection to clipboard
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     if (terminalRef.current) {
       const selection = terminalRef.current.getSelection()
       if (selection) {
-        navigator.clipboard.writeText(selection)
+        await writeText(selection).catch(() => {})
       }
     }
   }, [])
@@ -290,7 +292,7 @@ export function Terminal({
   // Paste from clipboard
   const handlePaste = useCallback(async () => {
     try {
-      const text = await navigator.clipboard.readText()
+      const text = await readText()
       if (text && currentSessionId.current) {
         const base64Data = utf8ToBase64(text)
         await invoke('ssh_send_data', {

@@ -203,6 +203,7 @@
     }
   },
   "terminal": {
+    "paste": "Paste",
     "clear": "Clear",
     "disconnect": "Disconnect",
     "reconnect": "Reconnect",

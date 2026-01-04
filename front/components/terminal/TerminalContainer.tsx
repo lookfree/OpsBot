@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -22,6 +23,7 @@ import {
   SaveIcon,
   PlayCircleIcon,
   StopCircleIcon,
+  ClipboardIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
@@ -81,7 +83,17 @@ const lightTheme = {
   brightWhite: '#ffffff',
 }
 
-// UTF-8 safe base64 decoding
+// UTF-8 safe base64 encoding/decoding
+function utf8ToBase64(str: string): string {
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(str)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
 function base64ToUtf8(base64: string): string {
   const binary = atob(base64)
   const bytes = new Uint8Array(binary.length)
@@ -133,6 +145,7 @@ export function TerminalContainer({
       cursorStyle: 'block',
       scrollback: 10000,
       allowProposedApi: true,
+      rightClickSelectsWord: true, // 禁用右键粘贴菜单，使用 Ctrl+V
     })
 
     // Add addons
@@ -179,7 +192,7 @@ export function TerminalContainer({
     // Handle user input
     terminal.onData((data) => {
       if (currentSessionId.current) {
-        const base64Data = btoa(data)
+        const base64Data = utf8ToBase64(data)
         invoke('ssh_send_data', {
           sessionId: currentSessionId.current,
           data: base64Data,
@@ -262,32 +275,42 @@ export function TerminalContainer({
 
   // Copy & Paste handlers
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
         const selection = terminalRef.current?.getSelection()
         if (selection) {
           e.preventDefault()
-          navigator.clipboard.writeText(selection)
+          await writeText(selection).catch(() => {})
         }
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
         e.preventDefault()
-        navigator.clipboard.readText().then((text) => {
+        try {
+          console.log('Reading clipboard...')
+          const text = await readText()
+          console.log('Clipboard text:', text)
           if (text && currentSessionId.current) {
-            const base64Data = btoa(text)
-            invoke('ssh_send_data', {
+            const base64Data = utf8ToBase64(text)
+            console.log('Sending data to session:', currentSessionId.current)
+            await invoke('ssh_send_data', {
               sessionId: currentSessionId.current,
               data: base64Data,
             })
+            console.log('Data sent successfully')
+          } else {
+            console.log('No text or no session:', { text, sessionId: currentSessionId.current })
           }
-        })
+        } catch (err) {
+          console.error('Paste error:', err)
+          onError?.(`Failed to paste: ${err}`)
+        }
       }
     }
 
-    const container = containerRef.current?.parentElement
+    const container = containerRef.current
     container?.addEventListener('keydown', handleKeyDown)
     return () => container?.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [onError])
 
   // 清屏
   const handleClear = useCallback(() => {
@@ -295,6 +318,23 @@ export function TerminalContainer({
       terminalRef.current.clear()
     }
   }, [])
+
+  // 粘贴
+  const handlePaste = useCallback(async () => {
+    try {
+      const text = await readText()
+      if (text && currentSessionId.current) {
+        const base64Data = utf8ToBase64(text)
+        await invoke('ssh_send_data', {
+          sessionId: currentSessionId.current,
+          data: base64Data,
+        })
+      }
+    } catch (err) {
+      console.error('Paste error:', err)
+      onError?.(`Failed to paste: ${err}`)
+    }
+  }, [onError])
 
   // 断开连接
   const handleDisconnect = useCallback(async () => {
@@ -444,6 +484,16 @@ export function TerminalContainer({
               "min-w-[180px] rounded-md p-1 shadow-lg z-50",
               isDark ? "bg-dark-bg-hover border border-dark-border" : "bg-light-bg-primary border border-light-border"
             )}>
+              <ContextMenu.Item
+                onSelect={handlePaste}
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer outline-none",
+                  isDark ? "text-dark-text-primary hover:bg-dark-bg-hover" : "text-light-text-primary hover:bg-light-bg-hover"
+                )}
+              >
+                <ClipboardIcon className="w-4 h-4" />
+                {t('terminal.paste')}
+              </ContextMenu.Item>
               <ContextMenu.Item
                 onSelect={handleClear}
                 className={cn(

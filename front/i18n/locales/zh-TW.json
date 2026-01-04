@@ -196,6 +196,7 @@
     }
   },
   "terminal": {
+    "paste": "貼上",
     "clear": "清屏",
     "disconnect": "斷開連線",
     "reconnect": "重新連線",

@@ -203,6 +203,7 @@
     }
   },
   "terminal": {
+    "paste": "粘贴",
     "clear": "清屏",
     "disconnect": "断开连接",
     "reconnect": "重新连接",

@@ -42,6 +42,10 @@ pub async fn ssh_connect(
     let session_id_clone = session_id.clone();
     let app_clone = app.clone();
     tokio::spawn(async move {
+        // Small delay to ensure frontend event listener is set up before we start emitting
+        // This prevents race condition where initial SSH output (welcome message, prompt) is lost
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         while let Some(data) = rx.next().await {
             // Emit data event to frontend
             let _ = app_clone.emit(
@@ -163,6 +167,9 @@ pub async fn ssh_reconnect(
     let new_session_id_clone = new_session_id.clone();
     let app_clone = app.clone();
     tokio::spawn(async move {
+        // Small delay to ensure frontend event listener is set up before we start emitting
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         while let Some(data) = rx.next().await {
             let _ = app_clone.emit(
                 &format!("ssh-data-{}", new_session_id_clone),
