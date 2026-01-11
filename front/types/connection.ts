@@ -8,6 +8,7 @@ export enum ModuleType {
   Database = 'database',
   Docker = 'docker',
   Middleware = 'middleware',
+  AI = 'ai',
 }
 
 // 模块类型显示名称
@@ -16,6 +17,7 @@ export const ModuleTypeLabels: Record<ModuleType, string> = {
   [ModuleType.Database]: '数据库',
   [ModuleType.Docker]: 'Docker',
   [ModuleType.Middleware]: '中间件',
+  [ModuleType.AI]: 'AI',
 }
 
 // 目录节点

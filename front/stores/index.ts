@@ -2,6 +2,7 @@
  * Store 统一导出
  */
 
+export { useAiStore } from './aiStore'
 export { useThemeStore } from './themeStore'
 export { useConnectionStore, MAX_FOLDER_DEPTH } from './connectionStore'
 export { useTabStore, createTabFromConnection } from './tabStore'

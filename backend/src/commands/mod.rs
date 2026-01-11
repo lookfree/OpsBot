@@ -2,6 +2,7 @@
 //!
 //! This module contains all Tauri command handlers.
 
+pub mod ai;
 pub mod crypto;
 pub mod database;
 pub mod docker;
@@ -11,6 +12,7 @@ pub mod sftp;
 pub mod ssh;
 pub mod utils;
 
+pub use ai::*;
 pub use crypto::*;
 pub use database::*;
 pub use docker::*;

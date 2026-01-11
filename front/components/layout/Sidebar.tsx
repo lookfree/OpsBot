@@ -19,9 +19,14 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
   Workflow,
+  Brain,
+  Cpu,
+  Cloud,
+  Monitor,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useConnectionStore, useTabStore } from '@/stores'
+import { useConnectionStore, useTabStore, useAiStore } from '@/stores'
+import type { AiEngineType } from '@/types'
 import { ModuleType } from '@/types'
 import { ConnectionTree, registerDropTarget, unregisterDropTarget } from './ConnectionTree'
 import { SettingsDropdown } from '@/components/settings'
@@ -37,7 +42,16 @@ const ModuleIcons: Record<ModuleType, React.ComponentType<{ className?: string }
   [ModuleType.Database]: Database,
   [ModuleType.Docker]: Container,
   [ModuleType.Middleware]: Settings2,
+  [ModuleType.AI]: Brain,
 }
+
+// AI 子模块配置
+const AI_SUB_ITEMS: { type: AiEngineType; icon: React.ComponentType<{ className?: string }> }[] = [
+  { type: 'ollama', icon: Brain },
+  { type: 'tensorrt', icon: Cpu },
+  { type: 'cloudApi', icon: Cloud },
+  { type: 'gpu', icon: Monitor },
+]
 
 interface SidebarProps {
   className?: string
@@ -52,6 +66,7 @@ export function Sidebar({ className }: SidebarProps) {
   const getTreeNodes = useConnectionStore((state) => state.getTreeNodes)
   const createFolder = useConnectionStore((state) => state.createFolder)
   const addTab = useTabStore((state) => state.addTab)
+  const setActiveEngine = useAiStore((state) => state.setActiveEngine)
 
   // Drag-drop state for root level drop zones (mouse-based)
   const [dragOverModule, setDragOverModule] = useState<ModuleType | null>(null)
@@ -78,6 +93,7 @@ export function Sidebar({ className }: SidebarProps) {
     [ModuleType.Database]: true,
     [ModuleType.Docker]: true,
     [ModuleType.Middleware]: true,
+    [ModuleType.AI]: true,
   })
   const [sshDialogOpen, setSshDialogOpen] = useState(false)
   const [databaseDialogOpen, setDatabaseDialogOpen] = useState(false)
@@ -207,6 +223,21 @@ export function Sidebar({ className }: SidebarProps) {
     })
   }
 
+  // 打开 AI 模块
+  const openAIPanel = (engine?: AiEngineType) => {
+    if (engine) {
+      setActiveEngine(engine)
+    }
+    addTab({
+      type: 'ai',
+      title: t('ai.title', 'AI'),
+      moduleType: ModuleType.AI,
+      status: 'connected',
+      closable: true,
+      pinned: false,
+    })
+  }
+
   return (
     <div className={cn('sidebar w-64 flex flex-col', className)}>
       {/* 顶部标题栏 */}
@@ -323,6 +354,53 @@ export function Sidebar({ className }: SidebarProps) {
         {treeNodes.map((moduleNode) => {
           const Icon = ModuleIcons[moduleNode.moduleType]
           const isExpanded = expandedModules[moduleNode.moduleType]
+          const isAiModule = moduleNode.moduleType === ModuleType.AI
+
+          // AI 模块特殊渲染 - 显示子模块列表
+          if (isAiModule) {
+            return (
+              <div key={moduleNode.id} className="mb-1">
+                {/* AI 模块标题 */}
+                <div
+                  className="tree-item group cursor-pointer"
+                  onClick={() => toggleModule(moduleNode.moduleType)}
+                >
+                  <span className="w-4 h-4 flex items-center justify-center">
+                    {isExpanded ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3" />
+                    )}
+                  </span>
+                  <Icon className="w-4 h-4 mr-2" />
+                  <span className="flex-1 text-sm font-medium">
+                    {t(`modules.${moduleNode.moduleType}`)}
+                  </span>
+                </div>
+                {/* AI 子模块列表 */}
+                {isExpanded && (
+                  <div className="ml-4">
+                    {AI_SUB_ITEMS.map((item) => {
+                      const SubIcon = item.icon
+                      return (
+                        <div
+                          key={item.type}
+                          className="tree-item group cursor-pointer"
+                          onClick={() => openAIPanel(item.type)}
+                        >
+                          <span className="w-4 h-4 flex items-center justify-center" />
+                          <SubIcon className="w-4 h-4 mr-2" />
+                          <span className="flex-1 text-sm">
+                            {t(`ai.model.${item.type}`, item.type)}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          }
 
           return (
             <div key={moduleNode.id} className="mb-1">
@@ -458,8 +536,9 @@ export function Sidebar({ className }: SidebarProps) {
         })}
       </div>
 
-      {/* 底部设置区域 - 参考Claude风格 */}
-      <div className="p-2">
+      {/* 底部功能区域 */}
+      <div className="p-2 space-y-1">
+        {/* 设置 */}
         <SettingsDropdown />
       </div>
 

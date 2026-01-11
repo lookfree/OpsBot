@@ -45,6 +45,9 @@ odbc-api = { version = "5", optional = true }
 clickhouse = { version = "0.13", features = ["native-tls"], optional = true }
 reqwest = { version = "0.12", features = ["json", "native-tls"], optional = true }
 
+# Local SQLite (for GPU history storage)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 # Middleware - Message Queue
 rdkafka = { version = "0.36", features = ["cmake-build", "ssl-vendored"], optional = true }
 

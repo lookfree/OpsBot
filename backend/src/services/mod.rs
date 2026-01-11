@@ -2,6 +2,7 @@
 //!
 //! This module contains all service implementations.
 
+pub mod ai;
 pub mod crypto_service;
 pub mod database;
 pub mod docker;
@@ -10,6 +11,7 @@ pub mod middleware;
 pub mod sftp_service;
 pub mod ssh_service;
 
+pub use ai::AiService;
 pub use crypto_service::CryptoService;
 pub use database::DatabaseService;
 pub use docker::DockerService;

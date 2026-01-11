@@ -2,6 +2,7 @@
 //!
 //! This module contains all data structures used across the application.
 
+pub mod ai;
 pub mod connection;
 pub mod database;
 pub mod docker;
@@ -14,6 +15,7 @@ pub mod redis;
 pub mod sftp;
 pub mod ssh;
 
+pub use ai::*;
 pub use connection::*;
 pub use database::*;
 pub use docker::*;

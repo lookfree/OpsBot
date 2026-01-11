@@ -10,10 +10,10 @@ use std::sync::Arc;
 #[cfg(debug_assertions)]
 use tauri::Manager;
 
-use commands::{CryptoServiceState, DatabaseServiceState, DockerServiceState, SftpServiceState, SshServiceState};
+use commands::{AiServiceState, CryptoServiceState, DatabaseServiceState, DockerServiceState, SftpServiceState, SshServiceState};
 #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 use commands::MiddlewareServiceState;
-use services::{CryptoService, DatabaseService, DockerService, SftpService, SshService};
+use services::{AiService, CryptoService, DatabaseService, DockerService, SftpService, SshService};
 #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 use services::MiddlewareService;
 
@@ -25,6 +25,7 @@ pub fn run() {
     let database_service = Arc::new(DatabaseService::new());
     let docker_service = Arc::new(DockerService::new(ssh_service.clone()));
     let crypto_service = Arc::new(CryptoService::new());
+    let ai_service = Arc::new(AiService::new());
     #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
     let middleware_service = Arc::new(MiddlewareService::new());
 
@@ -37,7 +38,8 @@ pub fn run() {
         .manage(SftpServiceState(sftp_service))
         .manage(DatabaseServiceState(database_service))
         .manage(DockerServiceState(docker_service))
-        .manage(CryptoServiceState(crypto_service));
+        .manage(CryptoServiceState(crypto_service))
+        .manage(AiServiceState(ai_service));
 
     #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
     let builder = builder.manage(MiddlewareServiceState(middleware_service));
@@ -289,6 +291,60 @@ pub fn run() {
             commands::mw_es_search,
             #[cfg(feature = "elasticsearch")]
             commands::mw_es_sql_query,
+            // AI commands
+            commands::ai_ollama_connect,
+            commands::ai_ollama_disconnect,
+            commands::ai_ollama_test_connection,
+            commands::ai_ollama_is_connected,
+            commands::ai_ollama_get_status,
+            commands::ai_ollama_list_models,
+            commands::ai_ollama_pull_model,
+            commands::ai_ollama_delete_model,
+            commands::ai_ollama_get_running_models,
+            // AI service control commands
+            commands::ai_ollama_start_service,
+            commands::ai_ollama_stop_service,
+            commands::ai_ollama_restart_service,
+            commands::ai_ollama_is_service_running,
+            // GPU monitoring commands
+            commands::ai_detect_gpu,
+            commands::ai_get_gpu_info,
+            commands::ai_get_gpu_processes,
+            commands::ai_get_gpu_history,
+            // Cloud API commands
+            commands::ai_cloud_api_test_connection,
+            commands::ai_cloud_api_list_models,
+            commands::ai_cloud_api_get_default_models,
+            // TensorRT LLM commands
+            commands::ai_tensorrt_connect,
+            commands::ai_tensorrt_disconnect,
+            commands::ai_tensorrt_test_connection,
+            commands::ai_tensorrt_is_connected,
+            commands::ai_tensorrt_get_status,
+            commands::ai_tensorrt_list_models,
+            commands::ai_tensorrt_deploy_model,
+            commands::ai_tensorrt_start_model,
+            commands::ai_tensorrt_stop_model,
+            commands::ai_tensorrt_get_logs,
+            // MCP commands
+            commands::ai_mcp_create_server,
+            commands::ai_mcp_delete_server,
+            commands::ai_mcp_list_servers,
+            commands::ai_mcp_get_server,
+            commands::ai_mcp_start_server,
+            commands::ai_mcp_stop_server,
+            commands::ai_mcp_bind_tool,
+            commands::ai_mcp_unbind_tool,
+            commands::ai_mcp_get_tools,
+            commands::ai_mcp_update_server,
+            // OpenWebUI commands
+            commands::ai_openwebui_detect,
+            commands::ai_openwebui_open,
+            // Remote AI management commands
+            commands::ai_remote_detect_environment,
+            commands::ai_remote_ollama_command,
+            commands::ai_remote_sync_models,
+            commands::ai_remote_get_gpu_info,
             // Utility commands
             commands::append_to_file,
             // Crypto commands (password-based for export/import)

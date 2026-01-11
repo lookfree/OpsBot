@@ -5,7 +5,7 @@
 import { ModuleType, ConnectionStatus } from './connection'
 
 // 标签页类型
-export type TabType = 'terminal' | 'sftp' | 'database' | 'docker' | 'middleware' | 'erDesigner'
+export type TabType = 'terminal' | 'sftp' | 'database' | 'docker' | 'middleware' | 'erDesigner' | 'ai'
 
 // 标签页
 export interface Tab {

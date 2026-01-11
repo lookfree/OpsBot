@@ -16,6 +16,7 @@ import { KafkaContainer } from '@/components/kafka'
 import { RedisContainer } from '@/components/middleware/redis'
 import { ElasticsearchContainer } from '@/components/middleware/elasticsearch'
 import { DockerContainer } from '@/components/docker'
+import { AiContainer } from '@/components/ai'
 import { SshConnectionDialog } from '@/components/ssh'
 import { sshConnect } from '@/services'
 import type { Tab, SSHConnection, DatabaseConnection, MiddlewareConnection, DockerConnection } from '@/types'
@@ -351,6 +352,16 @@ function TabContent({
   if (tab.type === 'erDesigner') {
     return (
       <ERDiagramDesigner
+        key={tab.id}
+        className="h-full"
+      />
+    )
+  }
+
+  // AI tab - standalone mode
+  if (tab.type === 'ai') {
+    return (
+      <AiContainer
         key={tab.id}
         className="h-full"
       />
