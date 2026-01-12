@@ -1086,7 +1086,8 @@
       "pulling": "プル中...",
       "pullingModel": "{{name}} をプル中...",
       "enterModelName": "モデル名を入力してください",
-      "gpu": "GPU モニター"
+      "gpu": "GPU モニター",
+      "mcp": "MCP サーバー"
     },
     "ollama": {
       "connect": "Ollama に接続",
@@ -1191,7 +1192,9 @@
       "intervalMinute": "1 分",
       "intervalFiveMinutes": "5 分",
       "intervalHour": "1 時間",
-      "intervalDay": "1 日"
+      "intervalDay": "1 日",
+      "remoteNotDetected": "リモートホストで NVIDIA GPU が検出されません",
+      "selectConnection": "SSH 接続を選択してください"
     },
     "mcp": {
       "title": "MCP サーバー",
@@ -1247,6 +1250,7 @@
       "mode": "モード",
       "local": "ローカル",
       "remote": "リモート",
+      "sshConnection": "SSH 接続",
       "selectConnection": "SSH 接続を選択",
       "noConnections": "利用可能な SSH 接続がありません",
       "clearSelection": "選択をクリア",

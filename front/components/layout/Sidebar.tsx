@@ -51,6 +51,7 @@ const AI_SUB_ITEMS: { type: AiEngineType; icon: React.ComponentType<{ className?
   { type: 'tensorrt', icon: Cpu },
   { type: 'cloudApi', icon: Cloud },
   { type: 'gpu', icon: Monitor },
+  { type: 'mcp', icon: Server },
 ]
 
 interface SidebarProps {

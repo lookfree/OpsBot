@@ -345,6 +345,8 @@ pub fn run() {
             commands::ai_remote_ollama_command,
             commands::ai_remote_sync_models,
             commands::ai_remote_get_gpu_info,
+            commands::ai_remote_detect_gpu,
+            commands::ai_remote_get_gpu_processes,
             // Utility commands
             commands::append_to_file,
             // Crypto commands (password-based for export/import)

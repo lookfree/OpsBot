@@ -1095,7 +1095,8 @@
       "pulling": "Pulling...",
       "pullingModel": "Pulling {{name}}...",
       "enterModelName": "Please enter a model name",
-      "gpu": "GPU Monitor"
+      "gpu": "GPU Monitor",
+      "mcp": "MCP Server"
     },
     "ollama": {
       "connect": "Connect to Ollama",
@@ -1200,7 +1201,9 @@
       "intervalMinute": "1 Minute",
       "intervalFiveMinutes": "5 Minutes",
       "intervalHour": "1 Hour",
-      "intervalDay": "1 Day"
+      "intervalDay": "1 Day",
+      "remoteNotDetected": "NVIDIA GPU not detected on remote host",
+      "selectConnection": "Please select SSH connection"
     },
     "mcp": {
       "title": "MCP Server",
@@ -1256,6 +1259,7 @@
       "mode": "Mode",
       "local": "Local",
       "remote": "Remote",
+      "sshConnection": "SSH Connection",
       "selectConnection": "Select SSH Connection",
       "noConnections": "No SSH connections available",
       "clearSelection": "Clear Selection",

@@ -1086,7 +1086,8 @@
       "pulling": "拉取中...",
       "pullingModel": "正在拉取 {{name}}...",
       "enterModelName": "請輸入模型名稱",
-      "gpu": "GPU 監控"
+      "gpu": "GPU 監控",
+      "mcp": "MCP Server"
     },
     "ollama": {
       "connect": "連線 Ollama",
@@ -1191,7 +1192,9 @@
       "intervalMinute": "1 分鐘",
       "intervalFiveMinutes": "5 分鐘",
       "intervalHour": "1 小時",
-      "intervalDay": "1 天"
+      "intervalDay": "1 天",
+      "remoteNotDetected": "遠端主機未偵測到 NVIDIA GPU",
+      "selectConnection": "請選擇 SSH 連線"
     },
     "mcp": {
       "title": "MCP Server",
@@ -1247,6 +1250,7 @@
       "mode": "模式",
       "local": "本機",
       "remote": "遠端",
+      "sshConnection": "SSH 連線",
       "selectConnection": "選擇 SSH 連線",
       "noConnections": "暫無可用的 SSH 連線",
       "clearSelection": "清除選擇",

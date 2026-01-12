@@ -77,20 +77,37 @@ export interface RemoteActions {
 
 // GPU State
 export interface GpuState {
+  // Local GPU state
   gpuDetected: boolean
   gpuInfo: GpuInfo[]
   gpuProcesses: GpuProcess[]
   gpuHistory: GpuHistory[]
   isLoadingGpu: boolean
   gpuError: string | null
+  // Remote GPU state
+  isGpuRemoteMode: boolean
+  gpuRemoteSshConnectionId: string | null
+  remoteGpuDetected: boolean
+  remoteGpuInfo: GpuInfo[]
+  remoteGpuProcesses: GpuProcess[]
+  isLoadingRemoteGpu: boolean
+  remoteGpuError: string | null
 }
 
 // GPU Actions
 export interface GpuActions {
+  // Local GPU actions
   detectGpu: () => Promise<void>
   fetchGpuInfo: () => Promise<void>
   fetchGpuProcesses: () => Promise<void>
   fetchGpuHistory: (gpuIndex: number, startTime: number, endTime: number, interval: HistoryInterval) => Promise<void>
+  // Remote GPU actions
+  setGpuRemoteMode: (isRemote: boolean) => void
+  setGpuRemoteSshConnection: (connectionId: string | null) => void
+  detectRemoteGpu: (sshConnectionId: string) => Promise<void>
+  fetchRemoteGpuInfo: (sshConnectionId: string) => Promise<void>
+  fetchRemoteGpuProcesses: (sshConnectionId: string) => Promise<void>
+  clearRemoteGpuError: () => void
 }
 
 // Cloud API State

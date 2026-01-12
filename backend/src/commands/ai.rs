@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::models::{
-    CloudApiConfig, CloudApiModel, CloudApiProvider, CloudApiTestResult, GpuInfo,
+    CloudApiConfig, CloudApiModel, CloudApiProvider, CloudApiTestResult, GpuInfo, GpuProcess,
     OllamaConnectRequest, OllamaModel, OllamaRunningModel, OllamaStatus,
     OpenWebUIStatus, RemoteAiEnvironment,
     TensorRTConnectRequest, TensorRTModel, TensorRTModelConfig, TensorRTStatus,
@@ -637,4 +637,24 @@ pub async fn ai_remote_get_gpu_info(
 ) -> Result<Vec<GpuInfo>, String> {
     let manager = RemoteAiManager::new(ssh_state.0.clone());
     manager.get_remote_gpu_info(&ssh_connection_id).await
+}
+
+/// Detect if NVIDIA GPU is available on remote server
+#[tauri::command]
+pub async fn ai_remote_detect_gpu(
+    ssh_state: State<'_, SshServiceState>,
+    ssh_connection_id: String,
+) -> Result<bool, String> {
+    let manager = RemoteAiManager::new(ssh_state.0.clone());
+    manager.detect_remote_gpu(&ssh_connection_id).await
+}
+
+/// Get GPU processes from remote server
+#[tauri::command]
+pub async fn ai_remote_get_gpu_processes(
+    ssh_state: State<'_, SshServiceState>,
+    ssh_connection_id: String,
+) -> Result<Vec<GpuProcess>, String> {
+    let manager = RemoteAiManager::new(ssh_state.0.clone());
+    manager.get_remote_gpu_processes(&ssh_connection_id).await
 }

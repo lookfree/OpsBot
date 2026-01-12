@@ -138,6 +138,51 @@ impl RemoteAiManager {
         Ok(gpus)
     }
 
+    /// Detect if NVIDIA GPU is available on remote server
+    pub async fn detect_remote_gpu(&self, ssh_connection_id: &str) -> Result<bool, String> {
+        let output = self
+            .execute_command(
+                ssh_connection_id,
+                "nvidia-smi -L 2>/dev/null || echo 'NOT_FOUND'",
+            )
+            .await?;
+
+        Ok(!output.contains("NOT_FOUND") && output.contains("GPU"))
+    }
+
+    /// Get GPU processes from remote server
+    pub async fn get_remote_gpu_processes(
+        &self,
+        ssh_connection_id: &str,
+    ) -> Result<Vec<crate::models::GpuProcess>, String> {
+        let output = self
+            .execute_command(
+                ssh_connection_id,
+                r#"nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null"#,
+            )
+            .await?;
+
+        let mut processes = Vec::new();
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.contains("No running") {
+                continue;
+            }
+
+            let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+            if parts.len() >= 4 {
+                processes.push(crate::models::GpuProcess {
+                    gpu_uuid: parts[0].to_string(),
+                    pid: parts[1].parse().unwrap_or(0),
+                    process_name: parts[2].to_string(),
+                    used_memory: parts[3].parse().unwrap_or(0),
+                });
+            }
+        }
+
+        Ok(processes)
+    }
+
     /// Execute command on remote server via SSH
     async fn execute_command(
         &self,
