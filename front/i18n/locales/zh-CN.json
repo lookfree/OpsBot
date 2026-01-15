@@ -240,6 +240,7 @@
     "chars": "字符",
     "cancelTransfer": "取消传输",
     "transferCancelled": "传输已取消",
+    "retryTransfer": "重新传输",
     "fileExists": "文件已存在",
     "fileExistsMessage": "服务器上已存在文件 \"{{name}}\" ({{size}})。是否从断点续传？",
     "resume": "续传",

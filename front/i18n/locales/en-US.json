@@ -240,6 +240,7 @@
     "chars": "chars",
     "cancelTransfer": "Cancel transfer",
     "transferCancelled": "Transfer cancelled",
+    "retryTransfer": "Retry transfer",
     "fileExists": "File exists",
     "fileExistsMessage": "File \"{{name}}\" already exists on server ({{size}}). Resume upload from where it left off?",
     "resume": "Resume",

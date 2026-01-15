@@ -233,6 +233,7 @@
     "chars": "文字",
     "cancelTransfer": "転送をキャンセル",
     "transferCancelled": "転送がキャンセルされました",
+    "retryTransfer": "再転送",
     "fileExists": "ファイルが存在します",
     "fileExistsMessage": "サーバーにファイル \"{{name}}\" ({{size}}) が既に存在します。中断したところから再開しますか？",
     "resume": "再開",

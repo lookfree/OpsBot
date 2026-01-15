@@ -10,8 +10,9 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use russh::Channel;
 use russh_sftp::client::SftpSession;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::RwLock;
+use tokio::fs::File as TokioFile;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::{RwLock, Semaphore, OwnedSemaphorePermit};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -26,12 +27,17 @@ pub struct SftpSessionWrapper {
 
 /// SFTP Service for managing file operations
 pub struct SftpService {
-    /// Map of session_id -> SftpSessionWrapper
+    /// Map of session_id -> SftpSessionWrapper (main sessions for browsing)
     sessions: Arc<RwLock<HashMap<String, SftpSessionWrapper>>>,
+    /// Map of task_id -> Arc<SftpSession> (dedicated sessions for parallel uploads)
+    /// Using Arc allows cloning the reference and releasing the lock quickly
+    transfer_sessions: Arc<RwLock<HashMap<String, Arc<SftpSession>>>>,
     /// Transfer tasks
     transfers: Arc<RwLock<HashMap<String, TransferTask>>>,
     /// Cancellation tokens for transfer tasks
     cancel_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
+    /// Semaphore to limit concurrent uploads (default: 3)
+    max_concurrent_uploads: Arc<Semaphore>,
 }
 
 impl Default for SftpService {
@@ -40,12 +46,17 @@ impl Default for SftpService {
     }
 }
 
+/// Maximum number of concurrent uploads (reduced from 3 to 2 to avoid bandwidth saturation)
+const MAX_CONCURRENT_UPLOADS: usize = 2;
+
 impl SftpService {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            transfer_sessions: Arc::new(RwLock::new(HashMap::new())),
             transfers: Arc::new(RwLock::new(HashMap::new())),
             cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
+            max_concurrent_uploads: Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOADS)),
         }
     }
 
@@ -305,10 +316,134 @@ impl SftpService {
 
     /// Get remote file size, returns 0 if file doesn't exist
     pub async fn get_remote_file_size(&self, session_id: &str, path: &str) -> u64 {
+        log::info!("[SFTP Resume] Checking remote file size: {}", path);
         match self.stat(session_id, path).await {
-            Ok(entry) if !entry.is_dir => entry.size,
-            _ => 0,
+            Ok(entry) if !entry.is_dir => {
+                log::info!("[SFTP Resume] Remote file exists, size: {} bytes", entry.size);
+                entry.size
+            }
+            Ok(_entry) => {
+                log::info!("[SFTP Resume] Path is a directory, returning 0");
+                0
+            }
+            Err(e) => {
+                log::info!("[SFTP Resume] Remote file not found or error: {}", e);
+                0
+            }
         }
+    }
+
+    /// Stream upload file from local path to remote path
+    /// This method reads file in chunks to avoid loading entire file into memory
+    /// Returns Ok(true) if completed, Ok(false) if cancelled
+    pub async fn upload_file_streaming<F>(
+        &self,
+        session_id: &str,
+        local_path: &str,
+        remote_path: &str,
+        chunk_size: usize,
+        start_offset: u64,
+        cancel_token: CancellationToken,
+        mut progress_callback: F,
+    ) -> Result<bool>
+    where
+        F: FnMut(u64) + Send,
+    {
+        log::info!("[SFTP Stream] Opening local file: {}", local_path);
+        // Open local file
+        let local_file = TokioFile::open(local_path).await?;
+        let file_size = local_file.metadata().await?.len();
+        log::info!("[SFTP Stream] Local file opened, size: {} bytes", file_size);
+        let mut reader = BufReader::with_capacity(chunk_size, local_file);
+
+        // Skip to start offset if resuming
+        if start_offset > 0 {
+            let mut skipped = 0u64;
+            let mut skip_buf = vec![0u8; chunk_size.min(1024 * 1024)];
+            while skipped < start_offset {
+                let to_skip = (start_offset - skipped).min(skip_buf.len() as u64) as usize;
+                let n = reader.read(&mut skip_buf[..to_skip]).await?;
+                if n == 0 {
+                    break;
+                }
+                skipped += n as u64;
+            }
+        }
+
+        // Get SFTP session and create remote file
+        log::info!("[SFTP Stream] Getting SFTP session: {}", session_id);
+        let sessions = self.sessions.read().await;
+        let wrapper = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow!("SFTP session not found"))?;
+        log::info!("[SFTP Stream] SFTP session found");
+
+        // Open file for writing
+        log::info!("[SFTP Stream] Creating remote file: {}", remote_path);
+        let mut remote_file = if start_offset > 0 {
+            let options =
+                russh_sftp::protocol::OpenFlags::WRITE | russh_sftp::protocol::OpenFlags::APPEND;
+            wrapper.sftp.open_with_flags(remote_path, options).await?
+        } else {
+            wrapper.sftp.create(remote_path).await?
+        };
+        log::info!("[SFTP Stream] Remote file created successfully");
+
+        let mut written = start_offset;
+        let mut buffer = vec![0u8; chunk_size];
+        let mut chunk_count = 0u64;
+
+        log::info!(
+            "[SFTP Stream] Starting upload loop, chunk_size: {}, start_offset: {}",
+            chunk_size,
+            start_offset
+        );
+        loop {
+            // Check for cancellation
+            if cancel_token.is_cancelled() {
+                log::info!(
+                    "[SFTP Stream] Upload cancelled at {} bytes, syncing file...",
+                    written
+                );
+                // Sync the file to ensure partial data is written to disk
+                if let Err(e) = remote_file.sync_all().await {
+                    log::warn!("[SFTP Stream] Failed to sync on cancel: {}", e);
+                }
+                return Ok(false);
+            }
+
+            // Read chunk from local file
+            let bytes_read = reader.read(&mut buffer).await?;
+            if bytes_read == 0 {
+                log::info!("[SFTP Stream] EOF reached");
+                break; // EOF
+            }
+
+            // Write chunk to remote file
+            if let Err(e) = remote_file.write_all(&buffer[..bytes_read]).await {
+                log::error!("[SFTP Stream] Write error at chunk {}: {}", chunk_count, e);
+                return Err(e.into());
+            }
+            written += bytes_read as u64;
+            chunk_count += 1;
+
+            // Log progress every 100 chunks
+            if chunk_count % 100 == 0 {
+                log::info!("[SFTP Stream] Progress: {} bytes written, {} chunks", written, chunk_count);
+            }
+
+            progress_callback(written);
+
+            // Check if we've written the expected amount
+            if written >= file_size {
+                break;
+            }
+        }
+
+        log::info!("[SFTP Stream] Upload loop finished, syncing file...");
+        remote_file.sync_all().await?;
+        log::info!("[SFTP Stream] Upload completed: {} bytes, {} chunks", written, chunk_count);
+        Ok(true)
     }
 
     /// Get file/directory metadata
@@ -440,6 +575,163 @@ impl SftpService {
                     TransferStatus::Completed | TransferStatus::Cancelled
                 )
         });
+    }
+
+    /// Remove a single transfer task by ID
+    pub async fn remove_transfer(&self, task_id: &str) {
+        self.transfers.write().await.remove(task_id);
+        self.cancel_tokens.write().await.remove(task_id);
+    }
+
+    /// Acquire a permit for concurrent upload
+    /// Returns the permit which must be held during upload
+    pub async fn acquire_upload_permit(&self) -> Result<OwnedSemaphorePermit> {
+        self.max_concurrent_uploads
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| anyhow!("Failed to acquire upload permit: {}", e))
+    }
+
+    /// Create a dedicated SFTP session for a transfer task
+    /// This allows parallel uploads without blocking the main session
+    pub async fn create_transfer_session(
+        &self,
+        task_id: &str,
+        channel: Channel<russh::client::Msg>,
+    ) -> Result<()> {
+        log::info!("[SFTP Transfer] Creating dedicated session for task: {}", task_id);
+
+        // Request SFTP subsystem on the new channel
+        channel.request_subsystem(true, "sftp").await?;
+
+        // Create SFTP session wrapped in Arc for safe concurrent access
+        let sftp = Arc::new(SftpSession::new(channel.into_stream()).await?);
+
+        self.transfer_sessions.write().await.insert(task_id.to_string(), sftp);
+        log::info!("[SFTP Transfer] Dedicated session created for task: {}", task_id);
+        Ok(())
+    }
+
+    /// Close and remove a dedicated transfer session
+    pub async fn close_transfer_session(&self, task_id: &str) {
+        log::info!("[SFTP Transfer] Closing dedicated session for task: {}", task_id);
+        self.transfer_sessions.write().await.remove(task_id);
+    }
+
+    /// Stream upload file using a dedicated transfer session
+    /// This method uses the transfer_sessions map instead of main sessions
+    /// Returns Ok(true) if completed, Ok(false) if cancelled
+    pub async fn upload_with_dedicated_session<F>(
+        &self,
+        task_id: &str,
+        local_path: &str,
+        remote_path: &str,
+        chunk_size: usize,
+        start_offset: u64,
+        cancel_token: CancellationToken,
+        mut progress_callback: F,
+    ) -> Result<bool>
+    where
+        F: FnMut(u64) + Send,
+    {
+        log::info!("[SFTP Dedicated] Opening local file: {}", local_path);
+        // Open local file
+        let local_file = TokioFile::open(local_path).await?;
+        let file_size = local_file.metadata().await?.len();
+        log::info!("[SFTP Dedicated] Local file opened, size: {} bytes", file_size);
+        let mut reader = BufReader::with_capacity(chunk_size, local_file);
+
+        // Skip to start offset if resuming
+        if start_offset > 0 {
+            let mut skipped = 0u64;
+            let mut skip_buf = vec![0u8; chunk_size.min(1024 * 1024)];
+            while skipped < start_offset {
+                let to_skip = (start_offset - skipped).min(skip_buf.len() as u64) as usize;
+                let n = reader.read(&mut skip_buf[..to_skip]).await?;
+                if n == 0 {
+                    break;
+                }
+                skipped += n as u64;
+            }
+        }
+
+        // Get the dedicated transfer session (clone Arc to release lock quickly)
+        log::info!("[SFTP Dedicated] Getting transfer session for task: {}", task_id);
+        let sftp = {
+            let transfer_sessions = self.transfer_sessions.read().await;
+            transfer_sessions
+                .get(task_id)
+                .ok_or_else(|| anyhow!("Transfer session not found for task: {}", task_id))?
+                .clone() // Clone the Arc, not the session itself
+        }; // Lock is released here
+        log::info!("[SFTP Dedicated] Transfer session found");
+
+        // Open file for writing
+        log::info!("[SFTP Dedicated] Creating remote file: {}", remote_path);
+        let mut remote_file = if start_offset > 0 {
+            let options =
+                russh_sftp::protocol::OpenFlags::WRITE | russh_sftp::protocol::OpenFlags::APPEND;
+            sftp.open_with_flags(remote_path, options).await?
+        } else {
+            sftp.create(remote_path).await?
+        };
+        log::info!("[SFTP Dedicated] Remote file created successfully");
+
+        let mut written = start_offset;
+        let mut buffer = vec![0u8; chunk_size];
+        let mut chunk_count = 0u64;
+
+        log::info!(
+            "[SFTP Dedicated] Starting upload loop, chunk_size: {}, start_offset: {}",
+            chunk_size,
+            start_offset
+        );
+        loop {
+            // Check for cancellation
+            if cancel_token.is_cancelled() {
+                log::info!(
+                    "[SFTP Dedicated] Upload cancelled at {} bytes, syncing file...",
+                    written
+                );
+                if let Err(e) = remote_file.sync_all().await {
+                    log::warn!("[SFTP Dedicated] Failed to sync on cancel: {}", e);
+                }
+                return Ok(false);
+            }
+
+            // Read chunk from local file
+            let bytes_read = reader.read(&mut buffer).await?;
+            if bytes_read == 0 {
+                log::info!("[SFTP Dedicated] EOF reached");
+                break; // EOF
+            }
+
+            // Write chunk to remote file
+            if let Err(e) = remote_file.write_all(&buffer[..bytes_read]).await {
+                log::error!("[SFTP Dedicated] Write error at chunk {}: {}", chunk_count, e);
+                return Err(e.into());
+            }
+            written += bytes_read as u64;
+            chunk_count += 1;
+
+            // Log progress every 100 chunks
+            if chunk_count % 100 == 0 {
+                log::info!("[SFTP Dedicated] Progress: {} bytes written, {} chunks", written, chunk_count);
+            }
+
+            progress_callback(written);
+
+            // Check if we've written the expected amount
+            if written >= file_size {
+                break;
+            }
+        }
+
+        log::info!("[SFTP Dedicated] Upload loop finished, syncing file...");
+        remote_file.sync_all().await?;
+        log::info!("[SFTP Dedicated] Upload completed: {} bytes, {} chunks", written, chunk_count);
+        Ok(true)
     }
 }
 

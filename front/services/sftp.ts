@@ -138,6 +138,13 @@ export async function sftpCleanupTransfers(sessionId: string): Promise<void> {
 }
 
 /**
+ * Remove a single transfer task by ID
+ */
+export async function sftpRemoveTransfer(taskId: string): Promise<void> {
+  await invoke('sftp_remove_transfer', { taskId })
+}
+
+/**
  * Download file from remote to local
  */
 export async function sftpDownload(

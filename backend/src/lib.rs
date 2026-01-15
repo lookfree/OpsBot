@@ -72,6 +72,7 @@ pub fn run() {
             commands::sftp_stat,
             commands::sftp_get_transfers,
             commands::sftp_cleanup_transfers,
+            commands::sftp_remove_transfer,
             commands::sftp_download,
             commands::sftp_upload,
             commands::sftp_cancel_transfer,

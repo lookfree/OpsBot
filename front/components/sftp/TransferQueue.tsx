@@ -14,6 +14,7 @@ import {
   DownloadIcon,
   Loader2Icon,
   XCircleIcon,
+  RefreshCwIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -21,7 +22,10 @@ import {
   formatFileSize,
   sftpGetTransfers,
   sftpCleanupTransfers,
+  sftpRemoveTransfer,
   sftpCancelTransfer,
+  sftpUpload,
+  sftpDownload,
 } from '@/services/sftp'
 import { useTranslation } from 'react-i18next'
 import { useThemeStore } from '@/stores'
@@ -68,6 +72,31 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
       }
     },
     [sessionId]
+  )
+
+  // Retry a failed/cancelled transfer
+  const handleRetry = useCallback(
+    async (task: TransferTask) => {
+      if (!sessionId) return
+      try {
+        // Remove task from backend first to avoid duplicate tasks
+        await sftpRemoveTransfer(task.id)
+
+        // Remove from UI
+        setTransfers((prev) => prev.filter((t) => t.id !== task.id))
+
+        // Start a new upload/download with resume support
+        if (task.direction === 'Upload') {
+          await sftpUpload(sessionId, task.local_path, task.remote_path, true)
+        } else {
+          await sftpDownload(sessionId, task.remote_path, task.local_path)
+        }
+      } catch {
+        // Error will be shown in the new transfer item
+        loadTransfers()
+      }
+    },
+    [sessionId, loadTransfers]
   )
 
   // Listen for transfer progress events
@@ -180,7 +209,7 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
         ) : (
           <div className={cn("divide-y", isDark ? "divide-dark-border" : "divide-light-border")}>
             {transfers.map((task) => (
-              <TransferItem key={task.id} task={task} onCancel={handleCancel} isDark={isDark} />
+              <TransferItem key={task.id} task={task} onCancel={handleCancel} onRetry={handleRetry} isDark={isDark} />
             ))}
           </div>
         )}
@@ -192,14 +221,16 @@ export function TransferQueue({ sessionId, visible, onClose }: TransferQueueProp
 interface TransferItemProps {
   task: TransferTask
   onCancel: (taskId: string) => void
+  onRetry: (task: TransferTask) => void
   isDark: boolean
 }
 
-function TransferItem({ task, onCancel, isDark }: TransferItemProps) {
+function TransferItem({ task, onCancel, onRetry, isDark }: TransferItemProps) {
   const { t } = useTranslation()
   const progress = task.total > 0 ? (task.transferred / task.total) * 100 : 0
   const isUploading = task.direction === 'Upload'
   const canCancel = task.status === 'InProgress' || task.status === 'Pending'
+  const canRetry = task.status === 'Cancelled' || task.status === 'Failed'
 
   const StatusIcon = () => {
     switch (task.status) {
@@ -235,6 +266,15 @@ function TransferItem({ task, onCancel, isDark }: TransferItemProps) {
             title={t('sftp.cancelTransfer')}
           >
             <XIcon className={cn("w-3 h-3 hover:text-red-400", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
+          </button>
+        )}
+        {canRetry && (
+          <button
+            onClick={() => onRetry(task)}
+            className={cn("p-0.5 rounded", isDark ? "hover:bg-dark-bg-hover" : "hover:bg-light-bg-hover")}
+            title={t('sftp.retryTransfer')}
+          >
+            <RefreshCwIcon className={cn("w-3 h-3 hover:text-blue-400", isDark ? "text-dark-text-secondary" : "text-light-text-secondary")} />
           </button>
         )}
       </div>

@@ -165,9 +165,11 @@ impl SshService {
             return self.connect_via_jump_host(&request, jump, data_tx).await;
         }
 
-        // Configure SSH client
+        // Configure SSH client with keepalive to prevent timeout during file transfers
         let config = client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            keepalive_interval: Some(std::time::Duration::from_secs(15)),
+            keepalive_max: 3,
             ..Default::default()
         };
         let config = Arc::new(config);
@@ -258,9 +260,11 @@ impl SshService {
             decode_secret_key(private_key_str, None)?
         };
 
-        // Configure SSH client
+        // Configure SSH client with keepalive to prevent timeout during file transfers
         let config = client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            keepalive_interval: Some(std::time::Duration::from_secs(15)),
+            keepalive_max: 3,
             ..Default::default()
         };
         let config = Arc::new(config);
@@ -335,9 +339,11 @@ impl SshService {
         let mut session = SshSession::new(request);
         let session_id = session.session_id.clone();
 
-        // First, connect to jump host
+        // First, connect to jump host with keepalive
         let jump_config = client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            keepalive_interval: Some(std::time::Duration::from_secs(15)),
+            keepalive_max: 3,
             ..Default::default()
         };
         let jump_config = Arc::new(jump_config);

@@ -233,6 +233,7 @@
     "chars": "字元",
     "cancelTransfer": "取消傳輸",
     "transferCancelled": "傳輸已取消",
+    "retryTransfer": "重新傳輸",
     "fileExists": "檔案已存在",
     "fileExistsMessage": "伺服器上已存在檔案 \"{{name}}\" ({{size}})。是否從斷點續傳？",
     "resume": "續傳",
