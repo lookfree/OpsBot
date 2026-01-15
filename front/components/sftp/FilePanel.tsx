@@ -259,56 +259,43 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
     [sessionId, t]
   )
 
-  // Upload file
+  // Upload file(s) - supports batch selection
   const handleUpload = useCallback(async () => {
     try {
       const selected = await open({
-        multiple: false,
+        multiple: true,
         title: t('sftp.upload'),
       })
 
       if (!selected) return
 
-      // Tauri v2 dialog returns string | null when multiple is false
-      const localPath = selected as string
-      const fileName = localPath.split('/').pop() || localPath.split('\\').pop() || 'file'
-      const remotePath = `${currentPath}/${fileName}`.replace('//', '/')
+      // Tauri v2 dialog returns string[] | null when multiple is true
+      const files = Array.isArray(selected) ? selected : [selected]
 
-      // Check if remote file already exists
-      let shouldResume = false
-      try {
-        const existingFile = await sftpStat(sessionId, remotePath)
-        if (!existingFile.is_dir && existingFile.size > 0) {
-          // File exists, ask user if they want to resume
-          setConfirmDialog({
-            open: true,
-            title: t('sftp.fileExists'),
-            message: t('sftp.fileExistsMessage', {
-              name: fileName,
-              size: formatFileSize(existingFile.size),
-            }),
-            onConfirm: async () => {
-              // Resume upload
-              setShowTransfers(true)
-              try {
-                await sftpUpload(sessionId, localPath, remotePath, true)
-                refresh()
-              } catch (err) {
-                setError(String(err))
-              }
-            },
-          })
-          return
-        }
-      } catch {
-        // File doesn't exist, proceed with normal upload
-      }
+      if (files.length === 0) return
 
       // Auto-show transfer queue when upload starts
       setShowTransfers(true)
 
-      await sftpUpload(sessionId, localPath, remotePath, shouldResume)
-      refresh()
+      // Upload files sequentially to avoid overwhelming the SFTP connection
+      // Parallel uploads cause timeout errors on single SSH connection
+      const uploadSequentially = async () => {
+        for (const localPath of files) {
+          const fileName = localPath.split('/').pop() || localPath.split('\\').pop() || 'file'
+          const remotePath = `${currentPath}/${fileName}`.replace('//', '/')
+
+          try {
+            await sftpUpload(sessionId, localPath, remotePath, false)
+          } catch (err) {
+            setError(String(err))
+            // Continue with next file even if one fails
+          }
+        }
+        refresh()
+      }
+
+      // Start sequential upload in background
+      uploadSequentially()
     } catch (err) {
       setError(String(err))
     }

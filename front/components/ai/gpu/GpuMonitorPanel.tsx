@@ -105,7 +105,7 @@ export function GpuMonitorPanel() {
   useEffect(() => {
     if (isGpuRemoteMode && gpuRemoteSshConnectionId) {
       const status = connectionStatus[gpuRemoteSshConnectionId]
-      if (status?.isConnected) {
+      if (status === 'connected') {
         detectRemoteGpu(gpuRemoteSshConnectionId)
       }
     }
@@ -325,21 +325,22 @@ export function GpuMonitorPanel() {
                 ) : (
                   sshConnections.map((conn) => {
                     const status = connectionStatus[conn.id]
+                    const isConnected = status === 'connected'
                     return (
                       <button
                         key={conn.id}
                         onClick={() => handleConnectionSelect(conn.id)}
-                        disabled={!status?.isConnected}
+                        disabled={!isConnected}
                         className={cn(
                           'w-full text-left px-3 py-2 text-sm flex items-center justify-between',
                           styles.hoverBg,
                           conn.id === gpuRemoteSshConnectionId ? styles.textPrimary : styles.textSecondary,
-                          !status?.isConnected && 'opacity-50 cursor-not-allowed'
+                          !isConnected && 'opacity-50 cursor-not-allowed'
                         )}
                       >
                         <span>{conn.name} ({conn.host})</span>
-                        <span className={cn('text-xs', status?.isConnected ? 'text-green-500' : 'text-red-500')}>
-                          {status?.isConnected ? t('common.connected') : t('common.disconnected')}
+                        <span className={cn('text-xs', isConnected ? 'text-green-500' : 'text-red-500')}>
+                          {isConnected ? t('common.connected') : t('common.disconnected')}
                         </span>
                       </button>
                     )

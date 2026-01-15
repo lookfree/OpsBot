@@ -140,6 +140,11 @@ impl RemoteAiManager {
 
     /// Detect if NVIDIA GPU is available on remote server
     pub async fn detect_remote_gpu(&self, ssh_connection_id: &str) -> Result<bool, String> {
+        log::info!(
+            "[Remote GPU] Detecting GPU on connection: {}",
+            ssh_connection_id
+        );
+
         let output = self
             .execute_command(
                 ssh_connection_id,
@@ -147,7 +152,12 @@ impl RemoteAiManager {
             )
             .await?;
 
-        Ok(!output.contains("NOT_FOUND") && output.contains("GPU"))
+        log::info!("[Remote GPU] nvidia-smi -L output: {:?}", output);
+
+        let detected = !output.contains("NOT_FOUND") && output.contains("GPU");
+        log::info!("[Remote GPU] GPU detected: {}", detected);
+
+        Ok(detected)
     }
 
     /// Get GPU processes from remote server
@@ -189,10 +199,40 @@ impl RemoteAiManager {
         ssh_connection_id: &str,
         command: &str,
     ) -> Result<String, String> {
-        self.ssh_service
-            .exec_command(ssh_connection_id, command)
+        log::info!(
+            "[Remote AI] Executing command on connection {}: {}",
+            ssh_connection_id,
+            command
+        );
+
+        // Find the active session_id from connection_id
+        let session_id = self
+            .ssh_service
+            .find_session_by_connection_id(ssh_connection_id)
             .await
-            .map_err(|e| e.to_string())
+            .ok_or_else(|| {
+                log::error!(
+                    "[Remote AI] No active SSH session found for connection: {}",
+                    ssh_connection_id
+                );
+                format!(
+                    "No active SSH session found. Please open a terminal to this connection first."
+                )
+            })?;
+
+        log::info!("[Remote AI] Found session_id: {}", session_id);
+
+        let result = self
+            .ssh_service
+            .exec_command(&session_id, command)
+            .await
+            .map_err(|e| {
+                log::error!("[Remote AI] Command execution failed: {}", e);
+                e.to_string()
+            })?;
+
+        log::debug!("[Remote AI] Command output: {:?}", result);
+        Ok(result)
     }
 
     /// Check if Ollama command is safe to execute
