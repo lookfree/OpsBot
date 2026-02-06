@@ -16,6 +16,8 @@ export interface DatabaseConnectRequest {
   username: string
   password?: string
   database?: string
+  /** Connection URL (e.g., postgres://user:pass@host:port/db?sslmode=require) */
+  connectionUrl?: string
 }
 
 // Connection info

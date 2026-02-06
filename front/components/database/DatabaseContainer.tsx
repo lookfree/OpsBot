@@ -159,6 +159,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
         username: connection.username,
         password: connection.password,
         database: connection.database,
+        connectionUrl: connection.connectionUrl,
       })
 
       setIsConnected(true)

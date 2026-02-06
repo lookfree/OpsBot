@@ -363,11 +363,16 @@
     "prevPage": "前のページ",
     "nextPage": "次のページ",
     "lastPage": "最後のページ",
+    "connectionMode": "接続方式",
+    "standardMode": "標準",
+    "connectionUrl": "接続 URL",
+    "urlHint": "フォーマット: postgres://ユーザー名:パスワード@ホスト:ポート/データベース?sslmode=require",
     "errors": {
       "nameRequired": "接続名を入力してください",
       "hostRequired": "ホストを入力してください",
       "portInvalid": "有効なポート (1-65535) を入力してください",
-      "usernameRequired": "ユーザー名を入力してください"
+      "usernameRequired": "ユーザー名を入力してください",
+      "urlRequired": "接続 URL を入力してください"
     },
     "erDesigner": {
       "title": "ER図デザイナー",

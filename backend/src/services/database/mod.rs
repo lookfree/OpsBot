@@ -83,15 +83,19 @@ impl DatabaseService {
                 (Arc::new(driver), None)
             }
             DatabaseType::PostgreSQL => {
-                let database = request.database.as_deref().unwrap_or("postgres");
-                let driver = PostgreSqlDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await?;
+                let driver = if let Some(ref url) = request.connection_url {
+                    PostgreSqlDriver::connect_url(url).await?
+                } else {
+                    let database = request.database.as_deref().unwrap_or("postgres");
+                    PostgreSqlDriver::connect(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await?
+                };
                 (Arc::new(driver), Some("public".to_string()))
             }
             DatabaseType::MariaDB => {
@@ -246,15 +250,19 @@ impl DatabaseService {
                 .await
             }
             DatabaseType::PostgreSQL => {
-                let database = request.database.as_deref().unwrap_or("postgres");
-                PostgreSqlDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await
+                if let Some(ref url) = request.connection_url {
+                    PostgreSqlDriver::test_connection_url(url).await
+                } else {
+                    let database = request.database.as_deref().unwrap_or("postgres");
+                    PostgreSqlDriver::test_connection(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await
+                }
             }
             DatabaseType::MariaDB => {
                 let database = request.database.as_deref().unwrap_or("mysql");

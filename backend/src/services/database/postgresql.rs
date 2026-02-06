@@ -45,6 +45,18 @@ impl PostgreSqlDriver {
         Ok(Self { pool })
     }
 
+    /// Create a new PostgreSQL connection using a connection URL
+    pub async fn connect_url(url: &str) -> Result<Self, String> {
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .min_connections(2)
+            .connect(url)
+            .await
+            .map_err(|e| format!("Failed to connect to PostgreSQL: {}", e))?;
+
+        Ok(Self { pool })
+    }
+
     /// Test connection without keeping it open
     pub async fn test_connection(
         host: &str,
@@ -62,6 +74,23 @@ impl PostgreSqlDriver {
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .connect(&url)
+            .await
+            .map_err(|e| format!("Connection test failed: {}", e))?;
+
+        sqlx::query("SELECT 1")
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("Query test failed: {}", e))?;
+
+        pool.close().await;
+        Ok(())
+    }
+
+    /// Test connection using a connection URL
+    pub async fn test_connection_url(url: &str) -> Result<(), String> {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(url)
             .await
             .map_err(|e| format!("Connection test failed: {}", e))?;
 
@@ -181,15 +210,21 @@ impl DatabaseDriver for PostgreSqlDriver {
                    WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
                    ORDER BY schema_name";
 
+        log::info!("PostgreSQL: Fetching schemas...");
+
         let rows: Vec<PgRow> = sqlx::query(sql)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| format!("Failed to get schemas: {}", e))?;
 
-        Ok(rows
+        let schemas: Vec<String> = rows
             .iter()
             .filter_map(|row| row.try_get::<String, _>(0).ok())
-            .collect())
+            .collect();
+
+        log::info!("PostgreSQL: Found {} schemas: {:?}", schemas.len(), schemas);
+
+        Ok(schemas)
     }
 
     async fn get_tables(&self, _database: &str, schema: Option<&str>) -> Result<Vec<TableInfo>, String> {

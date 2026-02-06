@@ -32,6 +32,9 @@ pub struct DatabaseConnectRequest {
     pub username: String,
     pub password: Option<String>,
     pub database: Option<String>,
+    /// Connection URL (e.g., postgres://user:pass@host:port/db?sslmode=require)
+    /// When provided, this takes precedence over individual connection parameters
+    pub connection_url: Option<String>,
 }
 
 /// Database connection info

@@ -372,11 +372,16 @@
     "nextPage": "Next Page",
     "lastPage": "Last Page",
     "pgNeedReconnect": "PostgreSQL requires a new connection to access database \"{{database}}\". Please create a new connection with that database specified.",
+    "connectionMode": "Connection Mode",
+    "standardMode": "Standard",
+    "connectionUrl": "Connection URL",
+    "urlHint": "Format: postgres://username:password@host:port/database?sslmode=require",
     "errors": {
       "nameRequired": "Connection name is required",
       "hostRequired": "Host is required",
       "portInvalid": "Invalid port (1-65535)",
-      "usernameRequired": "Username is required"
+      "usernameRequired": "Username is required",
+      "urlRequired": "Connection URL is required"
     },
     "erDesigner": {
       "title": "ER Diagram Designer",

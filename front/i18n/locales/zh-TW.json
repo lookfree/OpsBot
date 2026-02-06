@@ -363,11 +363,16 @@
     "prevPage": "上一頁",
     "nextPage": "下一頁",
     "lastPage": "末頁",
+    "connectionMode": "連線方式",
+    "standardMode": "標準",
+    "connectionUrl": "連線 URL",
+    "urlHint": "格式: postgres://使用者名稱:密碼@主機:連接埠/資料庫?sslmode=require",
     "errors": {
       "nameRequired": "請輸入連線名稱",
       "hostRequired": "請輸入主機地址",
       "portInvalid": "請輸入有效連接埠 (1-65535)",
-      "usernameRequired": "請輸入使用者名稱"
+      "usernameRequired": "請輸入使用者名稱",
+      "urlRequired": "請輸入連線 URL"
     },
     "erDesigner": {
       "title": "ER 圖設計器",

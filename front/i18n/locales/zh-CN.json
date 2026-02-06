@@ -372,11 +372,16 @@
     "nextPage": "下一页",
     "lastPage": "末页",
     "pgNeedReconnect": "PostgreSQL 需要新建连接才能访问数据库 \"{{database}}\"。请创建一个新连接并指定该数据库。",
+    "connectionMode": "连接方式",
+    "standardMode": "标准",
+    "connectionUrl": "连接 URL",
+    "urlHint": "格式: postgres://用户名:密码@主机:端口/数据库?sslmode=require",
     "errors": {
       "nameRequired": "请输入连接名称",
       "hostRequired": "请输入主机地址",
       "portInvalid": "请输入有效端口 (1-65535)",
-      "usernameRequired": "请输入用户名"
+      "usernameRequired": "请输入用户名",
+      "urlRequired": "请输入连接 URL"
     },
     "erDesigner": {
       "title": "ER 图设计器",

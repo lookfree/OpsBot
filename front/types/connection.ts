@@ -92,6 +92,8 @@ export interface DatabaseConnection extends ConnectionBase {
   username: string
   password?: string
   database?: string
+  /** Connection URL (e.g., postgres://user:pass@host:port/db?sslmode=require) */
+  connectionUrl?: string
   sshTunnel?: {
     enabled: boolean
     sshConnectionId?: string

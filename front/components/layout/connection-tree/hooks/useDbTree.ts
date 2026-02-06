@@ -71,6 +71,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
         username: connection.username,
         password: connection.password,
         database: connection.database,
+        connectionUrl: connection.connectionUrl,
       })
 
       onStatusChange('connected')
@@ -116,15 +117,19 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
       setLoadingDbNodes((prev) => new Set(prev).add(nodeId))
       try {
         if (hasSchemaSupport) {
-          await dbConnect({
-            connectionId: connection.id,
-            dbType: connection.dbType,
-            host: connection.host,
-            port: connection.port,
-            username: connection.username,
-            password: connection.password,
-            database: dbNode.name,
-          })
+          // For URL mode, don't reconnect if it's the same database from URL
+          // Otherwise reconnect to the specified database
+          if (!connection.connectionUrl) {
+            await dbConnect({
+              connectionId: connection.id,
+              dbType: connection.dbType,
+              host: connection.host,
+              port: connection.port,
+              username: connection.username,
+              password: connection.password,
+              database: dbNode.name,
+            })
+          }
 
           const schemas = await dbGetSchemas(connection.id, dbNode.name)
           const schemaNodes: DbTreeNode[] = schemas.map((schemaName) => ({

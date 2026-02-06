@@ -28,6 +28,7 @@ interface DatabaseConnectionDialogProps {
 }
 
 type DialogStep = 'select-type' | 'connection-form'
+type ConnectionMode = 'standard' | 'url'
 
 export function DatabaseConnectionDialog({
   open,
@@ -47,6 +48,11 @@ export function DatabaseConnectionDialog({
     connection ? getDatabaseTypeById(connection.dbType) || null : null
   )
 
+  // 连接模式：标准模式或 URL 模式
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>(
+    connection?.connectionUrl ? 'url' : 'standard'
+  )
+
   const [formData, setFormData] = useState<{
     name: string
     dbType: DatabaseType
@@ -55,6 +61,7 @@ export function DatabaseConnectionDialog({
     username: string
     password: string
     database: string
+    connectionUrl: string
   }>({
     name: connection?.name || '',
     dbType: connection?.dbType || 'mysql',
@@ -63,6 +70,7 @@ export function DatabaseConnectionDialog({
     username: connection?.username || 'root',
     password: connection?.password || '',
     database: connection?.database || '',
+    connectionUrl: connection?.connectionUrl || '',
   })
 
   const [showPassword, setShowPassword] = useState(false)
@@ -76,6 +84,7 @@ export function DatabaseConnectionDialog({
       if (connection) {
         setStep('connection-form')
         setSelectedDbType(getDatabaseTypeById(connection.dbType) || null)
+        setConnectionMode(connection.connectionUrl ? 'url' : 'standard')
         setFormData({
           name: connection.name,
           dbType: connection.dbType,
@@ -84,10 +93,12 @@ export function DatabaseConnectionDialog({
           username: connection.username,
           password: connection.password || '',
           database: connection.database || '',
+          connectionUrl: connection.connectionUrl || '',
         })
       } else {
         setStep('select-type')
         setSelectedDbType(null)
+        setConnectionMode('standard')
         setFormData({
           name: '',
           dbType: 'mysql',
@@ -96,6 +107,7 @@ export function DatabaseConnectionDialog({
           username: 'root',
           password: '',
           database: '',
+          connectionUrl: '',
         })
       }
       setErrors({})
@@ -143,7 +155,12 @@ export function DatabaseConnectionDialog({
       newErrors.name = t('database.errors.nameRequired')
     }
 
-    if (isFileDb) {
+    // URL 模式验证
+    if (connectionMode === 'url') {
+      if (!formData.connectionUrl?.trim()) {
+        newErrors.connectionUrl = t('database.errors.urlRequired', '请输入连接 URL')
+      }
+    } else if (isFileDb) {
       // 文件数据库只需要文件路径
       if (!formData.database?.trim()) {
         newErrors.database = t('database.errors.filePathRequired', '请选择数据库文件')
@@ -163,10 +180,12 @@ export function DatabaseConnectionDialog({
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
-  }, [formData, selectedDbType, t])
+  }, [formData, selectedDbType, connectionMode, t])
 
   const handleSave = useCallback(() => {
     if (!validate()) return
+
+    const connectionUrlValue = connectionMode === 'url' ? formData.connectionUrl : undefined
 
     if (connection) {
       updateConnection(connection.id, {
@@ -177,6 +196,7 @@ export function DatabaseConnectionDialog({
         username: formData.username,
         password: formData.password || undefined,
         database: formData.database || undefined,
+        connectionUrl: connectionUrlValue,
       })
       onSave?.(connection)
     } else {
@@ -193,6 +213,7 @@ export function DatabaseConnectionDialog({
         username: formData.username,
         password: formData.password || undefined,
         database: formData.database || undefined,
+        connectionUrl: connectionUrlValue,
       }
       const newConnection = createConnection(connectionData as any) as DatabaseConnection
       onSave?.(newConnection)
@@ -203,6 +224,7 @@ export function DatabaseConnectionDialog({
     validate,
     formData,
     connection,
+    connectionMode,
     folderId,
     createConnection,
     updateConnection,
@@ -224,6 +246,7 @@ export function DatabaseConnectionDialog({
         username: formData.username,
         password: formData.password || undefined,
         database: formData.database || undefined,
+        connectionUrl: connectionMode === 'url' ? formData.connectionUrl : undefined,
       })
       setTestResult({ success: true, message: t('database.connectionSuccess') })
     } catch (err) {
@@ -231,7 +254,7 @@ export function DatabaseConnectionDialog({
     } finally {
       setTesting(false)
     }
-  }, [validate, formData, connection, t])
+  }, [validate, formData, connection, connectionMode, t])
 
   // 主题相关样式
   const dialogBg = isDark ? 'bg-dark-bg-primary' : 'bg-light-bg-primary'
@@ -361,6 +384,70 @@ export function DatabaseConnectionDialog({
                   )}
                 </div>
 
+                {/* 连接模式切换 - 仅 PostgreSQL 支持 URL 模式 */}
+                {formData.dbType === 'postgresql' && !selectedDbType?.isFileDatabase && (
+                  <div className="flex items-center gap-4">
+                    <label className={cn('text-sm font-medium', textSecondary)}>
+                      {t('database.connectionMode', '连接方式')}:
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConnectionMode('standard')}
+                        className={cn(
+                          'px-3 py-1.5 rounded text-sm transition-colors',
+                          connectionMode === 'standard'
+                            ? 'bg-accent-primary text-white'
+                            : cn(borderColor, textPrimary, hoverBg, 'border')
+                        )}
+                      >
+                        {t('database.standardMode', '标准')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConnectionMode('url')}
+                        className={cn(
+                          'px-3 py-1.5 rounded text-sm transition-colors',
+                          connectionMode === 'url'
+                            ? 'bg-accent-primary text-white'
+                            : cn(borderColor, textPrimary, hoverBg, 'border')
+                        )}
+                      >
+                        URL
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* URL 连接模式 */}
+                {connectionMode === 'url' && formData.dbType === 'postgresql' && (
+                  <div>
+                    <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                      {t('database.connectionUrl', '连接 URL')}
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.connectionUrl}
+                      onChange={(e) => handleChange('connectionUrl', e.target.value)}
+                      placeholder="postgres://user:password@host:5432/database?sslmode=require"
+                      className={cn(
+                        'w-full px-3 py-2 rounded border text-sm font-mono',
+                        'focus:outline-none focus:border-accent-primary',
+                        inputBg,
+                        borderColor,
+                        textPrimary,
+                        errors.connectionUrl && 'border-status-error'
+                      )}
+                    />
+                    {errors.connectionUrl && (
+                      <p className="text-xs text-status-error mt-1">{errors.connectionUrl}</p>
+                    )}
+                    <p className={cn('text-xs mt-1', textSecondary)}>
+                      {t('database.urlHint', '格式: postgres://用户名:密码@主机:端口/数据库?sslmode=require')}
+                    </p>
+                  </div>
+                )}
+
                 {/* SQLite: 文件路径选择 */}
                 {selectedDbType?.isFileDatabase ? (
                   <div>
@@ -413,7 +500,7 @@ export function DatabaseConnectionDialog({
                       {t('database.sqliteHint', '选择现有数据库文件，或输入新文件路径创建')}
                     </p>
                   </div>
-                ) : (
+                ) : connectionMode === 'url' ? null : (
                   <>
                     {/* Host and Port */}
                     <div className="grid grid-cols-3 gap-3">
