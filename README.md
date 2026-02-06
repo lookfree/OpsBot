@@ -3,7 +3,7 @@
 <div align="center">
 
 ![Version](https://img.shields.io/badge/version-0.1.4-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
 一个功能强大的跨平台运维终端工具，整合了 SSH 终端、数据库客户端、中间件管理和 Docker 管理等功能。
@@ -239,7 +239,7 @@ ZWD-OpsBot/
 
 ## 📝 许可证
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
+本项目采用 Apache License 2.0 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
 
 ## 🙏 致谢
 
