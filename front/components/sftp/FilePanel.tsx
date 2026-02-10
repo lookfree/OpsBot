@@ -34,7 +34,6 @@ import {
   sftpRename,
   sftpDownload,
   sftpUpload,
-  sftpStat,
   FileEntry,
   formatFileSize,
 } from '@/services/sftp'

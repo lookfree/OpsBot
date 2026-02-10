@@ -87,6 +87,12 @@ regex = "1.10"
 ring = "0.17"
 base64 = "0.22"
 
+# OS keyring for secure key storage
+keyring = "3"
+
+# Connection pooling (for MSSQL)
+bb8 = "0.8"
+
 [features]
 # Default features: cross-platform pure-Rust dependencies only
 # Native dependencies (oracle, dm, kafka) require system libraries and are opt-in

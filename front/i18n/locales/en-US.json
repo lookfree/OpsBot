@@ -201,6 +201,17 @@
       "usernameRequired": "Username is required",
       "passwordRequired": "Password is required",
       "privateKeyRequired": "Private key is required"
+    },
+    "hostKey": {
+      "newHost": "Unknown Host Key",
+      "keyChanged": "Host Key Changed",
+      "keyChangedWarning": "WARNING: The host key has changed! This could indicate a man-in-the-middle attack.",
+      "hostLabel": "Host",
+      "keyTypeLabel": "Key Type",
+      "fingerprint": "Fingerprint",
+      "trustPrompt": "Do you want to trust this host and continue connecting?",
+      "accept": "Accept & Connect",
+      "reject": "Reject"
     }
   },
   "terminal": {

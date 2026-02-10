@@ -201,6 +201,17 @@
       "usernameRequired": "请输入用户名",
       "passwordRequired": "请输入密码",
       "privateKeyRequired": "请输入私钥"
+    },
+    "hostKey": {
+      "newHost": "未知主机密钥",
+      "keyChanged": "主机密钥已变更",
+      "keyChangedWarning": "警告：主机密钥已变更！这可能表示存在中间人攻击。",
+      "hostLabel": "主机",
+      "keyTypeLabel": "密钥类型",
+      "fingerprint": "指纹",
+      "trustPrompt": "是否信任此主机并继续连接？",
+      "accept": "接受并连接",
+      "reject": "拒绝"
     }
   },
   "terminal": {

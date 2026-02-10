@@ -194,6 +194,17 @@
       "usernameRequired": "ユーザー名を入力してください",
       "passwordRequired": "パスワードを入力してください",
       "privateKeyRequired": "秘密鍵を入力してください"
+    },
+    "hostKey": {
+      "newHost": "未知のホスト鍵",
+      "keyChanged": "ホスト鍵が変更されました",
+      "keyChangedWarning": "警告：ホスト鍵が変更されました！中間者攻撃の可能性があります。",
+      "hostLabel": "ホスト",
+      "keyTypeLabel": "鍵タイプ",
+      "fingerprint": "フィンガープリント",
+      "trustPrompt": "このホストを信頼して接続を続行しますか？",
+      "accept": "承認して接続",
+      "reject": "拒否"
     }
   },
   "terminal": {

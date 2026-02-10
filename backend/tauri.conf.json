@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https:; connect-src 'self' https: wss:; font-src 'self' data:",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https:; connect-src 'self' ipc: tauri: https://*.openai.com https://*.anthropic.com https://*.dashscope.aliyuncs.com wss:; font-src 'self' data:",
       "capabilities": [
         {
           "identifier": "main-capability",

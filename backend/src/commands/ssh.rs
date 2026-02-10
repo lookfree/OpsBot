@@ -28,11 +28,11 @@ pub async fn ssh_connect(
     // Connect based on auth type
     let session_id = match request.auth_type.as_str() {
         "password" => service
-            .connect_with_password(request, tx)
+            .connect_with_password(request, tx, Some(app.clone()))
             .await
             .map_err(|e| e.to_string())?,
         "key" => service
-            .connect_with_key(request, tx)
+            .connect_with_key(request, tx, Some(app.clone()))
             .await
             .map_err(|e| e.to_string())?,
         _ => return Err("Unsupported authentication type".to_string()),
@@ -159,7 +159,7 @@ pub async fn ssh_reconnect(
 
     // Reconnect
     let new_session_id = service
-        .reconnect(&session_id, tx)
+        .reconnect(&session_id, tx, Some(app.clone()))
         .await
         .map_err(|e| e.to_string())?;
 
@@ -192,6 +192,20 @@ pub async fn ssh_exec_command(
     let service = &state.0;
     service
         .exec_command(&session_id, &command)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Respond to a host key verification prompt (accept or reject)
+#[tauri::command]
+pub async fn ssh_host_key_response(
+    state: State<'_, SshServiceState>,
+    session_id: String,
+    accept: bool,
+) -> Result<(), String> {
+    let service = &state.0;
+    service
+        .respond_host_key(&session_id, accept)
         .await
         .map_err(|e| e.to_string())
 }

@@ -5,6 +5,7 @@
 import { useEffect } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { Sidebar, MainContent, StatusBar } from '@/components/layout'
+import { HostKeyVerifyDialog } from '@/components/ssh/HostKeyVerifyDialog'
 import { useThemeStore } from '@/stores'
 
 function App() {
@@ -45,6 +46,9 @@ function App() {
 
       {/* 状态栏 */}
       <StatusBar />
+
+      {/* Global SSH host key verification dialog */}
+      <HostKeyVerifyDialog />
     </div>
   )
 }

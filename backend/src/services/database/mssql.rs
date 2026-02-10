@@ -1,16 +1,14 @@
 //! SQL Server (MSSQL) database driver implementation
 //!
-//! Uses tiberius crate for SQL Server connectivity.
+//! Uses tiberius crate with bb8 connection pooling for SQL Server connectivity.
 //! Supports SQL Server 2014+, Azure SQL Database.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use tiberius::{AuthMethod, Client, Column, Config, Query, Row};
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use crate::models::{
@@ -22,15 +20,67 @@ use crate::models::{
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
 use super::utils::{escape_bracket_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
 
-/// SQL Server database driver
+// -- bb8 connection manager for tiberius --
+
+#[derive(Debug)]
+enum MssqlPoolError {
+    Io(std::io::Error),
+    Tiberius(tiberius::error::Error),
+}
+
+impl std::fmt::Display for MssqlPoolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "IO: {}", e),
+            Self::Tiberius(e) => write!(f, "Tiberius: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for MssqlPoolError {}
+
+struct TiberiusConnectionManager {
+    config: Config,
+    addr: String,
+}
+
+#[async_trait]
+impl bb8::ManageConnection for TiberiusConnectionManager {
+    type Connection = Client<Compat<TcpStream>>;
+    type Error = MssqlPoolError;
+
+    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        let tcp = TcpStream::connect(&self.addr)
+            .await
+            .map_err(MssqlPoolError::Io)?;
+        tcp.set_nodelay(true).ok();
+        Client::connect(self.config.clone(), tcp.compat_write())
+            .await
+            .map_err(MssqlPoolError::Tiberius)
+    }
+
+    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        conn.simple_query("SELECT 1")
+            .await
+            .map_err(MssqlPoolError::Tiberius)?
+            .into_results()
+            .await
+            .map_err(MssqlPoolError::Tiberius)?;
+        Ok(())
+    }
+
+    fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+        false
+    }
+}
+
+/// SQL Server database driver with connection pooling
 pub struct MssqlDriver {
-    /// Tiberius client wrapped in Arc<Mutex> for thread safety
-    /// Note: Tiberius Client is not Send+Sync by default, so we use Mutex
-    client: Arc<Mutex<Client<Compat<TcpStream>>>>,
+    pool: bb8::Pool<TiberiusConnectionManager>,
 }
 
 impl MssqlDriver {
-    /// Create a new SQL Server connection
+    /// Create a new SQL Server connection pool
     pub async fn connect(
         host: &str,
         port: u16,
@@ -43,28 +93,28 @@ impl MssqlDriver {
         config.port(port);
         config.authentication(AuthMethod::sql_server(username, password));
         config.database(database);
-        config.trust_cert(); // Trust self-signed certificates for dev environments
+        config.trust_cert();
 
         log::info!("Connecting to SQL Server: {}:{}/{}", host, port, database);
 
-        let tcp = TcpStream::connect(format!("{}:{}", host, port))
+        let addr = format!("{}:{}", host, port);
+        let manager = TiberiusConnectionManager {
+            config,
+            addr,
+        };
+
+        let pool = bb8::Pool::builder()
+            .max_size(10)
+            .min_idle(Some(2))
+            .build(manager)
             .await
-            .map_err(|e| format!("TCP connection failed: {}", e))?;
+            .map_err(|e| format!("Failed to create connection pool: {}", e))?;
 
-        tcp.set_nodelay(true)
-            .map_err(|e| format!("Failed to set TCP_NODELAY: {}", e))?;
-
-        let client = Client::connect(config, tcp.compat_write())
-            .await
-            .map_err(|e| format!("SQL Server connection failed: {}", e))?;
-
-        log::info!("SQL Server connection established successfully");
-        Ok(Self {
-            client: Arc::new(Mutex::new(client)),
-        })
+        log::info!("SQL Server connection pool established successfully");
+        Ok(Self { pool })
     }
 
-    /// Test connection without keeping it open
+    /// Test connection without keeping a pool open
     pub async fn test_connection(
         host: &str,
         port: u16,
@@ -82,15 +132,12 @@ impl MssqlDriver {
         let tcp = TcpStream::connect(format!("{}:{}", host, port))
             .await
             .map_err(|e| format!("TCP connection failed: {}", e))?;
-
-        tcp.set_nodelay(true)
-            .map_err(|e| format!("Failed to set TCP_NODELAY: {}", e))?;
+        tcp.set_nodelay(true).ok();
 
         let mut client = Client::connect(config, tcp.compat_write())
             .await
             .map_err(|e| format!("Connection test failed: {}", e))?;
 
-        // Test with a simple query
         client
             .simple_query("SELECT 1")
             .await
@@ -109,12 +156,9 @@ impl MssqlDriver {
 
     /// Extract value from a row at given index and convert to JSON
     fn row_value_to_json(row: &Row, index: usize) -> serde_json::Value {
-        // Try different types and return the first one that works
-        // String types
         if let Some(val) = row.try_get::<&str, _>(index).ok().flatten() {
             return serde_json::Value::String(val.to_string());
         }
-        // Integer types
         if let Some(val) = row.try_get::<i64, _>(index).ok().flatten() {
             return serde_json::Value::Number(val.into());
         }
@@ -124,30 +168,27 @@ impl MssqlDriver {
         if let Some(val) = row.try_get::<i16, _>(index).ok().flatten() {
             return serde_json::Value::Number(val.into());
         }
-        // Float types
         if let Some(val) = row.try_get::<f64, _>(index).ok().flatten() {
             return serde_json::json!(val);
         }
         if let Some(val) = row.try_get::<f32, _>(index).ok().flatten() {
             return serde_json::json!(val);
         }
-        // Boolean
         if let Some(val) = row.try_get::<bool, _>(index).ok().flatten() {
             return serde_json::Value::Bool(val);
         }
-        // UUID
         if let Some(val) = row.try_get::<uuid::Uuid, _>(index).ok().flatten() {
             return serde_json::Value::String(val.to_string());
         }
-        // DateTime - try NaiveDateTime
         if let Some(val) = row.try_get::<chrono::NaiveDateTime, _>(index).ok().flatten() {
             return serde_json::Value::String(val.to_string());
         }
-        // Bytes
         if let Some(val) = row.try_get::<&[u8], _>(index).ok().flatten() {
-            return serde_json::Value::String(format!("0x{}", val.iter().map(|b| format!("{:02x}", b)).collect::<String>()));
+            return serde_json::Value::String(format!(
+                "0x{}",
+                val.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+            ));
         }
-        // Fall back to null
         serde_json::Value::Null
     }
 }
@@ -157,7 +198,7 @@ impl DatabaseDriver for MssqlDriver {
     async fn execute_query(&self, sql: &str) -> Result<QueryResult, String> {
         let start = Instant::now();
 
-        let mut client = self.client.lock().await;
+        let mut client = self.pool.get().await.map_err(|e| format!("Pool error: {}", e))?;
         let query = Query::new(sql);
 
         let stream = query
@@ -175,7 +216,6 @@ impl DatabaseDriver for MssqlDriver {
         let truncated = total_rows > MAX_QUERY_ROWS;
         let display_rows = if truncated { &rows[..MAX_QUERY_ROWS] } else { &rows[..] };
 
-        // Build columns from first row if available
         let columns: Vec<QueryColumn> = if let Some(first_row) = rows.first() {
             first_row
                 .columns()
@@ -183,32 +223,29 @@ impl DatabaseDriver for MssqlDriver {
                 .map(|col| QueryColumn {
                     name: col.name().to_string(),
                     column_type: Self::get_column_type_name(col),
-                    nullable: true, // Tiberius doesn't expose nullable info directly
+                    nullable: true,
                 })
                 .collect()
         } else {
             vec![]
         };
 
-        // Convert rows to JSON - iterate through each row's column data
         let mut data: Vec<Vec<serde_json::Value>> = display_rows
             .iter()
             .map(|row| {
                 row.columns()
                     .iter()
                     .enumerate()
-                    .map(|(i, _col)| {
-                        // Use try_get with index to get the ColumnData
-                        Self::row_value_to_json(row, i)
-                    })
+                    .map(|(i, _col)| Self::row_value_to_json(row, i))
                     .collect()
             })
             .collect();
 
         if truncated {
-            data.push(vec![serde_json::Value::String(
-                format!("[Result truncated: showing {} of {} rows]", MAX_QUERY_ROWS, total_rows),
-            )]);
+            data.push(vec![serde_json::Value::String(format!(
+                "[Result truncated: showing {} of {} rows]",
+                MAX_QUERY_ROWS, total_rows
+            ))]);
         }
 
         Ok(QueryResult {
@@ -222,7 +259,7 @@ impl DatabaseDriver for MssqlDriver {
     async fn execute_update(&self, sql: &str) -> Result<QueryResult, String> {
         let start = Instant::now();
 
-        let mut client = self.client.lock().await;
+        let mut client = self.pool.get().await.map_err(|e| format!("Pool error: {}", e))?;
 
         let result = client
             .execute(sql, &[])
@@ -254,7 +291,6 @@ impl DatabaseDriver for MssqlDriver {
     }
 
     async fn get_schemas(&self, _database: Option<&str>) -> Result<Vec<String>, String> {
-        // SQL Server supports schemas, return the list
         let sql = "SELECT name FROM sys.schemas WHERE schema_id < 16384 ORDER BY name";
         let result = self.execute_query(sql).await?;
 
@@ -300,7 +336,6 @@ impl DatabaseDriver for MssqlDriver {
         database: &str,
         table: &str,
     ) -> Result<TableStructure, String> {
-        // Get column information
         let columns_sql = format!(
             "SELECT
                 c.COLUMN_NAME,
@@ -358,22 +393,7 @@ impl DatabaseDriver for MssqlDriver {
                 let extra = row.get(8).and_then(|v| v.as_str()).map(|s| s.to_string());
                 let comment = row.get(9).and_then(|v| v.as_str()).map(|s| s.to_string());
 
-                // Build full column type
-                let column_type = if let Some(len) = char_max_len {
-                    if len == -1 {
-                        format!("{}(MAX)", data_type.to_uppercase())
-                    } else {
-                        format!("{}({})", data_type.to_uppercase(), len)
-                    }
-                } else if let (Some(p), Some(s)) = (num_precision, num_scale) {
-                    if s > 0 {
-                        format!("{}({},{})", data_type.to_uppercase(), p, s)
-                    } else {
-                        data_type.to_uppercase()
-                    }
-                } else {
-                    data_type.to_uppercase()
-                };
+                let column_type = build_mssql_column_type(&data_type, char_max_len, num_precision, num_scale);
 
                 Some(build_column_detail(
                     name,
@@ -387,7 +407,6 @@ impl DatabaseDriver for MssqlDriver {
             })
             .collect();
 
-        // Get index information
         let indexes_sql = format!(
             "SELECT
                 i.name AS index_name,
@@ -534,114 +553,11 @@ impl DatabaseDriver for MssqlDriver {
     }
 
     async fn get_table_ddl(&self, database: &str, table: &str) -> Result<String, String> {
-        // SQL Server doesn't have SHOW CREATE TABLE, so we generate DDL manually
         let structure = self.get_table_structure(database, table).await?;
         let foreign_keys = self.get_foreign_keys(database, table).await?;
         let options = self.get_table_options(database, table).await?;
 
-        let mut ddl = format!("CREATE TABLE [dbo].[{}] (\n", table);
-
-        // Add columns
-        let col_defs: Vec<String> = structure
-            .columns
-            .iter()
-            .map(|col| {
-                let mut def = format!("\t[{}] {}", col.name, col.column_type);
-
-                if !col.nullable {
-                    def.push_str(" NOT NULL");
-                }
-
-                if let Some(ref extra) = col.extra {
-                    if extra.contains("auto_increment") {
-                        def.push_str(" IDENTITY(1,1)");
-                    }
-                }
-
-                if let Some(ref default) = col.default_value {
-                    def.push_str(&format!(" DEFAULT {}", default));
-                }
-
-                def
-            })
-            .collect();
-
-        ddl.push_str(&col_defs.join(",\n"));
-
-        // Add primary key constraint
-        let pk_cols: Vec<&str> = structure
-            .columns
-            .iter()
-            .filter(|c| c.key.as_deref() == Some("PRI"))
-            .map(|c| c.name.as_str())
-            .collect();
-
-        if !pk_cols.is_empty() {
-            ddl.push_str(&format!(
-                ",\n\tCONSTRAINT [PK_{}] PRIMARY KEY CLUSTERED ({})",
-                table,
-                pk_cols.iter().map(|c| format!("[{}]", c)).collect::<Vec<_>>().join(", ")
-            ));
-        }
-
-        ddl.push_str("\n);\nGO\n");
-
-        // Add table comment
-        if !options.comment.is_empty() {
-            ddl.push_str(&format!(
-                "\nEXEC sys.sp_addextendedproperty\n\
-                \t@name=N'MS_Description', @value=N'{}',\n\
-                \t@level0type=N'SCHEMA', @level0name=N'dbo',\n\
-                \t@level1type=N'TABLE', @level1name=N'{}';\nGO\n",
-                options.comment.replace("'", "''"),
-                table
-            ));
-        }
-
-        // Add column comments
-        for col in &structure.columns {
-            if let Some(ref comment) = col.comment {
-                if !comment.is_empty() {
-                    ddl.push_str(&format!(
-                        "\nEXEC sys.sp_addextendedproperty\n\
-                        \t@name=N'MS_Description', @value=N'{}',\n\
-                        \t@level0type=N'SCHEMA', @level0name=N'dbo',\n\
-                        \t@level1type=N'TABLE', @level1name=N'{}',\n\
-                        \t@level2type=N'COLUMN', @level2name=N'{}';\nGO\n",
-                        comment.replace("'", "''"),
-                        table,
-                        col.name
-                    ));
-                }
-            }
-        }
-
-        // Add indexes
-        for idx in &structure.indexes {
-            let idx_type = if idx.unique { "UNIQUE NONCLUSTERED" } else { "NONCLUSTERED" };
-            ddl.push_str(&format!(
-                "\nCREATE {} INDEX [{}]\nON [dbo].[{}] ({});\nGO\n",
-                idx_type,
-                idx.name,
-                table,
-                idx.columns.iter().map(|c| format!("[{}]", c)).collect::<Vec<_>>().join(", ")
-            ));
-        }
-
-        // Add foreign keys
-        for fk in &foreign_keys {
-            ddl.push_str(&format!(
-                "\nALTER TABLE [dbo].[{}]\nADD CONSTRAINT [{}]\nFOREIGN KEY ([{}])\nREFERENCES [dbo].[{}] ([{}])\nON UPDATE {} ON DELETE {};\nGO\n",
-                table,
-                fk.name,
-                fk.column,
-                fk.ref_table,
-                fk.ref_column,
-                fk.on_update,
-                fk.on_delete
-            ));
-        }
-
+        let ddl = build_mssql_ddl(table, &structure, &foreign_keys, &options);
         Ok(ddl)
     }
 
@@ -813,9 +729,9 @@ impl DatabaseDriver for MssqlDriver {
             let comment = row.get(3).and_then(|v| v.as_str()).unwrap_or("");
 
             Ok(TableOptions {
-                engine: filegroup.to_string(),  // Use filegroup as "engine" equivalent
-                charset: String::new(),          // SQL Server doesn't use charset at table level
-                collation: String::new(),        // Could query for collation if needed
+                engine: filegroup.to_string(),
+                charset: String::new(),
+                collation: String::new(),
                 comment: comment.to_string(),
                 auto_increment: None,
                 row_format: Some(compression.to_string()),
@@ -833,7 +749,146 @@ impl DatabaseDriver for MssqlDriver {
     }
 
     async fn close(&self) {
-        // Tiberius client is closed when dropped
-        log::info!("SQL Server connection closed");
+        log::info!("SQL Server connection pool closed");
+    }
+}
+
+// -- Helper functions extracted to respect 80-line limit --
+
+fn build_mssql_column_type(
+    data_type: &str,
+    char_max_len: Option<i64>,
+    num_precision: Option<i64>,
+    num_scale: Option<i64>,
+) -> String {
+    if let Some(len) = char_max_len {
+        if len == -1 {
+            format!("{}(MAX)", data_type.to_uppercase())
+        } else {
+            format!("{}({})", data_type.to_uppercase(), len)
+        }
+    } else if let (Some(p), Some(s)) = (num_precision, num_scale) {
+        if s > 0 {
+            format!("{}({},{})", data_type.to_uppercase(), p, s)
+        } else {
+            data_type.to_uppercase()
+        }
+    } else {
+        data_type.to_uppercase()
+    }
+}
+
+fn build_mssql_ddl(
+    table: &str,
+    structure: &TableStructure,
+    foreign_keys: &[ForeignKeyInfo],
+    options: &TableOptions,
+) -> String {
+    let mut ddl = format!("CREATE TABLE [dbo].[{}] (\n", table);
+
+    let col_defs: Vec<String> = structure
+        .columns
+        .iter()
+        .map(|col| {
+            let mut def = format!("\t[{}] {}", col.name, col.column_type);
+            if !col.nullable {
+                def.push_str(" NOT NULL");
+            }
+            if let Some(ref extra) = col.extra {
+                if extra.contains("auto_increment") {
+                    def.push_str(" IDENTITY(1,1)");
+                }
+            }
+            if let Some(ref default) = col.default_value {
+                def.push_str(&format!(" DEFAULT {}", default));
+            }
+            def
+        })
+        .collect();
+
+    ddl.push_str(&col_defs.join(",\n"));
+
+    let pk_cols: Vec<&str> = structure
+        .columns
+        .iter()
+        .filter(|c| c.key.as_deref() == Some("PRI"))
+        .map(|c| c.name.as_str())
+        .collect();
+
+    if !pk_cols.is_empty() {
+        ddl.push_str(&format!(
+            ",\n\tCONSTRAINT [PK_{}] PRIMARY KEY CLUSTERED ({})",
+            table,
+            pk_cols
+                .iter()
+                .map(|c| format!("[{}]", c))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    ddl.push_str("\n);\nGO\n");
+
+    if !options.comment.is_empty() {
+        ddl.push_str(&format!(
+            "\nEXEC sys.sp_addextendedproperty\n\
+            \t@name=N'MS_Description', @value=N'{}',\n\
+            \t@level0type=N'SCHEMA', @level0name=N'dbo',\n\
+            \t@level1type=N'TABLE', @level1name=N'{}';\nGO\n",
+            options.comment.replace('\'', "''"),
+            table
+        ));
+    }
+
+    append_ddl_comments(table, &structure.columns, &mut ddl);
+    append_ddl_indexes(table, &structure.indexes, &mut ddl);
+    append_ddl_foreign_keys(table, foreign_keys, &mut ddl);
+
+    ddl
+}
+
+fn append_ddl_comments(table: &str, columns: &[ColumnDetail], ddl: &mut String) {
+    for col in columns {
+        if let Some(ref comment) = col.comment {
+            if !comment.is_empty() {
+                ddl.push_str(&format!(
+                    "\nEXEC sys.sp_addextendedproperty\n\
+                    \t@name=N'MS_Description', @value=N'{}',\n\
+                    \t@level0type=N'SCHEMA', @level0name=N'dbo',\n\
+                    \t@level1type=N'TABLE', @level1name=N'{}',\n\
+                    \t@level2type=N'COLUMN', @level2name=N'{}';\nGO\n",
+                    comment.replace('\'', "''"),
+                    table,
+                    col.name
+                ));
+            }
+        }
+    }
+}
+
+fn append_ddl_indexes(table: &str, indexes: &[IndexInfo], ddl: &mut String) {
+    for idx in indexes {
+        let idx_type = if idx.unique { "UNIQUE NONCLUSTERED" } else { "NONCLUSTERED" };
+        ddl.push_str(&format!(
+            "\nCREATE {} INDEX [{}]\nON [dbo].[{}] ({});\nGO\n",
+            idx_type,
+            idx.name,
+            table,
+            idx.columns
+                .iter()
+                .map(|c| format!("[{}]", c))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+}
+
+fn append_ddl_foreign_keys(table: &str, foreign_keys: &[ForeignKeyInfo], ddl: &mut String) {
+    for fk in foreign_keys {
+        ddl.push_str(&format!(
+            "\nALTER TABLE [dbo].[{}]\nADD CONSTRAINT [{}]\nFOREIGN KEY ([{}])\n\
+            REFERENCES [dbo].[{}] ([{}])\nON UPDATE {} ON DELETE {};\nGO\n",
+            table, fk.name, fk.column, fk.ref_table, fk.ref_column, fk.on_update, fk.on_delete
+        ));
     }
 }

@@ -194,6 +194,17 @@
       "usernameRequired": "請輸入使用者名稱",
       "passwordRequired": "請輸入密碼",
       "privateKeyRequired": "請輸入私鑰"
+    },
+    "hostKey": {
+      "newHost": "未知主機金鑰",
+      "keyChanged": "主機金鑰已變更",
+      "keyChangedWarning": "警告：主機金鑰已變更！這可能表示存在中間人攻擊。",
+      "hostLabel": "主機",
+      "keyTypeLabel": "金鑰類型",
+      "fingerprint": "指紋",
+      "trustPrompt": "是否信任此主機並繼續連線？",
+      "accept": "接受並連線",
+      "reject": "拒絕"
     }
   },
   "terminal": {

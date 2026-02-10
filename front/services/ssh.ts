@@ -123,6 +123,13 @@ export async function sshTestConnection(request: SshTestRequest): Promise<void> 
 }
 
 /**
+ * Respond to a host key verification prompt
+ */
+export async function sshHostKeyResponse(sessionId: string, accept: boolean): Promise<void> {
+  await invoke('ssh_host_key_response', { sessionId, accept })
+}
+
+/**
  * Listen for SSH data events
  */
 export async function listenSshData(

@@ -7,25 +7,21 @@ pub mod models;
 pub mod services;
 
 use std::sync::Arc;
-#[cfg(debug_assertions)]
 use tauri::Manager;
 
 use commands::{AiServiceState, CryptoServiceState, DatabaseServiceState, DockerServiceState, SftpServiceState, SshServiceState};
 #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 use commands::MiddlewareServiceState;
-use services::{AiService, CryptoService, DatabaseService, DockerService, SftpService, SshService};
+use services::{AiService, CryptoService, DatabaseService, DockerService, KnownHostsStore, SftpService, SshService};
 #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
 use services::MiddlewareService;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize services
-    let ssh_service = Arc::new(SshService::new());
-    ssh_service.start_cleanup_task();
+    // Services that don't need app_data_dir are initialized here.
+    // SSH and Crypto are initialized in setup() after app_data_dir is available.
     let sftp_service = Arc::new(SftpService::new());
     let database_service = Arc::new(DatabaseService::new());
-    let docker_service = Arc::new(DockerService::new(ssh_service.clone()));
-    let crypto_service = Arc::new(CryptoService::new());
     let ai_service = Arc::new(AiService::new());
     #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
     let middleware_service = Arc::new(MiddlewareService::new());
@@ -35,11 +31,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(SshServiceState(ssh_service))
         .manage(SftpServiceState(sftp_service))
         .manage(DatabaseServiceState(database_service))
-        .manage(DockerServiceState(docker_service))
-        .manage(CryptoServiceState(crypto_service))
         .manage(AiServiceState(ai_service));
 
     #[cfg(any(feature = "kafka", feature = "redis", feature = "elasticsearch"))]
@@ -58,6 +51,7 @@ pub fn run() {
             commands::ssh_test_connection,
             commands::ssh_reconnect,
             commands::ssh_exec_command,
+            commands::ssh_host_key_response,
             // SFTP commands
             commands::sftp_open,
             commands::sftp_close,
@@ -355,15 +349,17 @@ pub fn run() {
             commands::encrypt_config,
             commands::decrypt_config,
             commands::is_config_encrypted,
-            // Storage crypto commands (fixed key for local storage)
+            // Storage crypto commands (keyring-based for local storage)
             commands::encrypt_storage,
             commands::decrypt_storage,
             commands::is_storage_encrypted,
         ])
         .setup(|app| {
-            // Silence unused variable warning in release mode
-            #[cfg(not(debug_assertions))]
-            let _ = &app;
+            let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
+                std::path::PathBuf::from(".")
+            });
+
+            // Initialize logging for both debug and release
             #[cfg(debug_assertions)]
             {
                 app.handle().plugin(
@@ -371,11 +367,47 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
-                // Open devtools in debug mode
                 if let Some(window) = app.get_webview_window("main") {
                     window.open_devtools();
                 }
             }
+            #[cfg(not(debug_assertions))]
+            {
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .build(),
+                )?;
+            }
+
+            // Initialize OS keyring storage key for encryption
+            let crypto_service = match services::get_or_create_storage_key(&app_data_dir) {
+                Ok(key) => {
+                    log::info!("Storage encryption key initialized (keyring/file)");
+                    Arc::new(CryptoService::new_with_storage_key(key))
+                }
+                Err(e) => {
+                    log::warn!("Failed to init storage key ({}), using V1 fallback", e);
+                    Arc::new(CryptoService::new())
+                }
+            };
+            app.manage(CryptoServiceState(crypto_service));
+
+            // Initialize SSH known hosts store for TOFU
+            let known_hosts = match KnownHostsStore::load(&app_data_dir) {
+                Ok(kh) => Arc::new(kh),
+                Err(e) => {
+                    log::warn!("Failed to load known_hosts ({}), using empty store", e);
+                    Arc::new(KnownHostsStore::new(app_data_dir.join("known_hosts")))
+                }
+            };
+
+            let ssh_service = Arc::new(SshService::new_with_known_hosts(known_hosts));
+            ssh_service.start_cleanup_task();
+            let docker_service = Arc::new(DockerService::new(ssh_service.clone()));
+            app.manage(SshServiceState(ssh_service));
+            app.manage(DockerServiceState(docker_service));
+
             Ok(())
         })
         .run(tauri::generate_context!())

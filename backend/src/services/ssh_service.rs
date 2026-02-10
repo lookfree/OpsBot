@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use futures::channel::mpsc;
 use tokio::sync::RwLock;
 use russh::*;
@@ -15,6 +16,7 @@ use russh_keys::*;
 use uuid::Uuid;
 
 use crate::models::{JumpHostConfig, SessionStatus, SshAuthType, SshConnectRequest, SshSessionInfo, TerminalSize};
+use super::known_hosts::{HostKeyLookup, KnownHostsStore};
 
 /// Get current epoch seconds
 fn now_secs() -> u64 {
@@ -84,12 +86,35 @@ impl SshSession {
     }
 }
 
+/// Payload emitted to the frontend for host key verification
+#[derive(Clone, serde::Serialize)]
+pub struct HostKeyVerifyPayload {
+    pub session_id: String,
+    pub host_port: String,
+    pub key_type: String,
+    pub fingerprint: String,
+    /// Old fingerprint when key has changed; empty for new hosts
+    pub old_fingerprint: String,
+}
+
+/// Map of pending host key verifications awaiting user response
+pub type PendingKeyVerifications =
+    Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
+
 /// SSH client handler for russh callbacks
 pub struct SshClientHandler {
     pub session_id: String,
     pub data_tx: mpsc::UnboundedSender<Vec<u8>>,
     /// Terminal channel ID - only data from this channel will be forwarded to terminal
     pub terminal_channel_id: Arc<RwLock<Option<ChannelId>>>,
+    /// Known hosts store for TOFU verification
+    pub known_hosts: Option<Arc<KnownHostsStore>>,
+    /// host:port string for this connection
+    pub host_port: String,
+    /// Tauri AppHandle for emitting events
+    pub app_handle: Option<tauri::AppHandle>,
+    /// Shared map for receiving user verification responses
+    pub pending_verifications: PendingKeyVerifications,
 }
 
 #[async_trait]
@@ -98,11 +123,34 @@ impl client::Handler for SshClientHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &key::PublicKey,
+        server_public_key: &key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        // TODO: Implement proper host key verification
-        // For now, accept all keys (not secure for production)
-        Ok(true)
+        let known_hosts = match &self.known_hosts {
+            Some(kh) => kh.clone(),
+            None => return Ok(true), // No store available, accept (test connections)
+        };
+
+        let key_base64 = BASE64.encode(server_public_key.public_key_bytes());
+        let key_type = server_public_key.name().to_string();
+        let fingerprint = server_public_key.fingerprint();
+
+        match known_hosts.lookup(&self.host_port, &key_base64).await {
+            HostKeyLookup::Match => Ok(true),
+            HostKeyLookup::Unknown => {
+                let accepted = self.ask_user_verify("", &key_type, &fingerprint).await;
+                if accepted {
+                    let _ = known_hosts.add(&self.host_port, &key_type, &key_base64).await;
+                }
+                Ok(accepted)
+            }
+            HostKeyLookup::Mismatch { old_key: _ } => {
+                let accepted = self.ask_user_key_changed(&key_type, &fingerprint).await;
+                if accepted {
+                    let _ = known_hosts.add(&self.host_port, &key_type, &key_base64).await;
+                }
+                Ok(accepted)
+            }
+        }
     }
 
     async fn data(
@@ -110,7 +158,7 @@ impl client::Handler for SshClientHandler {
         channel: ChannelId,
         data: &[u8],
         _session: &mut client::Session,
-    ) -> Result<(), Self::Error> {
+    ) -> std::result::Result<(), Self::Error> {
         // Only forward data from terminal channel to avoid SFTP binary data in terminal
         if let Some(term_ch) = *self.terminal_channel_id.read().await {
             if channel == term_ch {
@@ -126,7 +174,7 @@ impl client::Handler for SshClientHandler {
         _ext: u32,
         data: &[u8],
         _session: &mut client::Session,
-    ) -> Result<(), Self::Error> {
+    ) -> std::result::Result<(), Self::Error> {
         // Only forward data from terminal channel
         if let Some(term_ch) = *self.terminal_channel_id.read().await {
             if channel == term_ch {
@@ -137,11 +185,72 @@ impl client::Handler for SshClientHandler {
     }
 }
 
+impl SshClientHandler {
+    /// Ask the user to verify a new (unknown) host key via Tauri event
+    async fn ask_user_verify(&self, _old_fp: &str, key_type: &str, fingerprint: &str) -> bool {
+        self.emit_and_await("ssh-host-key-verify", key_type, fingerprint, "").await
+    }
+
+    /// Ask the user about a changed host key via Tauri event
+    async fn ask_user_key_changed(&self, key_type: &str, fingerprint: &str) -> bool {
+        self.emit_and_await("ssh-host-key-changed", key_type, fingerprint, "").await
+    }
+
+    /// Emit a host key event and wait for user response
+    async fn emit_and_await(
+        &self,
+        event_prefix: &str,
+        key_type: &str,
+        fingerprint: &str,
+        old_fingerprint: &str,
+    ) -> bool {
+        let app_handle = match &self.app_handle {
+            Some(h) => h,
+            None => return true, // No app handle => accept (test mode)
+        };
+
+        let payload = HostKeyVerifyPayload {
+            session_id: self.session_id.clone(),
+            host_port: self.host_port.clone(),
+            key_type: key_type.to_string(),
+            fingerprint: fingerprint.to_string(),
+            old_fingerprint: old_fingerprint.to_string(),
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+        {
+            let mut pending = self.pending_verifications.lock().await;
+            pending.insert(self.session_id.clone(), tx);
+        }
+
+        // Emit without session_id suffix; session_id is in the payload
+        let event_name = event_prefix.to_string();
+        if let Err(e) = tauri::Emitter::emit(app_handle, &event_name, payload) {
+            log::error!("Failed to emit host key event: {}", e);
+            self.pending_verifications.lock().await.remove(&self.session_id);
+            return false;
+        }
+
+        // Wait for user response with a timeout
+        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+            Ok(Ok(accepted)) => accepted,
+            _ => {
+                self.pending_verifications.lock().await.remove(&self.session_id);
+                false
+            }
+        }
+    }
+}
+
 /// SSH Service for managing multiple SSH sessions
 pub struct SshService {
     sessions: Arc<RwLock<HashMap<String, SshSession>>>,
     /// Interactive exec sessions (for docker exec, etc.)
     exec_sessions: Arc<RwLock<HashMap<String, InteractiveExecSession>>>,
+    /// Known hosts store for TOFU
+    known_hosts: Option<Arc<KnownHostsStore>>,
+    /// Pending host key verifications
+    pending_verifications: PendingKeyVerifications,
 }
 
 impl Default for SshService {
@@ -155,7 +264,31 @@ impl SshService {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             exec_sessions: Arc::new(RwLock::new(HashMap::new())),
+            known_hosts: None,
+            pending_verifications: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Create SshService with a known hosts store for TOFU verification
+    pub fn new_with_known_hosts(known_hosts: Arc<KnownHostsStore>) -> Self {
+        Self {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            exec_sessions: Arc::new(RwLock::new(HashMap::new())),
+            known_hosts: Some(known_hosts),
+            pending_verifications: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Send a user's host key accept/reject response
+    pub async fn respond_host_key(&self, session_id: &str, accept: bool) -> Result<()> {
+        let tx = self
+            .pending_verifications
+            .lock()
+            .await
+            .remove(session_id)
+            .ok_or_else(|| anyhow!("No pending verification for session {}", session_id))?;
+        let _ = tx.send(accept);
+        Ok(())
     }
 
     /// Validate SSH identifier (username, hostname) to prevent command injection
@@ -174,6 +307,7 @@ impl SshService {
         &self,
         request: SshConnectRequest,
         data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         let password = request
             .password
@@ -185,7 +319,7 @@ impl SshService {
 
         // Check if jump host is configured
         if let Some(ref jump) = request.jump_host {
-            return self.connect_via_jump_host(&request, jump, data_tx).await;
+            return self.connect_via_jump_host(&request, jump, data_tx, app_handle).await;
         }
 
         // Configure SSH client with keepalive to prevent timeout during file transfers
@@ -201,10 +335,15 @@ impl SshService {
         let terminal_channel_id = Arc::new(RwLock::new(None));
         let terminal_channel_id_clone = terminal_channel_id.clone();
 
+        let host_port = format!("{}:{}", request.host, request.port);
         let handler = SshClientHandler {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
             terminal_channel_id: terminal_channel_id_clone,
+            known_hosts: self.known_hosts.clone(),
+            host_port,
+            app_handle: app_handle.clone(),
+            pending_verifications: self.pending_verifications.clone(),
         };
 
         // Connect to server
@@ -262,6 +401,7 @@ impl SshService {
         &self,
         request: SshConnectRequest,
         data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         let private_key_str = request
             .private_key
@@ -273,7 +413,7 @@ impl SshService {
 
         // Check if jump host is configured
         if let Some(ref jump) = request.jump_host {
-            return self.connect_via_jump_host(&request, jump, data_tx).await;
+            return self.connect_via_jump_host(&request, jump, data_tx, app_handle).await;
         }
 
         // Parse private key
@@ -296,10 +436,15 @@ impl SshService {
         let terminal_channel_id = Arc::new(RwLock::new(None));
         let terminal_channel_id_clone = terminal_channel_id.clone();
 
+        let host_port = format!("{}:{}", request.host, request.port);
         let handler = SshClientHandler {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
             terminal_channel_id: terminal_channel_id_clone,
+            known_hosts: self.known_hosts.clone(),
+            host_port,
+            app_handle: app_handle.clone(),
+            pending_verifications: self.pending_verifications.clone(),
         };
 
         // Connect to server
@@ -358,6 +503,7 @@ impl SshService {
         request: &SshConnectRequest,
         jump: &JumpHostConfig,
         data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         let mut session = SshSession::new(request);
         let session_id = session.session_id.clone();
@@ -371,12 +517,17 @@ impl SshService {
         };
         let jump_config = Arc::new(jump_config);
 
-        // Create a dummy handler for jump host (we won't use its data channel)
+        // Create handler for jump host with TOFU
         let (dummy_tx, _dummy_rx) = mpsc::unbounded::<Vec<u8>>();
+        let jump_host_port = format!("{}:{}", jump.host, jump.port);
         let jump_handler = SshClientHandler {
             session_id: format!("{}-jump", session_id),
             data_tx: dummy_tx,
             terminal_channel_id: Arc::new(RwLock::new(None)),
+            known_hosts: self.known_hosts.clone(),
+            host_port: jump_host_port,
+            app_handle: app_handle.clone(),
+            pending_verifications: self.pending_verifications.clone(),
         };
 
         let jump_addr = format!("{}:{}", jump.host, jump.port);
@@ -434,6 +585,10 @@ impl SshService {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
             terminal_channel_id: Arc::new(RwLock::new(None)),
+            known_hosts: self.known_hosts.clone(),
+            host_port: format!("{}:{}", request.host, request.port),
+            app_handle: app_handle.clone(),
+            pending_verifications: self.pending_verifications.clone(),
         };
 
         // Create a stream from the channel for the second SSH connection
@@ -466,9 +621,9 @@ impl SshService {
         Self::validate_ssh_identifier(&request.username, "username")?;
         Self::validate_ssh_identifier(&request.host, "host")?;
 
-        // Execute ssh command to target
+        // Execute ssh command to target (TOFU: accept-new keys on first connect)
         let ssh_cmd = format!(
-            "ssh -o StrictHostKeyChecking=no -p {} {}@{}",
+            "ssh -o StrictHostKeyChecking=accept-new -p {} {}@{}",
             request.port, request.username, request.host
         );
         jump_session.exec(false, ssh_cmd).await?;
@@ -489,6 +644,7 @@ impl SshService {
         &self,
         session_id: &str,
         data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         // Get the stored connection request
         let connect_request = {
@@ -507,8 +663,8 @@ impl SshService {
 
         // Create new connection with same parameters
         match connect_request.auth_type.as_str() {
-            "password" => self.connect_with_password(connect_request, data_tx).await,
-            "key" => self.connect_with_key(connect_request, data_tx).await,
+            "password" => self.connect_with_password(connect_request, data_tx, app_handle).await,
+            "key" => self.connect_with_key(connect_request, data_tx, app_handle).await,
             _ => Err(anyhow!("Unsupported auth type for reconnection")),
         }
     }
@@ -751,12 +907,16 @@ impl SshService {
         };
         let config = Arc::new(config);
 
-        // Create a dummy handler for testing
+        // Create a dummy handler for testing (no TOFU - accept all for test)
         let (dummy_tx, _dummy_rx) = mpsc::unbounded::<Vec<u8>>();
         let handler = SshClientHandler {
             session_id: "test".to_string(),
             data_tx: dummy_tx,
             terminal_channel_id: Arc::new(RwLock::new(None)),
+            known_hosts: None,
+            host_port: format!("{}:{}", request.host, request.port),
+            app_handle: None,
+            pending_verifications: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };
 
         // Connect to server

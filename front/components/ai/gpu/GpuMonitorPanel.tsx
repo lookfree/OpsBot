@@ -15,7 +15,7 @@ import { GpuCard } from './GpuCard'
 import { GpuRealtimeChart } from './GpuRealtimeChart'
 import { GpuHistoryChart } from './GpuHistoryChart'
 import { GpuProcessList } from './GpuProcessList'
-import type { HistoryInterval, GpuInfo } from '@/types'
+import type { HistoryInterval } from '@/types'
 import { ModuleType, SSHConnection } from '@/types'
 
 const REFRESH_INTERVAL = 2000 // 2 seconds
