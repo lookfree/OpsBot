@@ -14,6 +14,7 @@ use crate::models::{
 };
 
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
+use super::utils::{escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
 
 /// MySQL database driver
 pub struct MySqlDriver {
@@ -30,9 +31,9 @@ impl MySqlDriver {
         database: &str,
     ) -> Result<Self, String> {
         // URL encode username and password to handle special characters
-        // Add ssl-mode=disabled to allow connections to servers without SSL
+        // Use ssl-mode=preferred to use TLS when available, fall back otherwise
         let url = format!(
-            "mysql://{}:{}@{}:{}/{}?ssl-mode=disabled",
+            "mysql://{}:{}@{}:{}/{}?ssl-mode=preferred",
             encode(username), encode(password), host, port, database
         );
 
@@ -45,7 +46,7 @@ impl MySqlDriver {
             .await
             .map_err(|e| {
                 log::error!("Failed to connect to MySQL: {}", e);
-                format!("Failed to connect to MySQL: {}", e)
+                "Failed to connect to MySQL: connection refused or invalid credentials".to_string()
             })?;
 
         log::info!("MySQL connection established successfully");
@@ -61,9 +62,9 @@ impl MySqlDriver {
         database: &str,
     ) -> Result<(), String> {
         // URL encode username and password to handle special characters
-        // Add ssl-mode=disabled to allow connections to servers without SSL
+        // Use ssl-mode=preferred to use TLS when available, fall back otherwise
         let url = format!(
-            "mysql://{}:{}@{}:{}/{}?ssl-mode=disabled",
+            "mysql://{}:{}@{}:{}/{}?ssl-mode=preferred",
             encode(username), encode(password), host, port, database
         );
 
@@ -72,7 +73,10 @@ impl MySqlDriver {
             .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(&url)
             .await
-            .map_err(|e| format!("Connection test failed: {}", e))?;
+            .map_err(|e| {
+                log::error!("MySQL connection test failed: {}", e);
+                "Connection test failed: connection refused or invalid credentials".to_string()
+            })?;
 
         sqlx::query("SELECT 1")
             .execute(&pool)
@@ -120,6 +124,9 @@ impl DatabaseDriver for MySqlDriver {
             .map_err(|e| format!("Query failed: {}", e))?;
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
+        let total_rows = rows.len();
+        let truncated = total_rows > MAX_QUERY_ROWS;
+        let display_rows = if truncated { &rows[..MAX_QUERY_ROWS] } else { &rows[..] };
 
         let columns: Vec<QueryColumn> = if let Some(first_row) = rows.first() {
             first_row
@@ -135,7 +142,7 @@ impl DatabaseDriver for MySqlDriver {
             vec![]
         };
 
-        let data: Vec<Vec<serde_json::Value>> = rows
+        let mut data: Vec<Vec<serde_json::Value>> = display_rows
             .iter()
             .map(|row| {
                 row.columns()
@@ -146,10 +153,16 @@ impl DatabaseDriver for MySqlDriver {
             })
             .collect();
 
+        if truncated {
+            data.push(vec![serde_json::Value::String(
+                format!("[Result truncated: showing {} of {} rows]", MAX_QUERY_ROWS, total_rows),
+            )]);
+        }
+
         Ok(QueryResult {
             columns,
             rows: data,
-            affected_rows: rows.len() as u64,
+            affected_rows: total_rows as u64,
             execution_time_ms,
         })
     }
@@ -221,7 +234,13 @@ impl DatabaseDriver for MySqlDriver {
         database: &str,
         table: &str,
     ) -> Result<TableStructure, String> {
-        let sql = format!("SHOW FULL COLUMNS FROM `{}`.`{}`", database, table);
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
+        let sql = format!(
+            "SHOW FULL COLUMNS FROM `{}`.`{}`",
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(table)
+        );
 
         let column_rows: Vec<MySqlRow> = sqlx::query(&sql)
             .fetch_all(&self.pool)
@@ -265,7 +284,11 @@ impl DatabaseDriver for MySqlDriver {
             .collect();
 
         // Get indexes
-        let index_sql = format!("SHOW INDEX FROM `{}`.`{}`", database, table);
+        let index_sql = format!(
+            "SHOW INDEX FROM `{}`.`{}`",
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(table)
+        );
         let index_rows: Vec<MySqlRow> = sqlx::query(&index_sql)
             .fetch_all(&self.pool)
             .await
@@ -394,7 +417,13 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn get_table_ddl(&self, database: &str, table: &str) -> Result<String, String> {
-        let row: MySqlRow = sqlx::query(&format!("SHOW CREATE TABLE `{}`.`{}`", database, table))
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
+        let row: MySqlRow = sqlx::query(&format!(
+            "SHOW CREATE TABLE `{}`.`{}`",
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(table)
+        ))
             .fetch_one(&self.pool)
             .await
             .map_err(|e| format!("Failed to get DDL: {}", e))?;
@@ -408,9 +437,15 @@ impl DatabaseDriver for MySqlDriver {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(old_name)?;
+        validate_sql_identifier(new_name)?;
         let sql = format!(
             "RENAME TABLE `{}`.`{}` TO `{}`.`{}`",
-            database, old_name, database, new_name
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(old_name),
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(new_name)
         );
         sqlx::query(&sql)
             .execute(&self.pool)
@@ -420,7 +455,13 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn drop_table(&self, database: &str, table: &str) -> Result<(), String> {
-        let sql = format!("DROP TABLE `{}`.`{}`", database, table);
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
+        let sql = format!(
+            "DROP TABLE `{}`.`{}`",
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(table)
+        );
         sqlx::query(&sql)
             .execute(&self.pool)
             .await

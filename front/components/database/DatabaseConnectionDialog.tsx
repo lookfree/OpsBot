@@ -112,6 +112,7 @@ export function DatabaseConnectionDialog({
       }
       setErrors({})
       setTestResult(null)
+      setShowPassword(false)
     }
   }, [open, connection])
 

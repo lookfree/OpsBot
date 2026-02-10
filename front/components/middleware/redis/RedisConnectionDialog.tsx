@@ -106,6 +106,8 @@ export function RedisConnectionDialog({
       }
       setErrors({})
       setTestResult(null)
+      setShowPassword(false)
+      setShowSentinelPassword(false)
     }
   }, [open, connection])
 

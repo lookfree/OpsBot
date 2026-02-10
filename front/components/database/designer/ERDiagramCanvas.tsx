@@ -278,12 +278,7 @@ export function ERDiagramCanvas({ className = '' }: ERDiagramCanvasProps) {
   const bgColor = isDark ? '#1a1a2e' : '#f8fafc'
   const gridColor = isDark ? '#2d2d44' : '#e2e8f0'
 
-  // 网格模式
-  const gridPattern = `
-    <pattern id="grid" width="${GRID_SIZE}" height="${GRID_SIZE}" patternUnits="userSpaceOnUse">
-      <path d="M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}" fill="none" stroke="${gridColor}" stroke-width="0.5"/>
-    </pattern>
-  `
+  // 网格模式 - 使用 React SVG 元素替代 dangerouslySetInnerHTML
 
   return (
     <div
@@ -304,7 +299,11 @@ export function ERDiagramCanvas({ className = '' }: ERDiagramCanvasProps) {
         }}
       >
         {/* 网格背景 */}
-        <defs dangerouslySetInnerHTML={{ __html: gridPattern }} />
+        <defs>
+          <pattern id="grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
+            <path d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`} fill="none" stroke={gridColor} strokeWidth="0.5" />
+          </pattern>
+        </defs>
         <rect
           x={-CANVAS_WIDTH / 2}
           y={-CANVAS_HEIGHT / 2}

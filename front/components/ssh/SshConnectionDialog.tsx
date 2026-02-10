@@ -89,6 +89,8 @@ export function SshConnectionDialog({
       }
       setErrors({})
       setTestResult(null)
+      setShowPassword(false)
+      setShowPassphrase(false)
     }
   }, [open, connection])
 

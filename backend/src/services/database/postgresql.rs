@@ -14,6 +14,7 @@ use crate::models::{
 };
 
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
+use super::utils::{escape_double_quote_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
 
 /// PostgreSQL database driver
 pub struct PostgreSqlDriver {
@@ -40,19 +41,29 @@ impl PostgreSqlDriver {
             .min_connections(2)
             .connect(&url)
             .await
-            .map_err(|e| format!("Failed to connect to PostgreSQL: {}", e))?;
+            .map_err(|e| {
+                log::error!("Failed to connect to PostgreSQL: {}", e);
+                "Failed to connect to PostgreSQL: connection refused or invalid credentials".to_string()
+            })?;
 
         Ok(Self { pool })
     }
 
     /// Create a new PostgreSQL connection using a connection URL
     pub async fn connect_url(url: &str) -> Result<Self, String> {
+        if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
+            return Err("Invalid PostgreSQL URL: must start with postgres:// or postgresql://".to_string());
+        }
+
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .min_connections(2)
             .connect(url)
             .await
-            .map_err(|e| format!("Failed to connect to PostgreSQL: {}", e))?;
+            .map_err(|e| {
+                log::error!("Failed to connect to PostgreSQL via URL: {}", e);
+                "Failed to connect to PostgreSQL: connection refused or invalid credentials".to_string()
+            })?;
 
         Ok(Self { pool })
     }
@@ -75,7 +86,10 @@ impl PostgreSqlDriver {
             .max_connections(1)
             .connect(&url)
             .await
-            .map_err(|e| format!("Connection test failed: {}", e))?;
+            .map_err(|e| {
+                log::error!("PostgreSQL connection test failed: {}", e);
+                "Connection test failed: connection refused or invalid credentials".to_string()
+            })?;
 
         sqlx::query("SELECT 1")
             .execute(&pool)
@@ -88,11 +102,18 @@ impl PostgreSqlDriver {
 
     /// Test connection using a connection URL
     pub async fn test_connection_url(url: &str) -> Result<(), String> {
+        if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
+            return Err("Invalid PostgreSQL URL: must start with postgres:// or postgresql://".to_string());
+        }
+
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .connect(url)
             .await
-            .map_err(|e| format!("Connection test failed: {}", e))?;
+            .map_err(|e| {
+                log::error!("PostgreSQL URL connection test failed: {}", e);
+                "Connection test failed: connection refused or invalid credentials".to_string()
+            })?;
 
         sqlx::query("SELECT 1")
             .execute(&pool)
@@ -139,6 +160,9 @@ impl DatabaseDriver for PostgreSqlDriver {
             .map_err(|e| format!("Query failed: {}", e))?;
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
+        let total_rows = rows.len();
+        let truncated = total_rows > MAX_QUERY_ROWS;
+        let display_rows = if truncated { &rows[..MAX_QUERY_ROWS] } else { &rows[..] };
 
         let columns: Vec<QueryColumn> = if let Some(first_row) = rows.first() {
             first_row
@@ -154,7 +178,7 @@ impl DatabaseDriver for PostgreSqlDriver {
             vec![]
         };
 
-        let data: Vec<Vec<serde_json::Value>> = rows
+        let mut data: Vec<Vec<serde_json::Value>> = display_rows
             .iter()
             .map(|row| {
                 row.columns()
@@ -165,10 +189,16 @@ impl DatabaseDriver for PostgreSqlDriver {
             })
             .collect();
 
+        if truncated {
+            data.push(vec![serde_json::Value::String(
+                format!("[Result truncated: showing {} of {} rows]", MAX_QUERY_ROWS, total_rows),
+            )]);
+        }
+
         Ok(QueryResult {
             columns,
             rows: data,
-            affected_rows: rows.len() as u64,
+            affected_rows: total_rows as u64,
             execution_time_ms,
         })
     }
@@ -518,9 +548,14 @@ impl DatabaseDriver for PostgreSqlDriver {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
+        validate_sql_identifier(schema)?;
+        validate_sql_identifier(old_name)?;
+        validate_sql_identifier(new_name)?;
         let sql = format!(
             "ALTER TABLE \"{}\".\"{}\" RENAME TO \"{}\"",
-            schema, old_name, new_name
+            escape_double_quote_identifier(schema),
+            escape_double_quote_identifier(old_name),
+            escape_double_quote_identifier(new_name)
         );
         sqlx::query(&sql)
             .execute(&self.pool)
@@ -530,7 +565,13 @@ impl DatabaseDriver for PostgreSqlDriver {
     }
 
     async fn drop_table(&self, schema: &str, table: &str) -> Result<(), String> {
-        let sql = format!("DROP TABLE \"{}\".\"{}\"", schema, table);
+        validate_sql_identifier(schema)?;
+        validate_sql_identifier(table)?;
+        let sql = format!(
+            "DROP TABLE \"{}\".\"{}\"",
+            escape_double_quote_identifier(schema),
+            escape_double_quote_identifier(table)
+        );
         sqlx::query(&sql)
             .execute(&self.pool)
             .await

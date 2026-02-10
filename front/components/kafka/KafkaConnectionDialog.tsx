@@ -83,6 +83,7 @@ export function KafkaConnectionDialog({
       }
       setErrors({})
       setTestResult(null)
+      setShowPassword(false)
     }
   }, [open, connection])
 

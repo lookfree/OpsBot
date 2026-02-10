@@ -2,7 +2,46 @@
 //!
 //! Provides utilities for managing Docker registry configurations and testing connections.
 
+use std::io::Write;
+
 use crate::models::docker::RegistryInfo;
+
+/// Run curl with optional authentication via stdin (avoids exposing credentials in process list)
+fn run_curl_with_auth(
+    curl_args: &[String],
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<std::process::Output, String> {
+    let has_auth = matches!((username, password), (Some(u), Some(p)) if !u.is_empty() && !p.is_empty());
+
+    let mut all_args = curl_args.to_vec();
+    if has_auth {
+        all_args.push("--config".to_string());
+        all_args.push("-".to_string());
+    }
+
+    let mut child = std::process::Command::new("curl")
+        .args(&all_args)
+        .stdin(if has_auth {
+            std::process::Stdio::piped()
+        } else {
+            std::process::Stdio::null()
+        })
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    if has_auth {
+        if let (Some(user), Some(pass)) = (username, password) {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = write!(stdin, "user = \"{}:{}\"", user, pass);
+            }
+        }
+    }
+
+    child.wait_with_output().map_err(|e| format!("curl failed: {}", e))
+}
 
 /// Get the path to the registries configuration file
 pub fn get_registries_file_path() -> Result<std::path::PathBuf, String> {
@@ -149,13 +188,9 @@ fn test_token_auth_internal(
             curl_args.push("-k".to_string());
         }
 
-        if let (Some(user), Some(pass)) = (username, password) {
-            curl_args.push("-u".to_string());
-            curl_args.push(format!("{}:{}", user, pass));
-        }
         curl_args.push(token_url);
 
-        if let Ok(output) = std::process::Command::new("curl").args(&curl_args).output() {
+        if let Ok(output) = run_curl_with_auth(&curl_args, username, password) {
             let response = String::from_utf8_lossy(&output.stdout);
             if response.contains("\"token\"") || response.contains("\"access_token\"") {
                 return Ok("连接成功".to_string());
@@ -188,15 +223,9 @@ fn test_harbor_api_internal(
         curl_args.push("-k".to_string());
     }
 
-    if let (Some(user), Some(pass)) = (username, password) {
-        curl_args.push("-u".to_string());
-        curl_args.push(format!("{}:{}", user, pass));
-    }
     curl_args.push(api_url);
 
-    let output = std::process::Command::new("curl")
-        .args(&curl_args)
-        .output()
+    let output = run_curl_with_auth(&curl_args, username, password)
         .map_err(|e| format!("Failed to check Harbor API: {}", e))?;
 
     let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -226,16 +255,9 @@ fn test_basic_auth_internal(
         curl_args.push("-k".to_string());
     }
 
-    if let (Some(user), Some(pass)) = (username, password) {
-        curl_args.push("-u".to_string());
-        curl_args.push(format!("{}:{}", user, pass));
-    }
     curl_args.push(url.to_string());
 
-    let output = std::process::Command::new("curl")
-        .args(&curl_args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = run_curl_with_auth(&curl_args, username, password)?;
 
     let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
