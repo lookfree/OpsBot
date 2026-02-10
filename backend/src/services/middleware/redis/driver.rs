@@ -18,6 +18,9 @@ use crate::models::{
 use crate::services::middleware::traits::CacheDriver;
 
 /// Redis connection type
+/// Both MultiplexedConnection and ClusterConnection implement Clone,
+/// so we can clone connections for concurrent use without a Mutex.
+#[derive(Clone)]
 pub enum RedisConnection {
     Standalone(MultiplexedConnection),
     Cluster(redis::cluster_async::ClusterConnection),
@@ -25,7 +28,7 @@ pub enum RedisConnection {
 
 /// Redis driver implementation
 pub struct RedisDriver {
-    connection: Arc<Mutex<RedisConnection>>,
+    connection: Arc<RedisConnection>,
     config: RedisConnectRequest,
     current_db: Arc<Mutex<u8>>,
 }
@@ -42,7 +45,7 @@ impl RedisDriver {
         let db = config.db.unwrap_or(0);
 
         Ok(Self {
-            connection: Arc::new(Mutex::new(connection)),
+            connection: Arc::new(connection),
             config,
             current_db: Arc::new(Mutex::new(db)),
         })
@@ -205,9 +208,11 @@ impl RedisDriver {
         Ok(format!("{}://{}{}:{}/{}", scheme, auth, host, port, db))
     }
 
-    /// Get a connection for operations
-    pub(crate) async fn get_connection(&self) -> tokio::sync::MutexGuard<'_, RedisConnection> {
-        self.connection.lock().await
+    /// Get a cloned connection for operations.
+    /// Both MultiplexedConnection and ClusterConnection are cheaply cloneable,
+    /// so this avoids Mutex contention for concurrent operations.
+    pub(crate) fn get_connection_clone(&self) -> RedisConnection {
+        (*self.connection).clone()
     }
 
     /// Execute a raw Redis command
@@ -218,13 +223,13 @@ impl RedisDriver {
     ) -> Result<T, String> {
         log::debug!("Redis execute_raw: cmd={} args={:?}", cmd, args);
 
-        let mut conn = self.get_connection().await;
+        let mut conn = self.get_connection_clone();
         let mut redis_cmd = redis::cmd(cmd);
         for arg in args {
             redis_cmd.arg(*arg);
         }
 
-        let result = match &mut *conn {
+        let result = match &mut conn {
             RedisConnection::Standalone(c) => redis_cmd
                 .query_async(c)
                 .await
@@ -251,13 +256,13 @@ impl RedisDriver {
         cmd: &str,
         args: &[String],
     ) -> Result<T, String> {
-        let mut conn = self.get_connection().await;
+        let mut conn = self.get_connection_clone();
         let mut redis_cmd = redis::cmd(cmd);
         for arg in args {
             redis_cmd.arg(arg);
         }
 
-        match &mut *conn {
+        match &mut conn {
             RedisConnection::Standalone(c) => redis_cmd
                 .query_async(c)
                 .await
@@ -274,13 +279,13 @@ impl RedisDriver {
     pub(crate) async fn execute_info(&self, section: Option<&str>) -> Result<String, String> {
         log::debug!("Redis execute_info: section={:?}", section);
 
-        let mut conn = self.get_connection().await;
+        let mut conn = self.get_connection_clone();
         let mut redis_cmd = redis::cmd("INFO");
         if let Some(sec) = section {
             redis_cmd.arg(sec);
         }
 
-        match &mut *conn {
+        match &mut conn {
             RedisConnection::Standalone(c) => redis_cmd
                 .query_async::<String>(c)
                 .await
@@ -315,10 +320,10 @@ impl RedisDriver {
     pub(crate) async fn execute_dbsize(&self) -> Result<i64, String> {
         log::debug!("Redis execute_dbsize");
 
-        let mut conn = self.get_connection().await;
+        let mut conn = self.get_connection_clone();
         let redis_cmd = redis::cmd("DBSIZE");
 
-        match &mut *conn {
+        match &mut conn {
             RedisConnection::Standalone(c) => redis_cmd
                 .clone()
                 .query_async::<i64>(c)
@@ -359,13 +364,13 @@ impl RedisDriver {
     pub(crate) async fn execute_scan(&self, args: &[&str]) -> Result<(String, Vec<String>), String> {
         log::debug!("Redis execute_scan: args={:?}", args);
 
-        let mut conn = self.get_connection().await;
+        let mut conn = self.get_connection_clone();
         let mut redis_cmd = redis::cmd("SCAN");
         for arg in args {
             redis_cmd.arg(*arg);
         }
 
-        match &mut *conn {
+        match &mut conn {
             RedisConnection::Standalone(c) => redis_cmd
                 .query_async::<(String, Vec<String>)>(c)
                 .await
@@ -422,8 +427,8 @@ impl CacheDriver for RedisDriver {
 
     async fn select_database(&self, db: u8) -> Result<(), String> {
         // Only works for standalone mode
-        let mut conn = self.get_connection().await;
-        match &mut *conn {
+        let mut conn = self.get_connection_clone();
+        match &mut conn {
             RedisConnection::Standalone(c) => {
                 redis::cmd("SELECT")
                     .arg(db)
@@ -486,13 +491,13 @@ impl CacheDriver for RedisDriver {
     ) -> Result<RedisCommandResult, String> {
         let start = std::time::Instant::now();
 
-        let mut conn = self.get_connection().await;
+        let mut conn = self.get_connection_clone();
         let mut redis_cmd = redis::cmd(command);
         for arg in &args {
             redis_cmd.arg(arg);
         }
 
-        let result: redis::Value = match &mut *conn {
+        let result: redis::Value = match &mut conn {
             RedisConnection::Standalone(c) => redis_cmd
                 .query_async(c)
                 .await

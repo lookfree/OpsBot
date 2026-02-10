@@ -18,6 +18,7 @@ use crate::models::{
 };
 
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
+use super::utils::{escape_double_quote_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
 
 /// KingBase database driver
 pub struct KingBaseDriver {
@@ -129,6 +130,9 @@ impl DatabaseDriver for KingBaseDriver {
             .map_err(|e| format!("Query failed: {}", e))?;
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
+        let total_rows = rows.len();
+        let truncated = total_rows > MAX_QUERY_ROWS;
+        let display_rows = if truncated { &rows[..MAX_QUERY_ROWS] } else { &rows[..] };
 
         let columns: Vec<QueryColumn> = if let Some(first_row) = rows.first() {
             first_row
@@ -144,7 +148,7 @@ impl DatabaseDriver for KingBaseDriver {
             vec![]
         };
 
-        let data: Vec<Vec<serde_json::Value>> = rows
+        let mut data: Vec<Vec<serde_json::Value>> = display_rows
             .iter()
             .map(|row| {
                 row.columns()
@@ -155,10 +159,16 @@ impl DatabaseDriver for KingBaseDriver {
             })
             .collect();
 
+        if truncated {
+            data.push(vec![serde_json::Value::String(
+                format!("[Result truncated: showing {} of {} rows]", MAX_QUERY_ROWS, total_rows),
+            )]);
+        }
+
         Ok(QueryResult {
             columns,
             rows: data,
-            affected_rows: rows.len() as u64,
+            affected_rows: total_rows as u64,
             execution_time_ms,
         })
     }
@@ -541,9 +551,14 @@ impl DatabaseDriver for KingBaseDriver {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
+        validate_sql_identifier(schema)?;
+        validate_sql_identifier(old_name)?;
+        validate_sql_identifier(new_name)?;
         let sql = format!(
             "ALTER TABLE \"{}\".\"{}\" RENAME TO \"{}\"",
-            schema, old_name, new_name
+            escape_double_quote_identifier(schema),
+            escape_double_quote_identifier(old_name),
+            escape_double_quote_identifier(new_name)
         );
         sqlx::query(&sql)
             .execute(&self.pool)
@@ -553,7 +568,13 @@ impl DatabaseDriver for KingBaseDriver {
     }
 
     async fn drop_table(&self, schema: &str, table: &str) -> Result<(), String> {
-        let sql = format!("DROP TABLE \"{}\".\"{}\"", schema, table);
+        validate_sql_identifier(schema)?;
+        validate_sql_identifier(table)?;
+        let sql = format!(
+            "DROP TABLE \"{}\".\"{}\"",
+            escape_double_quote_identifier(schema),
+            escape_double_quote_identifier(table)
+        );
         sqlx::query(&sql)
             .execute(&self.pool)
             .await

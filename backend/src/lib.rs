@@ -21,6 +21,7 @@ use services::MiddlewareService;
 pub fn run() {
     // Initialize services
     let ssh_service = Arc::new(SshService::new());
+    ssh_service.start_cleanup_task();
     let sftp_service = Arc::new(SftpService::new());
     let database_service = Arc::new(DatabaseService::new());
     let docker_service = Arc::new(DockerService::new(ssh_service.clone()));

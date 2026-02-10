@@ -3,6 +3,7 @@
 //! Manages MCP server instances with support for Stdio and SSE transports.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -12,6 +13,45 @@ use uuid::Uuid;
 use crate::models::{
     McpServerConfig, McpServerInfo, McpServerStatus, McpTool, McpTransport,
 };
+
+/// Allowed MCP server commands (basename only)
+const ALLOWED_MCP_COMMANDS: &[&str] = &[
+    "npx", "node", "python", "python3", "uvx", "docker", "deno", "bun",
+];
+
+/// Shell metacharacters that could enable command injection
+const SHELL_METACHARACTERS: &[char] = &[
+    ';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '\n', '\r',
+];
+
+/// Validate an MCP command and its arguments before execution
+fn validate_mcp_command(command: &str, args: &[String]) -> Result<(), String> {
+    // Extract basename from the command path
+    let basename = Path::new(command)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(command);
+
+    if !ALLOWED_MCP_COMMANDS.contains(&basename) {
+        return Err(format!(
+            "MCP command '{}' is not allowed. Allowed commands: {}",
+            basename,
+            ALLOWED_MCP_COMMANDS.join(", ")
+        ));
+    }
+
+    // Check args for shell metacharacters
+    for arg in args {
+        if arg.contains(SHELL_METACHARACTERS) {
+            return Err(format!(
+                "MCP argument '{}' contains forbidden shell metacharacters",
+                arg
+            ));
+        }
+    }
+
+    Ok(())
+}
 
 /// MCP Server instance
 pub struct McpServerInstance {
@@ -51,6 +91,8 @@ impl McpServerInstance {
     pub fn start(&mut self) -> Result<(), String> {
         match &self.config.transport {
             McpTransport::Stdio { command, args } => {
+                validate_mcp_command(command, args)?;
+
                 let child = Command::new(command)
                     .args(args)
                     .stdin(Stdio::piped())

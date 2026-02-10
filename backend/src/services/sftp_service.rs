@@ -201,6 +201,8 @@ impl SftpService {
 
     /// Read file contents
     pub async fn read_file(&self, session_id: &str, path: &str) -> Result<Vec<u8>> {
+        const MAX_READ_FILE_SIZE: usize = 100 * 1024 * 1024; // 100MB
+
         let sessions = self.sessions.read().await;
         let wrapper = sessions
             .get(session_id)
@@ -209,6 +211,14 @@ impl SftpService {
         let mut file = wrapper.sftp.open(path).await?;
         let metadata = file.metadata().await?;
         let size = metadata.size.unwrap_or(0) as usize;
+
+        if size > MAX_READ_FILE_SIZE {
+            return Err(anyhow!(
+                "File too large for direct read ({} bytes, max {} bytes). Use SFTP download instead.",
+                size,
+                MAX_READ_FILE_SIZE
+            ));
+        }
 
         let mut buffer = vec![0u8; size];
         let _bytes_read = file.read(&mut buffer).await?;

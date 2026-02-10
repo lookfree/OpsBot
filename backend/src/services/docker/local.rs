@@ -16,9 +16,23 @@ use futures::channel::mpsc::UnboundedSender;
 use futures::StreamExt;
 use parking_lot::RwLock;
 use tokio::io::AsyncWriteExt;
+use tokio::time::{timeout, Duration};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+
+const DOCKER_TIMEOUT_SECS: u64 = 30;
+const DOCKER_SLOW_TIMEOUT_SECS: u64 = 300;
+
+async fn with_docker_timeout<T>(
+    secs: u64,
+    op: &str,
+    fut: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    timeout(Duration::from_secs(secs), fut)
+        .await
+        .map_err(|_| format!("{} timed out after {}s", op, secs))?
+}
 
 use super::compose_cmd::{run_compose_action, run_compose_checked, validate_compose_path, validate_project_name};
 use super::registry_helpers::{load_registries, save_registries, test_registry_connection};
@@ -131,99 +145,111 @@ impl LocalDockerDriver {
 #[async_trait]
 impl DockerDriver for LocalDockerDriver {
     async fn test_connection(&self) -> Result<DockerTestResult, String> {
-        match self.client.version().await {
-            Ok(version) => Ok(DockerTestResult {
-                success: true,
-                version: version.version,
-                api_version: version.api_version,
-                error: None,
-            }),
-            Err(e) => Ok(DockerTestResult {
-                success: false,
-                version: None,
-                api_version: None,
-                error: Some(e.to_string()),
-            }),
-        }
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "test_connection", async {
+            match self.client.version().await {
+                Ok(version) => Ok(DockerTestResult {
+                    success: true,
+                    version: version.version,
+                    api_version: version.api_version,
+                    error: None,
+                }),
+                Err(e) => Ok(DockerTestResult {
+                    success: false,
+                    version: None,
+                    api_version: None,
+                    error: Some(e.to_string()),
+                }),
+            }
+        }).await
     }
 
     async fn list_containers(&self, all: bool) -> Result<Vec<ContainerInfo>, String> {
-        let options = ListContainersOptions::<String> {
-            all,
-            ..Default::default()
-        };
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "list_containers", async {
+            let options = ListContainersOptions::<String> {
+                all,
+                ..Default::default()
+            };
 
-        let containers = self
-            .client
-            .list_containers(Some(options))
-            .await
-            .map_err(|e| format!("Failed to list containers: {}", e))?;
+            let containers = self
+                .client
+                .list_containers(Some(options))
+                .await
+                .map_err(|e| format!("Failed to list containers: {}", e))?;
 
-        let mut result = Vec::new();
-        for container in containers {
-            let ports = container
-                .ports
-                .unwrap_or_default()
-                .into_iter()
-                .map(|p| PortMapping {
-                    container_port: p.private_port,
-                    host_port: p.public_port,
-                    protocol: p.typ.map(|t| t.to_string()).unwrap_or_else(|| "tcp".to_string()),
-                    host_ip: p.ip,
-                })
-                .collect();
+            let mut result = Vec::new();
+            for container in containers {
+                let ports = container
+                    .ports
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| PortMapping {
+                        container_port: p.private_port,
+                        host_port: p.public_port,
+                        protocol: p.typ.map(|t| t.to_string()).unwrap_or_else(|| "tcp".to_string()),
+                        host_ip: p.ip,
+                    })
+                    .collect();
 
-            let name = container
-                .names
-                .as_ref()
-                .and_then(|n| n.first())
-                .map(|n| n.trim_start_matches('/').to_string())
-                .unwrap_or_default();
+                let name = container
+                    .names
+                    .as_ref()
+                    .and_then(|n| n.first())
+                    .map(|n| n.trim_start_matches('/').to_string())
+                    .unwrap_or_default();
 
-            result.push(ContainerInfo {
-                id: container.id.unwrap_or_default(),
-                name,
-                image: container.image.unwrap_or_default(),
-                status: container.status.unwrap_or_default(),
-                state: container.state.unwrap_or_default(),
-                created: container.created.unwrap_or(0),
-                ports,
-            });
-        }
+                result.push(ContainerInfo {
+                    id: container.id.unwrap_or_default(),
+                    name,
+                    image: container.image.unwrap_or_default(),
+                    status: container.status.unwrap_or_default(),
+                    state: container.state.unwrap_or_default(),
+                    created: container.created.unwrap_or(0),
+                    ports,
+                });
+            }
 
-        Ok(result)
+            Ok(result)
+        }).await
     }
 
     async fn start_container(&self, container_id: &str) -> Result<(), String> {
-        self.client
-            .start_container(container_id, None::<StartContainerOptions<String>>)
-            .await
-            .map_err(|e| format!("Failed to start container: {}", e))
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "start_container", async {
+            self.client
+                .start_container(container_id, None::<StartContainerOptions<String>>)
+                .await
+                .map_err(|e| format!("Failed to start container: {}", e))
+        }).await
     }
 
     async fn stop_container(&self, container_id: &str) -> Result<(), String> {
-        self.client
-            .stop_container(container_id, Some(StopContainerOptions { t: 10 }))
-            .await
-            .map_err(|e| format!("Failed to stop container: {}", e))
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "stop_container", async {
+            self.client
+                .stop_container(container_id, Some(StopContainerOptions { t: 10 }))
+                .await
+                .map_err(|e| format!("Failed to stop container: {}", e))
+        }).await
     }
 
     async fn restart_container(&self, container_id: &str) -> Result<(), String> {
-        self.client
-            .restart_container(container_id, Some(RestartContainerOptions { t: 10 }))
-            .await
-            .map_err(|e| format!("Failed to restart container: {}", e))
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "restart_container", async {
+            self.client
+                .restart_container(container_id, Some(RestartContainerOptions { t: 10 }))
+                .await
+                .map_err(|e| format!("Failed to restart container: {}", e))
+        }).await
     }
 
     async fn remove_container(&self, container_id: &str, force: bool) -> Result<(), String> {
-        let options = RemoveContainerOptions {
-            force,
-            ..Default::default()
-        };
-        self.client
-            .remove_container(container_id, Some(options))
-            .await
-            .map_err(|e| format!("Failed to remove container: {}", e))
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "remove_container", async {
+            let options = RemoveContainerOptions {
+                force,
+                ..Default::default()
+            };
+            self.client
+                .remove_container(container_id, Some(options))
+                .await
+                .map_err(|e| format!("Failed to remove container: {}", e))
+        }).await
     }
 
     async fn get_container_logs(
@@ -231,159 +257,173 @@ impl DockerDriver for LocalDockerDriver {
         container_id: &str,
         tail: Option<u32>,
     ) -> Result<String, String> {
-        let options = LogsOptions::<String> {
-            stdout: true,
-            stderr: true,
-            tail: tail.map(|t| t.to_string()).unwrap_or_else(|| "100".to_string()),
-            ..Default::default()
-        };
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "get_container_logs", async {
+            let options = LogsOptions::<String> {
+                stdout: true,
+                stderr: true,
+                tail: tail.map(|t| t.to_string()).unwrap_or_else(|| "100".to_string()),
+                ..Default::default()
+            };
 
-        let mut logs_stream = self.client.logs(container_id, Some(options));
-        let mut output = String::new();
+            let mut logs_stream = self.client.logs(container_id, Some(options));
+            let mut output = String::new();
 
-        while let Some(log_result) = logs_stream.next().await {
-            match log_result {
-                Ok(log) => {
-                    output.push_str(&log.to_string());
-                }
-                Err(e) => {
-                    return Err(format!("Failed to get container logs: {}", e));
+            while let Some(log_result) = logs_stream.next().await {
+                match log_result {
+                    Ok(log) => {
+                        output.push_str(&log.to_string());
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to get container logs: {}", e));
+                    }
                 }
             }
-        }
 
-        Ok(output)
+            Ok(output)
+        }).await
     }
 
     async fn list_images(&self) -> Result<Vec<ImageInfo>, String> {
-        let options = ListImagesOptions::<String> {
-            all: false,
-            ..Default::default()
-        };
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "list_images", async {
+            let options = ListImagesOptions::<String> {
+                all: false,
+                ..Default::default()
+            };
 
-        let images = self
-            .client
-            .list_images(Some(options))
-            .await
-            .map_err(|e| format!("Failed to list images: {}", e))?;
+            let images = self
+                .client
+                .list_images(Some(options))
+                .await
+                .map_err(|e| format!("Failed to list images: {}", e))?;
 
-        let result = images
-            .into_iter()
-            .map(|img| ImageInfo {
-                id: img.id,
-                tags: img.repo_tags,
-                size: img.size as u64,
-                created: img.created,
-            })
-            .collect();
+            let result = images
+                .into_iter()
+                .map(|img| ImageInfo {
+                    id: img.id,
+                    tags: img.repo_tags,
+                    size: img.size as u64,
+                    created: img.created,
+                })
+                .collect();
 
-        Ok(result)
+            Ok(result)
+        }).await
     }
 
     async fn pull_image(&self, image: &str) -> Result<(), String> {
-        use bollard::image::CreateImageOptions;
+        with_docker_timeout(DOCKER_SLOW_TIMEOUT_SECS, "pull_image", async {
+            use bollard::image::CreateImageOptions;
 
-        let options = CreateImageOptions {
-            from_image: image,
-            ..Default::default()
-        };
+            let options = CreateImageOptions {
+                from_image: image,
+                ..Default::default()
+            };
 
-        let mut stream = self.client.create_image(Some(options), None, None);
+            let mut stream = self.client.create_image(Some(options), None, None);
 
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(_info) => {
-                    // Progress info available but not used for now
-                }
-                Err(e) => {
-                    return Err(format!("Failed to pull image: {}", e));
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(_info) => {
+                        // Progress info available but not used for now
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to pull image: {}", e));
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        }).await
     }
 
     async fn remove_image(&self, image_id: &str, force: bool) -> Result<(), String> {
-        let options = RemoveImageOptions {
-            force,
-            ..Default::default()
-        };
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "remove_image", async {
+            let options = RemoveImageOptions {
+                force,
+                ..Default::default()
+            };
 
-        self.client
-            .remove_image(image_id, Some(options), None)
-            .await
-            .map_err(|e| format!("Failed to remove image: {}", e))?;
+            self.client
+                .remove_image(image_id, Some(options), None)
+                .await
+                .map_err(|e| format!("Failed to remove image: {}", e))?;
 
-        Ok(())
+            Ok(())
+        }).await
     }
 
     // ========== 概览页面方法 ==========
 
     async fn get_info(&self) -> Result<DockerInfo, String> {
-        let info = self.client.info().await
-            .map_err(|e| format!("Failed to get Docker info: {}", e))?;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "get_info", async {
+            let info = self.client.info().await
+                .map_err(|e| format!("Failed to get Docker info: {}", e))?;
 
-        let version = self.client.version().await
-            .map_err(|e| format!("Failed to get Docker version: {}", e))?;
+            let version = self.client.version().await
+                .map_err(|e| format!("Failed to get Docker version: {}", e))?;
 
-        Ok(DockerInfo {
-            version: version.version.unwrap_or_default(),
-            api_version: version.api_version.unwrap_or_default(),
-            os: version.os.unwrap_or_default(),
-            arch: version.arch.unwrap_or_default(),
-            kernel_version: version.kernel_version.unwrap_or_default(),
-            root_dir: info.docker_root_dir.unwrap_or_default(),
-            storage_driver: info.driver.unwrap_or_default(),
-            containers_running: info.containers_running.unwrap_or(0) as u32,
-            containers_paused: info.containers_paused.unwrap_or(0) as u32,
-            containers_stopped: info.containers_stopped.unwrap_or(0) as u32,
-            images: info.images.unwrap_or(0) as u32,
-            memory_total: info.mem_total.unwrap_or(0) as u64,
-            cpus: info.ncpu.unwrap_or(0) as u32,
-        })
+            Ok(DockerInfo {
+                version: version.version.unwrap_or_default(),
+                api_version: version.api_version.unwrap_or_default(),
+                os: version.os.unwrap_or_default(),
+                arch: version.arch.unwrap_or_default(),
+                kernel_version: version.kernel_version.unwrap_or_default(),
+                root_dir: info.docker_root_dir.unwrap_or_default(),
+                storage_driver: info.driver.unwrap_or_default(),
+                containers_running: info.containers_running.unwrap_or(0) as u32,
+                containers_paused: info.containers_paused.unwrap_or(0) as u32,
+                containers_stopped: info.containers_stopped.unwrap_or(0) as u32,
+                images: info.images.unwrap_or(0) as u32,
+                memory_total: info.mem_total.unwrap_or(0) as u64,
+                cpus: info.ncpu.unwrap_or(0) as u32,
+            })
+        }).await
     }
 
     async fn get_stats(&self) -> Result<DockerStats, String> {
-        let info = self.client.info().await
-            .map_err(|e| format!("Failed to get Docker info: {}", e))?;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "get_stats", async {
+            let info = self.client.info().await
+                .map_err(|e| format!("Failed to get Docker info: {}", e))?;
 
-        // Get images total size
-        let images = self.list_images().await?;
-        let images_size: u64 = images.iter().map(|i| i.size).sum();
+            // Get images total size
+            let images = self.list_images().await?;
+            let images_size: u64 = images.iter().map(|i| i.size).sum();
 
-        let containers_running = info.containers_running.unwrap_or(0) as u32;
-        let containers_stopped = info.containers_stopped.unwrap_or(0) as u32;
-        let containers_paused = info.containers_paused.unwrap_or(0) as u32;
+            let containers_running = info.containers_running.unwrap_or(0) as u32;
+            let containers_stopped = info.containers_stopped.unwrap_or(0) as u32;
+            let containers_paused = info.containers_paused.unwrap_or(0) as u32;
 
-        Ok(DockerStats {
-            containers_running,
-            containers_stopped: containers_stopped + containers_paused,
-            containers_total: containers_running + containers_stopped + containers_paused,
-            images_count: info.images.unwrap_or(0) as u32,
-            images_size,
-        })
+            Ok(DockerStats {
+                containers_running,
+                containers_stopped: containers_stopped + containers_paused,
+                containers_total: containers_running + containers_stopped + containers_paused,
+                images_count: info.images.unwrap_or(0) as u32,
+                images_size,
+            })
+        }).await
     }
 
     // ========== 设置页面方法 ==========
 
     async fn get_settings(&self) -> Result<DockerSettings, String> {
-        let info = self.client.info().await
-            .map_err(|e| format!("Failed to get Docker info: {}", e))?;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "get_settings", async {
+            let info = self.client.info().await
+                .map_err(|e| format!("Failed to get Docker info: {}", e))?;
 
-        Ok(DockerSettings {
-            registry_mirrors: info.registry_config
-                .as_ref()
-                .and_then(|rc| rc.mirrors.clone())
-                .unwrap_or_default(),
-            storage_path: info.docker_root_dir.clone().unwrap_or_default(),
-            socket_path: "/var/run/docker.sock".to_string(), // Default socket path for local Docker
-            cgroup_driver: info.cgroup_driver.as_ref()
-                .map(|d| format!("{:?}", d))
-                .unwrap_or_else(|| "unknown".to_string()),
-            live_restore: info.live_restore_enabled.unwrap_or(false),
-            ipv6_enabled: info.ipv4_forwarding.unwrap_or(false), // Using ipv4_forwarding as proxy
-        })
+            Ok(DockerSettings {
+                registry_mirrors: info.registry_config
+                    .as_ref()
+                    .and_then(|rc| rc.mirrors.clone())
+                    .unwrap_or_default(),
+                storage_path: info.docker_root_dir.clone().unwrap_or_default(),
+                socket_path: "/var/run/docker.sock".to_string(),
+                cgroup_driver: info.cgroup_driver.as_ref()
+                    .map(|d| format!("{:?}", d))
+                    .unwrap_or_else(|| "unknown".to_string()),
+                live_restore: info.live_restore_enabled.unwrap_or(false),
+                ipv6_enabled: info.ipv4_forwarding.unwrap_or(false),
+            })
+        }).await
     }
 
     async fn update_registry_mirrors(&self, _mirrors: Vec<String>) -> Result<(), String> {
@@ -406,134 +446,141 @@ impl DockerDriver for LocalDockerDriver {
     // ========== 网络管理 (第二期) ==========
 
     async fn list_networks(&self) -> Result<Vec<NetworkInfo>, String> {
-        let options = ListNetworksOptions::<String> {
-            ..Default::default()
-        };
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "list_networks", async {
+            let options = ListNetworksOptions::<String> {
+                ..Default::default()
+            };
 
-        let networks = self
-            .client
-            .list_networks(Some(options))
-            .await
-            .map_err(|e| format!("Failed to list networks: {}", e))?;
+            let networks = self
+                .client
+                .list_networks(Some(options))
+                .await
+                .map_err(|e| format!("Failed to list networks: {}", e))?;
 
-        let result = networks
-            .into_iter()
-            .map(|net| {
-                let ipam_config = net.ipam.as_ref().and_then(|ipam| {
-                    ipam.config.as_ref().and_then(|configs| configs.first())
-                });
+            let result = networks
+                .into_iter()
+                .map(|net| {
+                    let ipam_config = net.ipam.as_ref().and_then(|ipam| {
+                        ipam.config.as_ref().and_then(|configs| configs.first())
+                    });
 
-                NetworkInfo {
-                    id: net.id.unwrap_or_default(),
-                    name: net.name.unwrap_or_default(),
-                    driver: net.driver.unwrap_or_default(),
-                    scope: net.scope.unwrap_or_default(),
-                    created: net.created.unwrap_or_default(),
-                    ipam_subnet: ipam_config.and_then(|c| c.subnet.clone()),
-                    ipam_gateway: ipam_config.and_then(|c| c.gateway.clone()),
-                    containers_count: net.containers.as_ref().map(|c| c.len() as u32).unwrap_or(0),
-                    internal: net.internal.unwrap_or(false),
-                }
-            })
-            .collect();
+                    NetworkInfo {
+                        id: net.id.unwrap_or_default(),
+                        name: net.name.unwrap_or_default(),
+                        driver: net.driver.unwrap_or_default(),
+                        scope: net.scope.unwrap_or_default(),
+                        created: net.created.unwrap_or_default(),
+                        ipam_subnet: ipam_config.and_then(|c| c.subnet.clone()),
+                        ipam_gateway: ipam_config.and_then(|c| c.gateway.clone()),
+                        containers_count: net.containers.as_ref().map(|c| c.len() as u32).unwrap_or(0),
+                        internal: net.internal.unwrap_or(false),
+                    }
+                })
+                .collect();
 
-        Ok(result)
+            Ok(result)
+        }).await
     }
 
     async fn inspect_network(&self, network_id: &str) -> Result<NetworkDetail, String> {
-        let network = self
-            .client
-            .inspect_network::<String>(network_id, None)
-            .await
-            .map_err(|e| format!("Failed to inspect network: {}", e))?;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "inspect_network", async {
+            let network = self
+                .client
+                .inspect_network::<String>(network_id, None)
+                .await
+                .map_err(|e| format!("Failed to inspect network: {}", e))?;
 
-        let ipam_config = network.ipam.as_ref().and_then(|ipam| {
-            ipam.config.as_ref().and_then(|configs| configs.first())
-        });
+            let ipam_config = network.ipam.as_ref().and_then(|ipam| {
+                ipam.config.as_ref().and_then(|configs| configs.first())
+            });
 
-        let containers: Vec<NetworkContainer> = network
-            .containers
-            .as_ref()
-            .map(|c| {
-                c.iter()
-                    .map(|(id, info)| NetworkContainer {
-                        container_id: id.clone(),
-                        name: info.name.clone().unwrap_or_default(),
-                        ipv4_address: info.ipv4_address.clone(),
-                        ipv6_address: info.ipv6_address.clone(),
-                        mac_address: info.mac_address.clone(),
-                    })
-                    .collect()
+            let containers: Vec<NetworkContainer> = network
+                .containers
+                .as_ref()
+                .map(|c| {
+                    c.iter()
+                        .map(|(id, info)| NetworkContainer {
+                            container_id: id.clone(),
+                            name: info.name.clone().unwrap_or_default(),
+                            ipv4_address: info.ipv4_address.clone(),
+                            ipv6_address: info.ipv6_address.clone(),
+                            mac_address: info.mac_address.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let info = NetworkInfo {
+                id: network.id.clone().unwrap_or_default(),
+                name: network.name.clone().unwrap_or_default(),
+                driver: network.driver.clone().unwrap_or_default(),
+                scope: network.scope.clone().unwrap_or_default(),
+                created: network.created.clone().unwrap_or_default(),
+                ipam_subnet: ipam_config.and_then(|c| c.subnet.clone()),
+                ipam_gateway: ipam_config.and_then(|c| c.gateway.clone()),
+                containers_count: containers.len() as u32,
+                internal: network.internal.unwrap_or(false),
+            };
+
+            Ok(NetworkDetail {
+                info,
+                containers,
+                options: network.options.unwrap_or_default(),
+                labels: network.labels.unwrap_or_default(),
             })
-            .unwrap_or_default();
-
-        let info = NetworkInfo {
-            id: network.id.clone().unwrap_or_default(),
-            name: network.name.clone().unwrap_or_default(),
-            driver: network.driver.clone().unwrap_or_default(),
-            scope: network.scope.clone().unwrap_or_default(),
-            created: network.created.clone().unwrap_or_default(),
-            ipam_subnet: ipam_config.and_then(|c| c.subnet.clone()),
-            ipam_gateway: ipam_config.and_then(|c| c.gateway.clone()),
-            containers_count: containers.len() as u32,
-            internal: network.internal.unwrap_or(false),
-        };
-
-        Ok(NetworkDetail {
-            info,
-            containers,
-            options: network.options.unwrap_or_default(),
-            labels: network.labels.unwrap_or_default(),
-        })
+        }).await
     }
 
     async fn create_network(&self, config: CreateNetworkRequest) -> Result<String, String> {
-        use bollard::models::IpamConfig;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "create_network", async {
+            use bollard::models::IpamConfig;
 
-        let ipam_config = if config.subnet.is_some() || config.gateway.is_some() {
-            Some(bollard::models::Ipam {
-                driver: Some("default".to_string()),
-                config: Some(vec![IpamConfig {
-                    subnet: config.subnet,
-                    gateway: config.gateway,
-                    ..Default::default()
-                }]),
-                options: None,
-            })
-        } else {
-            None
-        };
+            let ipam_config = if config.subnet.is_some() || config.gateway.is_some() {
+                Some(bollard::models::Ipam {
+                    driver: Some("default".to_string()),
+                    config: Some(vec![IpamConfig {
+                        subnet: config.subnet,
+                        gateway: config.gateway,
+                        ..Default::default()
+                    }]),
+                    options: None,
+                })
+            } else {
+                None
+            };
 
-        // Convert HashMap<String, String> to HashMap<&str, &str>
-        let labels_owned = config.labels.unwrap_or_default();
-        let labels: HashMap<&str, &str> = labels_owned
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
+            let labels_owned = config.labels.unwrap_or_default();
+            let labels: HashMap<&str, &str> = labels_owned
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
 
-        let options = CreateNetworkOptions {
-            name: config.name.as_str(),
-            driver: config.driver.as_deref().unwrap_or("bridge"),
-            internal: config.internal.unwrap_or(false),
-            ipam: ipam_config.unwrap_or_default(),
-            labels,
-            ..Default::default()
-        };
+            let options = CreateNetworkOptions {
+                name: config.name.as_str(),
+                driver: config.driver.as_deref().unwrap_or("bridge"),
+                internal: config.internal.unwrap_or(false),
+                ipam: ipam_config.unwrap_or_default(),
+                labels,
+                ..Default::default()
+            };
 
-        let response = self
-            .client
-            .create_network(options)
-            .await
-            .map_err(|e| format!("Failed to create network: {}", e))?;
+            let response = self
+                .client
+                .create_network(options)
+                .await
+                .map_err(|e| format!("Failed to create network: {}", e))?;
 
-        Ok(response.id)
+            Ok(response.id)
+        }).await
     }
 
     async fn remove_network(&self, network_id: &str) -> Result<(), String> {
-        self.client
-            .remove_network(network_id)
-            .await
-            .map_err(|e| format!("Failed to remove network: {}", e))
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "remove_network", async {
+            self.client
+                .remove_network(network_id)
+                .await
+                .map_err(|e| format!("Failed to remove network: {}", e))
+        }).await
     }
 
     async fn connect_container_to_network(
@@ -541,18 +588,20 @@ impl DockerDriver for LocalDockerDriver {
         network_id: &str,
         container_id: &str,
     ) -> Result<(), String> {
-        use bollard::network::ConnectNetworkOptions;
-        use bollard::models::EndpointSettings;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "connect_container_to_network", async {
+            use bollard::network::ConnectNetworkOptions;
+            use bollard::models::EndpointSettings;
 
-        let options = ConnectNetworkOptions {
-            container: container_id,
-            endpoint_config: EndpointSettings::default(),
-        };
+            let options = ConnectNetworkOptions {
+                container: container_id,
+                endpoint_config: EndpointSettings::default(),
+            };
 
-        self.client
-            .connect_network(network_id, options)
-            .await
-            .map_err(|e| format!("Failed to connect container to network: {}", e))
+            self.client
+                .connect_network(network_id, options)
+                .await
+                .map_err(|e| format!("Failed to connect container to network: {}", e))
+        }).await
     }
 
     async fn disconnect_container_from_network(
@@ -560,190 +609,197 @@ impl DockerDriver for LocalDockerDriver {
         network_id: &str,
         container_id: &str,
     ) -> Result<(), String> {
-        use bollard::network::DisconnectNetworkOptions;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "disconnect_container_from_network", async {
+            use bollard::network::DisconnectNetworkOptions;
 
-        let options = DisconnectNetworkOptions {
-            container: container_id,
-            force: false,
-        };
+            let options = DisconnectNetworkOptions {
+                container: container_id,
+                force: false,
+            };
 
-        self.client
-            .disconnect_network(network_id, options)
-            .await
-            .map_err(|e| format!("Failed to disconnect container from network: {}", e))
+            self.client
+                .disconnect_network(network_id, options)
+                .await
+                .map_err(|e| format!("Failed to disconnect container from network: {}", e))
+        }).await
     }
 
     async fn prune_networks(&self) -> Result<PruneResult, String> {
-        let result = self
-            .client
-            .prune_networks::<String>(None)
-            .await
-            .map_err(|e| format!("Failed to prune networks: {}", e))?;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "prune_networks", async {
+            let result = self
+                .client
+                .prune_networks::<String>(None)
+                .await
+                .map_err(|e| format!("Failed to prune networks: {}", e))?;
 
-        Ok(PruneResult {
-            deleted_count: result.networks_deleted.as_ref().map(|n| n.len() as u32).unwrap_or(0),
-            space_reclaimed: 0, // Networks don't have a size
-        })
+            Ok(PruneResult {
+                deleted_count: result.networks_deleted.as_ref().map(|n| n.len() as u32).unwrap_or(0),
+                space_reclaimed: 0,
+            })
+        }).await
     }
 
     // ========== 存储卷管理 (第二期) ==========
 
     async fn list_volumes(&self) -> Result<Vec<VolumeInfo>, String> {
-        let options = ListVolumesOptions::<String> {
-            ..Default::default()
-        };
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "list_volumes", async {
+            let options = ListVolumesOptions::<String> {
+                ..Default::default()
+            };
 
-        let response = self
-            .client
-            .list_volumes(Some(options))
-            .await
-            .map_err(|e| format!("Failed to list volumes: {}", e))?;
+            let response = self
+                .client
+                .list_volumes(Some(options))
+                .await
+                .map_err(|e| format!("Failed to list volumes: {}", e))?;
 
-        let volumes = response.volumes.unwrap_or_default();
-        let result = volumes
-            .into_iter()
-            .map(|vol| {
-                let scope = vol.scope
-                    .map(|s| format!("{:?}", s).to_lowercase())
-                    .unwrap_or_else(|| "local".to_string());
+            let volumes = response.volumes.unwrap_or_default();
+            let result = volumes
+                .into_iter()
+                .map(|vol| {
+                    let scope = vol.scope
+                        .map(|s| format!("{:?}", s).to_lowercase())
+                        .unwrap_or_else(|| "local".to_string());
 
-                VolumeInfo {
-                    name: vol.name,
-                    driver: vol.driver,
-                    mountpoint: vol.mountpoint,
-                    created: vol.created_at.unwrap_or_default(),
-                    size: vol.usage_data.as_ref().map(|u| u.size as u64),
-                    scope,
-                    labels: vol.labels,
-                }
-            })
-            .collect();
+                    VolumeInfo {
+                        name: vol.name,
+                        driver: vol.driver,
+                        mountpoint: vol.mountpoint,
+                        created: vol.created_at.unwrap_or_default(),
+                        size: vol.usage_data.as_ref().map(|u| u.size as u64),
+                        scope,
+                        labels: vol.labels,
+                    }
+                })
+                .collect();
 
-        Ok(result)
+            Ok(result)
+        }).await
     }
 
     async fn create_volume(&self, config: CreateVolumeRequest) -> Result<String, String> {
-        // Convert HashMap<String, String> to HashMap<&str, &str>
-        let driver_opts_owned = config.driver_opts.unwrap_or_default();
-        let driver_opts: HashMap<&str, &str> = driver_opts_owned
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "create_volume", async {
+            let driver_opts_owned = config.driver_opts.unwrap_or_default();
+            let driver_opts: HashMap<&str, &str> = driver_opts_owned
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
 
-        let labels_owned = config.labels.unwrap_or_default();
-        let labels: HashMap<&str, &str> = labels_owned
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
+            let labels_owned = config.labels.unwrap_or_default();
+            let labels: HashMap<&str, &str> = labels_owned
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
 
-        let options = CreateVolumeOptions {
-            name: config.name.as_str(),
-            driver: config.driver.as_deref().unwrap_or("local"),
-            driver_opts,
-            labels,
-        };
+            let options = CreateVolumeOptions {
+                name: config.name.as_str(),
+                driver: config.driver.as_deref().unwrap_or("local"),
+                driver_opts,
+                labels,
+            };
 
-        let volume = self
-            .client
-            .create_volume(options)
-            .await
-            .map_err(|e| format!("Failed to create volume: {}", e))?;
+            let volume = self
+                .client
+                .create_volume(options)
+                .await
+                .map_err(|e| format!("Failed to create volume: {}", e))?;
 
-        Ok(volume.name)
+            Ok(volume.name)
+        }).await
     }
 
     async fn remove_volume(&self, volume_name: &str, force: bool) -> Result<(), String> {
-        let options = RemoveVolumeOptions { force };
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "remove_volume", async {
+            let options = RemoveVolumeOptions { force };
 
-        self.client
-            .remove_volume(volume_name, Some(options))
-            .await
-            .map_err(|e| format!("Failed to remove volume: {}", e))
+            self.client
+                .remove_volume(volume_name, Some(options))
+                .await
+                .map_err(|e| format!("Failed to remove volume: {}", e))
+        }).await
     }
 
     async fn prune_volumes(&self) -> Result<PruneResult, String> {
-        let result = self
-            .client
-            .prune_volumes::<String>(None)
-            .await
-            .map_err(|e| format!("Failed to prune volumes: {}", e))?;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "prune_volumes", async {
+            let result = self
+                .client
+                .prune_volumes::<String>(None)
+                .await
+                .map_err(|e| format!("Failed to prune volumes: {}", e))?;
 
-        Ok(PruneResult {
-            deleted_count: result.volumes_deleted.as_ref().map(|v| v.len() as u32).unwrap_or(0),
-            space_reclaimed: result.space_reclaimed.unwrap_or(0) as u64,
-        })
+            Ok(PruneResult {
+                deleted_count: result.volumes_deleted.as_ref().map(|v| v.len() as u32).unwrap_or(0),
+                space_reclaimed: result.space_reclaimed.unwrap_or(0) as u64,
+            })
+        }).await
     }
 
     // ========== 资源监控 (第二期) ==========
 
     async fn get_container_stats(&self, container_id: &str) -> Result<ContainerStats, String> {
-        use bollard::container::StatsOptions;
-        use chrono::Utc;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "get_container_stats", async {
+            use bollard::container::StatsOptions;
+            use chrono::Utc;
 
-        let options = StatsOptions {
-            stream: false, // Get a single stats snapshot
-            one_shot: true,
-        };
-
-        let mut stats_stream = self.client.stats(container_id, Some(options));
-
-        // Get the first (and only) stats result
-        if let Some(result) = stats_stream.next().await {
-            let stats = result.map_err(|e| format!("Failed to get container stats: {}", e))?;
-
-            // Calculate CPU usage percentage
-            let cpu_percent = calculate_cpu_percent(&stats);
-
-            // Calculate memory usage
-            let memory_usage = stats.memory_stats.usage.unwrap_or(0);
-            let memory_limit = stats.memory_stats.limit.unwrap_or(1);
-            let memory_percent = if memory_limit > 0 {
-                (memory_usage as f64 / memory_limit as f64) * 100.0
-            } else {
-                0.0
+            let options = StatsOptions {
+                stream: false,
+                one_shot: true,
             };
 
-            // Calculate network I/O
-            let (network_rx, network_tx) = if let Some(networks) = &stats.networks {
-                networks.values().fold((0u64, 0u64), |(rx, tx), net| {
-                    (rx + net.rx_bytes, tx + net.tx_bytes)
+            let mut stats_stream = self.client.stats(container_id, Some(options));
+
+            if let Some(result) = stats_stream.next().await {
+                let stats = result.map_err(|e| format!("Failed to get container stats: {}", e))?;
+
+                let cpu_percent = calculate_cpu_percent(&stats);
+
+                let memory_usage = stats.memory_stats.usage.unwrap_or(0);
+                let memory_limit = stats.memory_stats.limit.unwrap_or(1);
+                let memory_percent = if memory_limit > 0 {
+                    (memory_usage as f64 / memory_limit as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                let (network_rx, network_tx) = if let Some(networks) = &stats.networks {
+                    networks.values().fold((0u64, 0u64), |(rx, tx), net| {
+                        (rx + net.rx_bytes, tx + net.tx_bytes)
+                    })
+                } else {
+                    (0, 0)
+                };
+
+                let (block_read, block_write) = if let Some(blkio) = &stats.blkio_stats.io_service_bytes_recursive {
+                    blkio.iter().fold((0u64, 0u64), |(read, write), entry| {
+                        match entry.op.as_str() {
+                            "read" | "Read" => (read + entry.value, write),
+                            "write" | "Write" => (read, write + entry.value),
+                            _ => (read, write),
+                        }
+                    })
+                } else {
+                    (0, 0)
+                };
+
+                let name = stats.name.trim_start_matches('/').to_string();
+
+                Ok(ContainerStats {
+                    container_id: container_id.to_string(),
+                    name,
+                    cpu_percent,
+                    memory_usage,
+                    memory_limit,
+                    memory_percent,
+                    network_rx,
+                    network_tx,
+                    block_read,
+                    block_write,
+                    timestamp: Utc::now().timestamp(),
                 })
             } else {
-                (0, 0)
-            };
-
-            // Calculate block I/O
-            let (block_read, block_write) = if let Some(blkio) = &stats.blkio_stats.io_service_bytes_recursive {
-                blkio.iter().fold((0u64, 0u64), |(read, write), entry| {
-                    match entry.op.as_str() {
-                        "read" | "Read" => (read + entry.value, write),
-                        "write" | "Write" => (read, write + entry.value),
-                        _ => (read, write),
-                    }
-                })
-            } else {
-                (0, 0)
-            };
-
-            // Get container name (stats.name is a String, trim leading '/')
-            let name = stats.name.trim_start_matches('/').to_string();
-
-            Ok(ContainerStats {
-                container_id: container_id.to_string(),
-                name,
-                cpu_percent,
-                memory_usage,
-                memory_limit,
-                memory_percent,
-                network_rx,
-                network_tx,
-                block_read,
-                block_write,
-                timestamp: Utc::now().timestamp(),
-            })
-        } else {
-            Err("No stats available for container".to_string())
-        }
+                Err("No stats available for container".to_string())
+            }
+        }).await
     }
 
     async fn exec_command(
@@ -751,44 +807,44 @@ impl DockerDriver for LocalDockerDriver {
         container_id: &str,
         cmd: Vec<String>,
     ) -> Result<String, String> {
-        use bollard::exec::{CreateExecOptions, StartExecResults};
-        use futures::StreamExt;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "exec_command", async {
+            use bollard::exec::{CreateExecOptions, StartExecResults};
+            use futures::StreamExt;
 
-        // Create exec instance
-        let exec = self.client
-            .create_exec(
-                container_id,
-                CreateExecOptions {
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
-                    cmd: Some(cmd),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+            let exec = self.client
+                .create_exec(
+                    container_id,
+                    CreateExecOptions {
+                        attach_stdout: Some(true),
+                        attach_stderr: Some(true),
+                        cmd: Some(cmd),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())?;
 
-        // Start exec and collect output
-        let output = self.client
-            .start_exec(&exec.id, None)
-            .await
-            .map_err(|e| e.to_string())?;
+            let output = self.client
+                .start_exec(&exec.id, None)
+                .await
+                .map_err(|e| e.to_string())?;
 
-        let mut result = String::new();
-        if let StartExecResults::Attached { mut output, .. } = output {
-            while let Some(msg) = output.next().await {
-                match msg {
-                    Ok(log_output) => {
-                        result.push_str(&log_output.to_string());
-                    }
-                    Err(e) => {
-                        return Err(e.to_string());
+            let mut result = String::new();
+            if let StartExecResults::Attached { mut output, .. } = output {
+                while let Some(msg) = output.next().await {
+                    match msg {
+                        Ok(log_output) => {
+                            result.push_str(&log_output.to_string());
+                        }
+                        Err(e) => {
+                            return Err(e.to_string());
+                        }
                     }
                 }
             }
-        }
 
-        Ok(result)
+            Ok(result)
+        }).await
     }
 
     async fn exec_start_interactive(
@@ -913,18 +969,20 @@ impl DockerDriver for LocalDockerDriver {
     }
 
     async fn exec_resize(&self, exec_id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        use bollard::exec::ResizeExecOptions;
+        with_docker_timeout(DOCKER_TIMEOUT_SECS, "exec_resize", async {
+            use bollard::exec::ResizeExecOptions;
 
-        self.client
-            .resize_exec(
-                exec_id,
-                ResizeExecOptions {
-                    height: rows,
-                    width: cols,
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())
+            self.client
+                .resize_exec(
+                    exec_id,
+                    ResizeExecOptions {
+                        height: rows,
+                        width: cols,
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())
+        }).await
     }
 
     async fn exec_close(&self, exec_id: &str) -> Result<(), String> {
@@ -1368,17 +1426,20 @@ impl DockerDriver for LocalDockerDriver {
 
         // For Docker Hub, use docker search command
         let search_term = query.unwrap_or("");
-        let cmd = if registry.registry_type == RegistryType::DockerHub {
-            format!("docker search --limit 25 {}", search_term)
-        } else {
+
+        if registry.registry_type != RegistryType::DockerHub {
             // For other registries, we need to query the registry API
             // This is a simplified implementation
             return Ok(vec![]);
-        };
+        }
 
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
+        // Validate search term to prevent command injection
+        if !search_term.chars().all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '/' | ':' | '_')) {
+            return Err("Invalid search term: only alphanumeric characters, '.', '-', '/', ':', '_' are allowed".to_string());
+        }
+
+        let output = std::process::Command::new("docker")
+            .args(["search", "--limit", "25", "--format", "{{.Name}}\t{{.Description}}\t{{.StarCount}}\t{{.IsOfficial}}", search_term])
             .output()
             .map_err(|e| format!("Failed to search: {}", e))?;
 
@@ -1389,10 +1450,14 @@ impl DockerDriver for LocalDockerDriver {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut images = Vec::new();
 
-        // Parse docker search output (skip header line)
-        for line in stdout.lines().skip(1) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if !parts.is_empty() {
+        // Parse tab-separated docker search --format output
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.split('\t').collect();
+            if !parts.is_empty() && !parts[0].is_empty() {
                 images.push(RegistryImage {
                     name: parts[0].to_string(),
                     tags: vec!["latest".to_string()],
@@ -1410,60 +1475,61 @@ impl DockerDriver for LocalDockerDriver {
         registry_id: &str,
         images: Vec<String>,
     ) -> Result<(), String> {
-        let registries = load_registries()?;
-        let registry = registries.iter()
-            .find(|r| r.id == registry_id)
-            .ok_or_else(|| format!("Registry '{}' not found", registry_id))?;
+        with_docker_timeout(DOCKER_SLOW_TIMEOUT_SECS, "pull_from_registry", async {
+            let registries = load_registries()?;
+            let registry = registries.iter()
+                .find(|r| r.id == registry_id)
+                .ok_or_else(|| format!("Registry '{}' not found", registry_id))?;
 
-        // Update status to syncing
-        {
-            let mut regs = load_registries()?;
-            if let Some(reg) = regs.iter_mut().find(|r| r.id == registry_id) {
-                reg.status = RegistryStatus::Syncing;
-                reg.updated_at = chrono::Utc::now().timestamp();
-            }
-            save_registries(&regs)?;
-        }
-
-        // Pull each image
-        for image in &images {
-            let full_image = if registry.registry_type == RegistryType::DockerHub {
-                image.clone()
-            } else {
-                format!("{}/{}", registry.url.trim_start_matches("https://")
-                    .trim_start_matches("http://"), image)
-            };
-
-            let output = std::process::Command::new("docker")
-                .args(["pull", &full_image])
-                .output()
-                .map_err(|e| format!("Failed to pull {}: {}", full_image, e))?;
-
-            if !output.status.success() {
-                // Update status to error and return
+            // Update status to syncing
+            {
                 let mut regs = load_registries()?;
                 if let Some(reg) = regs.iter_mut().find(|r| r.id == registry_id) {
-                    reg.status = RegistryStatus::Error(
-                        String::from_utf8_lossy(&output.stderr).trim().to_string()
-                    );
+                    reg.status = RegistryStatus::Syncing;
                     reg.updated_at = chrono::Utc::now().timestamp();
                 }
                 save_registries(&regs)?;
-                return Err(format!("Failed to pull {}: {}",
-                    full_image, String::from_utf8_lossy(&output.stderr)));
             }
-        }
 
-        // Update status to connected and last_sync_at
-        let mut regs = load_registries()?;
-        if let Some(reg) = regs.iter_mut().find(|r| r.id == registry_id) {
-            reg.status = RegistryStatus::Connected;
-            reg.last_sync_at = Some(chrono::Utc::now().timestamp());
-            reg.updated_at = chrono::Utc::now().timestamp();
-        }
-        save_registries(&regs)?;
+            // Pull each image
+            for image in &images {
+                let full_image = if registry.registry_type == RegistryType::DockerHub {
+                    image.clone()
+                } else {
+                    format!("{}/{}", registry.url.trim_start_matches("https://")
+                        .trim_start_matches("http://"), image)
+                };
 
-        Ok(())
+                let output = std::process::Command::new("docker")
+                    .args(["pull", &full_image])
+                    .output()
+                    .map_err(|e| format!("Failed to pull {}: {}", full_image, e))?;
+
+                if !output.status.success() {
+                    let mut regs = load_registries()?;
+                    if let Some(reg) = regs.iter_mut().find(|r| r.id == registry_id) {
+                        reg.status = RegistryStatus::Error(
+                            String::from_utf8_lossy(&output.stderr).trim().to_string()
+                        );
+                        reg.updated_at = chrono::Utc::now().timestamp();
+                    }
+                    save_registries(&regs)?;
+                    return Err(format!("Failed to pull {}: {}",
+                        full_image, String::from_utf8_lossy(&output.stderr)));
+                }
+            }
+
+            // Update status to connected and last_sync_at
+            let mut regs = load_registries()?;
+            if let Some(reg) = regs.iter_mut().find(|r| r.id == registry_id) {
+                reg.status = RegistryStatus::Connected;
+                reg.last_sync_at = Some(chrono::Utc::now().timestamp());
+                reg.updated_at = chrono::Utc::now().timestamp();
+            }
+            save_registries(&regs)?;
+
+            Ok(())
+        }).await
     }
 
     async fn close(&self) {

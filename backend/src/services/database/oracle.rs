@@ -15,6 +15,7 @@ use crate::models::{
 };
 
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
+use super::utils::{escape_double_quote_identifier, validate_sql_identifier};
 
 /// Oracle database driver
 pub struct OracleDriver {
@@ -524,6 +525,9 @@ impl DatabaseDriver for OracleDriver {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
+        validate_sql_identifier(schema)?;
+        validate_sql_identifier(old_name)?;
+        validate_sql_identifier(new_name)?;
         let schema = schema.to_uppercase();
         let old_name = old_name.to_uppercase();
         let new_name = new_name.to_uppercase();
@@ -531,7 +535,9 @@ impl DatabaseDriver for OracleDriver {
         self.execute_blocking(move |conn| {
             let sql = format!(
                 "ALTER TABLE \"{}\".\"{}\" RENAME TO \"{}\"",
-                schema, old_name, new_name
+                escape_double_quote_identifier(&schema),
+                escape_double_quote_identifier(&old_name),
+                escape_double_quote_identifier(&new_name)
             );
             conn.execute(&sql, &[])
                 .map_err(|e| format!("Failed to rename table: {}", e))?;
@@ -542,11 +548,17 @@ impl DatabaseDriver for OracleDriver {
     }
 
     async fn drop_table(&self, schema: &str, table: &str) -> Result<(), String> {
+        validate_sql_identifier(schema)?;
+        validate_sql_identifier(table)?;
         let schema = schema.to_uppercase();
         let table = table.to_uppercase();
 
         self.execute_blocking(move |conn| {
-            let sql = format!("DROP TABLE \"{}\".\"{}\"", schema, table);
+            let sql = format!(
+                "DROP TABLE \"{}\".\"{}\"",
+                escape_double_quote_identifier(&schema),
+                escape_double_quote_identifier(&table)
+            );
             conn.execute(&sql, &[])
                 .map_err(|e| format!("Failed to drop table: {}", e))?;
             conn.commit().map_err(|e| format!("Commit failed: {}", e))?;

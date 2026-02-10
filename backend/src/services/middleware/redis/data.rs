@@ -93,13 +93,13 @@ async fn set_list(
         let mut args = vec![request.key.as_str()];
         args.extend(value_refs);
 
-        let mut conn = driver.get_connection().await;
+        let mut conn = driver.get_connection_clone();
         let mut cmd = redis::cmd("RPUSH");
         for arg in &args {
             cmd.arg(*arg);
         }
 
-        match &mut *conn {
+        match &mut conn {
             RedisConnection::Standalone(c) => {
                 let _: i64 = cmd.query_async(c).await.map_err(|e| format!("RPUSH failed: {}", e))?;
             }
@@ -131,13 +131,13 @@ async fn set_set(
         let mut args = vec![request.key.as_str()];
         args.extend(value_refs);
 
-        let mut conn = driver.get_connection().await;
+        let mut conn = driver.get_connection_clone();
         let mut cmd = redis::cmd("SADD");
         for arg in &args {
             cmd.arg(*arg);
         }
 
-        match &mut *conn {
+        match &mut conn {
             RedisConnection::Standalone(c) => {
                 let _: i64 = cmd.query_async(c).await.map_err(|e| format!("SADD failed: {}", e))?;
             }

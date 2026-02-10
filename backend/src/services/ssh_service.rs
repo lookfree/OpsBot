@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -14,6 +15,14 @@ use russh_keys::*;
 use uuid::Uuid;
 
 use crate::models::{JumpHostConfig, SessionStatus, SshAuthType, SshConnectRequest, SshSessionInfo, TerminalSize};
+
+/// Get current epoch seconds
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 /// SSH session handle for managing a single SSH connection
 pub struct SshSession {
@@ -28,6 +37,8 @@ pub struct SshSession {
     tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     // Store connection parameters for reconnection
     connect_request: Option<SshConnectRequest>,
+    /// Last activity timestamp (epoch seconds) for auto-cleanup
+    last_activity_secs: Arc<AtomicU64>,
 }
 
 /// Commands for interactive exec sessions
@@ -57,6 +68,7 @@ impl SshSession {
             channel: None,
             tx: None,
             connect_request: Some(request.clone()),
+            last_activity_secs: Arc::new(AtomicU64::new(now_secs())),
         }
     }
 
@@ -144,6 +156,17 @@ impl SshService {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             exec_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Validate SSH identifier (username, hostname) to prevent command injection
+    fn validate_ssh_identifier(value: &str, field_name: &str) -> Result<()> {
+        if value.is_empty() {
+            return Err(anyhow!("Invalid {}: cannot be empty", field_name));
+        }
+        if !value.chars().all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '@' | '-')) {
+            return Err(anyhow!("Invalid {}: contains forbidden characters", field_name));
+        }
+        Ok(())
     }
 
     /// Connect to SSH server with password authentication
@@ -439,6 +462,10 @@ impl SshService {
             )
             .await?;
 
+        // Validate SSH identifiers to prevent command injection
+        Self::validate_ssh_identifier(&request.username, "username")?;
+        Self::validate_ssh_identifier(&request.host, "host")?;
+
         // Execute ssh command to target
         let ssh_cmd = format!(
             "ssh -o StrictHostKeyChecking=no -p {} {}@{}",
@@ -496,6 +523,7 @@ impl SshService {
         if let Some(channel) = &session.channel {
             channel.data(data).await?;
         }
+        session.last_activity_secs.store(now_secs(), Ordering::Relaxed);
         Ok(())
     }
 
@@ -511,7 +539,71 @@ impl SshService {
                 .window_change(size.cols, size.rows, 0, 0)
                 .await?;
         }
+        session.last_activity_secs.store(now_secs(), Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Start background task to clean up stale SSH sessions
+    /// Sessions inactive for more than 30 minutes will be automatically closed.
+    pub fn start_cleanup_task(self: &Arc<Self>) {
+        const CLEANUP_INTERVAL_SECS: u64 = 300; // 5 minutes
+        const STALE_THRESHOLD_SECS: u64 = 1800; // 30 minutes
+
+        let service = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(
+                std::time::Duration::from_secs(CLEANUP_INTERVAL_SECS),
+            );
+            loop {
+                interval.tick().await;
+
+                let now = now_secs();
+
+                // Collect stale session IDs under a read lock
+                let stale_ids: Vec<String> = {
+                    let sessions = service.sessions.read().await;
+                    sessions
+                        .iter()
+                        .filter(|(_, s)| {
+                            let last = s.last_activity_secs.load(Ordering::Relaxed);
+                            now.saturating_sub(last) > STALE_THRESHOLD_SECS
+                        })
+                        .map(|(id, _)| id.clone())
+                        .collect()
+                };
+
+                if stale_ids.is_empty() {
+                    continue;
+                }
+
+                log::info!(
+                    "SSH cleanup: removing {} stale session(s): {:?}",
+                    stale_ids.len(),
+                    stale_ids
+                );
+
+                // Remove stale sessions under a write lock
+                let mut sessions = service.sessions.write().await;
+                for id in &stale_ids {
+                    if let Some(mut session) = sessions.remove(id) {
+                        session.status = SessionStatus::Disconnected;
+                        if let Some(channel) = session.channel.take() {
+                            let _ = channel.close().await;
+                        }
+                        if let Some(handle) = session.handle.take() {
+                            let _ = handle
+                                .disconnect(Disconnect::ByApplication, "Session timed out", "")
+                                .await;
+                        }
+                    }
+                }
+                drop(sessions);
+
+                // Also remove associated exec sessions
+                let mut exec_sessions = service.exec_sessions.write().await;
+                exec_sessions.retain(|_, es| !stale_ids.contains(&es.session_id));
+            }
+        });
     }
 
     /// Disconnect SSH session
@@ -614,13 +706,28 @@ impl SshService {
         let mut channel = handle.channel_open_session().await?;
         channel.exec(true, command).await?;
 
+        const MAX_EXEC_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
         let mut output = Vec::new();
+        let mut truncated = false;
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { data }) => {
+                    if output.len() + data.len() > MAX_EXEC_OUTPUT_SIZE {
+                        let remaining = MAX_EXEC_OUTPUT_SIZE - output.len();
+                        output.extend_from_slice(&data[..remaining]);
+                        truncated = true;
+                        break;
+                    }
                     output.extend_from_slice(&data);
                 }
                 Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    if output.len() + data.len() > MAX_EXEC_OUTPUT_SIZE {
+                        let remaining = MAX_EXEC_OUTPUT_SIZE - output.len();
+                        output.extend_from_slice(&data[..remaining]);
+                        truncated = true;
+                        break;
+                    }
                     output.extend_from_slice(&data);
                 }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
@@ -628,7 +735,11 @@ impl SshService {
             }
         }
 
-        Ok(String::from_utf8_lossy(&output).to_string())
+        let mut result = String::from_utf8_lossy(&output).to_string();
+        if truncated {
+            result.push_str("\n\n[Output truncated: exceeded 10MB limit]");
+        }
+        Ok(result)
     }
 
     /// Test SSH connection without creating a session

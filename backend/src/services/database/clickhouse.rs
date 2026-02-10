@@ -16,6 +16,7 @@ use crate::models::{
 };
 
 use super::traits::DatabaseDriver;
+use super::utils::{escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
 
 /// ClickHouse database driver
 pub struct ClickHouseDriver {
@@ -194,11 +195,20 @@ impl ClickHouseDriver {
         }
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
+        let total_rows = rows.len();
+        let truncated = total_rows > MAX_QUERY_ROWS;
+
+        if truncated {
+            rows.truncate(MAX_QUERY_ROWS);
+            rows.push(vec![serde_json::Value::String(
+                format!("[Result truncated: showing {} of {} rows]", MAX_QUERY_ROWS, total_rows),
+            )]);
+        }
 
         Ok(QueryResult {
             columns,
             rows,
-            affected_rows: 0,
+            affected_rows: total_rows as u64,
             execution_time_ms,
         })
     }
@@ -507,7 +517,13 @@ impl DatabaseDriver for ClickHouseDriver {
     }
 
     async fn get_table_ddl(&self, database: &str, table: &str) -> Result<String, String> {
-        let sql = format!("SHOW CREATE TABLE `{}`.`{}`", database, table);
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
+        let sql = format!(
+            "SHOW CREATE TABLE `{}`.`{}`",
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(table)
+        );
 
         let row = self
             .client
@@ -525,9 +541,15 @@ impl DatabaseDriver for ClickHouseDriver {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(old_name)?;
+        validate_sql_identifier(new_name)?;
         let sql = format!(
             "RENAME TABLE `{}`.`{}` TO `{}`.`{}`",
-            database, old_name, database, new_name
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(old_name),
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(new_name)
         );
 
         self.client
@@ -540,7 +562,13 @@ impl DatabaseDriver for ClickHouseDriver {
     }
 
     async fn drop_table(&self, database: &str, table: &str) -> Result<(), String> {
-        let sql = format!("DROP TABLE IF EXISTS `{}`.`{}`", database, table);
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
+        let sql = format!(
+            "DROP TABLE IF EXISTS `{}`.`{}`",
+            escape_backtick_identifier(database),
+            escape_backtick_identifier(table)
+        );
 
         self.client
             .query(&sql)

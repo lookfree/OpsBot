@@ -197,13 +197,13 @@ pub async fn delete_keys(driver: &RedisDriver, keys: Vec<String>) -> Result<i64,
 
     let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
 
-    let mut conn = driver.get_connection().await;
+    let mut conn = driver.get_connection_clone();
     let mut cmd = redis::cmd("DEL");
     for key in &key_refs {
         cmd.arg(*key);
     }
 
-    match &mut *conn {
+    match &mut conn {
         RedisConnection::Standalone(c) => cmd
             .query_async(c)
             .await

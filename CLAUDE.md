@@ -99,6 +99,15 @@ The project has an official resource site (`resources.zwd-opsbot.com`) maintaine
 - 添加新翻译时，需同时更新所有语言的 `.json` 文件
 - i18n 配置在 `front/i18n/index.ts` 中加载 JSON 文件
 
+## Git 提交规范
+- Co-Authored-By 使用: `Co-Authored-By: lookfree <etwuman@126.com>`
+- 提交信息格式遵循 Conventional Commits（如 `feat:`, `fix:`, `chore:`, `refactor:` 等）
+- 提交信息用英文撰写，简洁描述变更目的
+
 ## 文档管理
 - 设计文档位于 `spec/` 目录
 - 完成功能后更新对应 spec 文档的验收标准状态（将 `[ ]` 改为 `[x]`）
+
+## GitHub Submission Guidelines
+- When committing to GitHub, use the account: lookfree (wuhoujin68@gmail.com)
+- Do not include any Claude-related content

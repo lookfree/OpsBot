@@ -78,9 +78,8 @@ const createEncryptedStorageImpl = () => ({
         const encrypted = await encryptForStorage(value)
         localStorage.setItem(name, encrypted)
       } catch (error) {
-        console.error(`Failed to write encrypted storage [${name}]:`, error)
-        // 降级为明文存储
-        localStorage.setItem(name, value)
+        console.error(`[SECURITY WARNING] Failed to encrypt data for [${name}]:`, error)
+        throw error
       }
     })()
 

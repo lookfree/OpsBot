@@ -19,6 +19,7 @@ mod postgresql;
 mod session;
 mod sqlite;
 mod traits;
+pub(crate) mod utils;
 
 pub use session::DatabaseSession;
 pub use traits::DatabaseDriver;

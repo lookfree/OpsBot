@@ -20,6 +20,7 @@ use crate::models::{
 };
 
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
+use super::utils::{escape_bracket_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
 
 /// SQL Server database driver
 pub struct MssqlDriver {
@@ -170,6 +171,9 @@ impl DatabaseDriver for MssqlDriver {
             .map_err(|e| format!("Failed to get results: {}", e))?;
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
+        let total_rows = rows.len();
+        let truncated = total_rows > MAX_QUERY_ROWS;
+        let display_rows = if truncated { &rows[..MAX_QUERY_ROWS] } else { &rows[..] };
 
         // Build columns from first row if available
         let columns: Vec<QueryColumn> = if let Some(first_row) = rows.first() {
@@ -187,7 +191,7 @@ impl DatabaseDriver for MssqlDriver {
         };
 
         // Convert rows to JSON - iterate through each row's column data
-        let data: Vec<Vec<serde_json::Value>> = rows
+        let mut data: Vec<Vec<serde_json::Value>> = display_rows
             .iter()
             .map(|row| {
                 row.columns()
@@ -201,10 +205,16 @@ impl DatabaseDriver for MssqlDriver {
             })
             .collect();
 
+        if truncated {
+            data.push(vec![serde_json::Value::String(
+                format!("[Result truncated: showing {} of {} rows]", MAX_QUERY_ROWS, total_rows),
+            )]);
+        }
+
         Ok(QueryResult {
             columns,
             rows: data,
-            affected_rows: rows.len() as u64,
+            affected_rows: total_rows as u64,
             execution_time_ms,
         })
     }
@@ -641,13 +651,25 @@ impl DatabaseDriver for MssqlDriver {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
-        let sql = format!("EXEC sp_rename '{}', '{}'", old_name, new_name);
+        validate_sql_identifier(old_name)?;
+        validate_sql_identifier(new_name)?;
+        let sql = format!(
+            "EXEC sp_rename '{}', '{}'",
+            old_name.replace('\'', "''"),
+            new_name.replace('\'', "''")
+        );
         self.execute_update(&sql).await?;
         Ok(())
     }
 
     async fn drop_table(&self, database: &str, table: &str) -> Result<(), String> {
-        let sql = format!("DROP TABLE [{}].[dbo].[{}]", database, table);
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
+        let sql = format!(
+            "DROP TABLE [{}].[dbo].[{}]",
+            escape_bracket_identifier(database),
+            escape_bracket_identifier(table)
+        );
         self.execute_update(&sql).await?;
         Ok(())
     }
