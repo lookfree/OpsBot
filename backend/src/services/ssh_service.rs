@@ -706,7 +706,7 @@ impl SshService {
         const STALE_THRESHOLD_SECS: u64 = 1800; // 30 minutes
 
         let service = Arc::clone(self);
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let mut interval = tokio::time::interval(
                 std::time::Duration::from_secs(CLEANUP_INTERVAL_SECS),
             );
