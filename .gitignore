@@ -31,8 +31,9 @@ npm-debug.log*
 backend/target/
 node_modules
 
-# Spec documents (design docs, not for version control)
-spec/*.md
+# Spec documents and local dev guidelines (not for version control)
+spec/
+CLAUDE.md
 
 # Test files
 *.db
