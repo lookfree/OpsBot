@@ -35,6 +35,8 @@ pub struct DatabaseConnectRequest {
     /// Connection URL (e.g., postgres://user:pass@host:port/db?sslmode=require)
     /// When provided, this takes precedence over individual connection parameters
     pub connection_url: Option<String>,
+    /// Driver version override, e.g. "5.6" for MySQL legacy driver
+    pub driver_version: Option<String>,
 }
 
 /// Database connection info

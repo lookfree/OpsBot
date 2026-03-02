@@ -62,6 +62,7 @@ export function DatabaseConnectionDialog({
     password: string
     database: string
     connectionUrl: string
+    driverVersion: string
   }>({
     name: connection?.name || '',
     dbType: connection?.dbType || 'mysql',
@@ -71,6 +72,7 @@ export function DatabaseConnectionDialog({
     password: connection?.password || '',
     database: connection?.database || '',
     connectionUrl: connection?.connectionUrl || '',
+    driverVersion: connection?.driverVersion || '5.7+',
   })
 
   const [showPassword, setShowPassword] = useState(false)
@@ -94,6 +96,7 @@ export function DatabaseConnectionDialog({
           password: connection.password || '',
           database: connection.database || '',
           connectionUrl: connection.connectionUrl || '',
+          driverVersion: connection.driverVersion || '5.7+',
         })
       } else {
         setStep('select-type')
@@ -108,6 +111,7 @@ export function DatabaseConnectionDialog({
           password: '',
           database: '',
           connectionUrl: '',
+          driverVersion: '5.7+',
         })
       }
       setErrors({})
@@ -193,6 +197,7 @@ export function DatabaseConnectionDialog({
     if (!validate()) return
 
     const connectionUrlValue = connectionMode === 'url' ? formData.connectionUrl : undefined
+    const driverVersionValue = formData.dbType === 'mysql' ? formData.driverVersion : undefined
 
     if (connection) {
       updateConnection(connection.id, {
@@ -204,6 +209,7 @@ export function DatabaseConnectionDialog({
         password: formData.password || undefined,
         database: formData.database || undefined,
         connectionUrl: connectionUrlValue,
+        driverVersion: driverVersionValue,
       })
       onSave?.(connection)
     } else {
@@ -221,6 +227,7 @@ export function DatabaseConnectionDialog({
         password: formData.password || undefined,
         database: formData.database || undefined,
         connectionUrl: connectionUrlValue,
+        driverVersion: driverVersionValue,
       }
       const newConnection = createConnection(connectionData as any) as DatabaseConnection
       onSave?.(newConnection)
@@ -254,6 +261,7 @@ export function DatabaseConnectionDialog({
         password: formData.password || undefined,
         database: formData.database || undefined,
         connectionUrl: connectionMode === 'url' ? formData.connectionUrl : undefined,
+        driverVersion: formData.dbType === 'mysql' ? formData.driverVersion : undefined,
       })
       setTestResult({ success: true, message: t('database.connectionSuccess') })
     } catch (err) {
@@ -411,6 +419,32 @@ export function DatabaseConnectionDialog({
                     <p className="text-xs text-status-error mt-1">{errors.name}</p>
                   )}
                 </div>
+
+                {/* MySQL 驱动版本选择 */}
+                {formData.dbType === 'mysql' && (
+                  <div>
+                    <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                      {t('database.driverVersion', '驱动版本')}
+                    </label>
+                    <select
+                      value={formData.driverVersion}
+                      onChange={(e) => handleChange('driverVersion', e.target.value)}
+                      className={cn(
+                        'w-full px-3 py-2 rounded border text-sm',
+                        'focus:outline-none focus:border-accent-primary',
+                        inputBg, borderColor, textPrimary
+                      )}
+                    >
+                      <option value="5.7+">{t('database.driverV57', '5.7 / 8.x（推荐）')}</option>
+                      <option value="5.6">{t('database.driverV56', '5.6 及以下')}</option>
+                    </select>
+                    {formData.driverVersion === '5.6' && (
+                      <p className="text-xs mt-1 text-status-warning">
+                        {t('database.legacyDriverHint', 'MySQL 5.6 已停止官方维护，建议升级至 5.7+')}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* 连接模式切换 - 支持 URL 模式的数据库 */}
                 {(['postgresql', 'mysql', 'mariadb', 'clickhouse', 'kingbase'] as const).includes(formData.dbType as any) && !selectedDbType?.isFileDatabase && (

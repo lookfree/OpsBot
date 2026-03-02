@@ -94,6 +94,8 @@ export interface DatabaseConnection extends ConnectionBase {
   database?: string
   /** Connection URL (e.g., postgres://user:pass@host:port/db?sslmode=require) */
   connectionUrl?: string
+  /** Driver version override, e.g. "5.6" for MySQL legacy */
+  driverVersion?: string
   sshTunnel?: {
     enabled: boolean
     sshConnectionId?: string

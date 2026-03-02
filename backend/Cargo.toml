@@ -81,6 +81,7 @@ parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
 urlencoding = "2.1"
+mysql_async = { version = "0.34", optional = true }
 regex = "1.10"
 
 # Encryption (for storing credentials)
@@ -97,7 +98,7 @@ bb8 = "0.8"
 # Default features: cross-platform pure-Rust dependencies only
 # Native dependencies (oracle, dm, kafka) require system libraries and are opt-in
 # Note: kafka requires cmake to build rdkafka from source
-default = ["mssql", "clickhouse", "redis", "elasticsearch", "kafka"]
+default = ["mssql", "clickhouse", "redis", "elasticsearch", "kafka", "mysql-legacy"]
 
 # Platform-specific features requiring native libraries
 oracle = ["dep:oracle"]      # Requires Oracle Instant Client
@@ -106,6 +107,7 @@ kafka = ["dep:rdkafka"]      # Requires librdkafka (builds from source with cmak
 
 # Cross-platform features (pure Rust)
 mssql = ["dep:tiberius"]
+mysql-legacy = ["dep:mysql_async"]
 clickhouse = ["dep:clickhouse", "dep:reqwest"]
 redis = ["dep:redis"]
 elasticsearch = ["dep:elasticsearch", "dep:url"]

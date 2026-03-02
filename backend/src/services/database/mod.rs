@@ -13,6 +13,8 @@ mod mariadb;
 #[cfg(feature = "mssql")]
 mod mssql;
 mod mysql;
+#[cfg(feature = "mysql-legacy")]
+mod mysql_legacy;
 #[cfg(feature = "oracle")]
 mod oracle;
 mod postgresql;
@@ -46,6 +48,8 @@ use mariadb::MariaDBDriver;
 #[cfg(feature = "mssql")]
 use mssql::MssqlDriver;
 use mysql::MySqlDriver;
+#[cfg(feature = "mysql-legacy")]
+use mysql_legacy::MySqlLegacyDriver;
 #[cfg(feature = "oracle")]
 use oracle::OracleDriver;
 use postgresql::PostgreSqlDriver;
@@ -72,20 +76,21 @@ impl DatabaseService {
 
         let (driver, schema): (Arc<dyn DatabaseDriver>, Option<String>) = match request.db_type {
             DatabaseType::MySQL => {
-                let driver = if let Some(ref url) = request.connection_url {
-                    MySqlDriver::connect_url(url).await?
+                let driver: Arc<dyn DatabaseDriver> = if let Some(ref url) = request.connection_url {
+                    Arc::new(MySqlDriver::connect_url(url).await?)
                 } else {
                     let database = request.database.as_deref().unwrap_or("mysql");
-                    MySqlDriver::connect(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await?
+                    match request.driver_version.as_deref().unwrap_or("5.7+") {
+                        "5.6" => {
+                            #[cfg(feature = "mysql-legacy")]
+                            { Arc::new(MySqlLegacyDriver::connect(&request.host, request.port, &request.username, password, database).await?) }
+                            #[cfg(not(feature = "mysql-legacy"))]
+                            { return Err("MySQL 5.6 support is not enabled in this build".to_string()); }
+                        }
+                        _ => Arc::new(MySqlDriver::connect(&request.host, request.port, &request.username, password, database).await?),
+                    }
                 };
-                (Arc::new(driver), None)
+                (driver, None)
             }
             DatabaseType::PostgreSQL => {
                 let driver = if let Some(ref url) = request.connection_url {
@@ -260,14 +265,15 @@ impl DatabaseService {
                     MySqlDriver::test_connection_url(url).await
                 } else {
                     let database = request.database.as_deref().unwrap_or("mysql");
-                    MySqlDriver::test_connection(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await
+                    match request.driver_version.as_deref().unwrap_or("5.7+") {
+                        "5.6" => {
+                            #[cfg(feature = "mysql-legacy")]
+                            { MySqlLegacyDriver::test_connection(&request.host, request.port, &request.username, password, database).await }
+                            #[cfg(not(feature = "mysql-legacy"))]
+                            { Err("MySQL 5.6 support is not enabled in this build".to_string()) }
+                        }
+                        _ => MySqlDriver::test_connection(&request.host, request.port, &request.username, password, database).await,
+                    }
                 }
             }
             DatabaseType::PostgreSQL => {
