@@ -87,6 +87,53 @@ impl MySqlDriver {
         Ok(())
     }
 
+    /// Create a new MySQL connection using a connection URL
+    pub async fn connect_url(url: &str) -> Result<Self, String> {
+        if !url.starts_with("mysql://") {
+            return Err("Invalid MySQL URL: must start with mysql://".to_string());
+        }
+
+        log::info!("Connecting to MySQL via URL");
+
+        let pool = MySqlPoolOptions::new()
+            .max_connections(10)
+            .min_connections(2)
+            .connect(url)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to connect to MySQL via URL: {}", e);
+                "Failed to connect to MySQL: connection refused or invalid credentials".to_string()
+            })?;
+
+        log::info!("MySQL URL connection established successfully");
+        Ok(Self { pool })
+    }
+
+    /// Test connection using a connection URL
+    pub async fn test_connection_url(url: &str) -> Result<(), String> {
+        if !url.starts_with("mysql://") {
+            return Err("Invalid MySQL URL: must start with mysql://".to_string());
+        }
+
+        let pool = MySqlPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(10))
+            .connect(url)
+            .await
+            .map_err(|e| {
+                log::error!("MySQL URL connection test failed: {}", e);
+                "Connection test failed: connection refused or invalid credentials".to_string()
+            })?;
+
+        sqlx::query("SELECT 1")
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("Query test failed: {}", e))?;
+
+        pool.close().await;
+        Ok(())
+    }
+
     fn get_column_value(&self, row: &MySqlRow, index: usize, type_name: &str) -> serde_json::Value {
         match type_name {
             "BIGINT" | "INT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" => row

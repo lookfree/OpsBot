@@ -174,10 +174,4 @@ struct OpenAiModelsResponse {
 #[derive(Debug, Deserialize)]
 struct OpenAiModel {
     id: String,
-    #[serde(default)]
-    object: String,
-    #[serde(default)]
-    created: i64,
-    #[serde(default)]
-    owned_by: String,
 }

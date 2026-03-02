@@ -3,7 +3,7 @@
 //! This module provides AI service management on remote servers via SSH,
 //! including environment detection, Ollama model synchronization, and GPU monitoring.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::models::{GpuInfo, OllamaModel, OllamaModelDetails, RemoteAiEnvironment};

@@ -5,11 +5,33 @@
  * Supports row expand/collapse to view field details (like DBeaver).
  */
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, ChevronDown } from 'lucide-react'
+import { ChevronRight, ChevronDown, Copy, Check } from 'lucide-react'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { cn } from '@/lib/utils'
 import type { QueryResult, QueryColumn, ThemeStyles } from './types'
+
+function useCopyToClipboard() {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  const copy = useCallback(async (text: string, key?: string) => {
+    try {
+      await writeText(text)
+      setCopiedKey(key ?? text)
+      setTimeout(() => setCopiedKey(null), 1500)
+    } catch {
+      // fallback to browser API
+      try {
+        await navigator.clipboard.writeText(text)
+        setCopiedKey(key ?? text)
+        setTimeout(() => setCopiedKey(null), 1500)
+      } catch { /* ignore */ }
+    }
+  }, [])
+
+  return { copiedKey, copy }
+}
 
 interface ResultsTableProps {
   queryResult: QueryResult | null
@@ -101,6 +123,7 @@ function ResultRow({
   styles: ThemeStyles
 }) {
   const { borderColor, textPrimary, hoverBg } = styles
+  const { copiedKey, copy } = useCopyToClipboard()
 
   return (
     <>
@@ -115,15 +138,35 @@ function ResultRow({
             <ChevronRight className="w-4 h-4 inline text-dark-text-secondary" />
           )}
         </td>
-        {row.map((cell, j) => (
-          <td key={j} className={cn('px-3 py-1.5 border-b border-r max-w-xs truncate', borderColor, textPrimary)}>
-            {cell === null ? (
-              <span className="text-gray-400 italic">NULL</span>
-            ) : (
-              String(cell)
-            )}
-          </td>
-        ))}
+        {row.map((cell, j) => {
+          const cellValue = cell === null ? 'NULL' : String(cell)
+          const cellKey = `cell-${j}`
+          return (
+            <td
+              key={j}
+              className={cn(
+                'px-3 py-1.5 border-b border-r max-w-xs truncate select-text cursor-default',
+                borderColor, textPrimary
+              )}
+              title={cellValue}
+              onDoubleClick={(e) => {
+                e.stopPropagation()
+                copy(cellValue, cellKey)
+              }}
+            >
+              {cell === null ? (
+                <span className="text-gray-400 italic">NULL</span>
+              ) : (
+                String(cell)
+              )}
+              {copiedKey === cellKey && (
+                <span className="ml-1 text-green-400 text-xs">
+                  <Check className="w-3 h-3 inline" />
+                </span>
+              )}
+            </td>
+          )
+        })}
       </tr>
       {isExpanded && (
         <tr>
@@ -144,18 +187,45 @@ function RowDetailPanel({
   columns: QueryColumn[]
   styles: ThemeStyles
 }) {
+  const { t } = useTranslation()
   const { borderColor, textPrimary, textSecondary, bgSecondary } = styles
+  const { copiedKey, copy } = useCopyToClipboard()
 
   return (
     <div className={cn('p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2', bgSecondary)}>
-      {columns.map((col, i) => (
-        <div key={i} className={cn('flex flex-col p-2 rounded border', borderColor)}>
-          <span className={cn('text-xs font-medium mb-1', textSecondary)}>{col.name}</span>
-          <span className={cn('text-sm break-all', row[i] === null ? 'text-gray-400 italic' : textPrimary)}>
-            {row[i] === null ? 'NULL' : String(row[i])}
-          </span>
-        </div>
-      ))}
+      {columns.map((col, i) => {
+        const value = row[i] === null ? 'NULL' : String(row[i])
+        const fieldKey = `detail-${i}`
+        return (
+          <div key={i} className={cn('flex flex-col p-2 rounded border group', borderColor)}>
+            <div className="flex items-center justify-between mb-1">
+              <span className={cn('text-xs font-medium', textSecondary)}>{col.name}</span>
+              <button
+                className={cn(
+                  'p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity',
+                  'hover:bg-white/10'
+                )}
+                title={t('common.copy')}
+                onClick={() => copy(value, fieldKey)}
+              >
+                {copiedKey === fieldKey ? (
+                  <Check className="w-3.5 h-3.5 text-green-400" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5 text-dark-text-secondary" />
+                )}
+              </button>
+            </div>
+            <span
+              className={cn(
+                'text-sm break-all select-text cursor-text',
+                row[i] === null ? 'text-gray-400 italic' : textPrimary
+              )}
+            >
+              {value}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }

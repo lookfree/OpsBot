@@ -94,6 +94,57 @@ impl KingBaseDriver {
         Ok(())
     }
 
+    /// Create a new KingBase connection using a connection URL
+    /// Accepts kingbase://, postgres://, or postgresql:// schemes
+    pub async fn connect_url(url: &str) -> Result<Self, String> {
+        if !url.starts_with("kingbase://") && !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
+            return Err("Invalid KingBase URL: must start with kingbase://, postgres://, or postgresql://".to_string());
+        }
+
+        // kingbase:// scheme is not supported by sqlx, normalize to postgres://
+        let normalized = url.replacen("kingbase://", "postgres://", 1);
+
+        log::info!("Connecting to KingBase via URL");
+
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .min_connections(2)
+            .acquire_timeout(std::time::Duration::from_secs(10))
+            .connect(&normalized)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to connect to KingBase via URL: {}", e);
+                format!("Failed to connect to KingBase: {}", e)
+            })?;
+
+        log::info!("KingBase URL connection established successfully");
+        Ok(Self { pool })
+    }
+
+    /// Test connection using a connection URL
+    pub async fn test_connection_url(url: &str) -> Result<(), String> {
+        if !url.starts_with("kingbase://") && !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
+            return Err("Invalid KingBase URL: must start with kingbase://, postgres://, or postgresql://".to_string());
+        }
+
+        let normalized = url.replacen("kingbase://", "postgres://", 1);
+
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(10))
+            .connect(&normalized)
+            .await
+            .map_err(|e| format!("Connection test failed: {}", e))?;
+
+        sqlx::query("SELECT 1")
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("Query test failed: {}", e))?;
+
+        pool.close().await;
+        Ok(())
+    }
+
     fn get_column_value(&self, row: &PgRow, index: usize, type_name: &str) -> serde_json::Value {
         match type_name {
             "INT8" | "INT4" | "INT2" | "SERIAL" | "BIGSERIAL" => row

@@ -43,11 +43,6 @@ pub async fn run_compose_action(args: &[&str], operation: &str) -> Result<(), St
     Ok(())
 }
 
-/// Helper to build common compose project args
-pub fn project_args(project_name: &str) -> Vec<&str> {
-    vec!["compose", "-p", project_name]
-}
-
 /// Validate project name to prevent command injection
 pub fn validate_project_name(name: &str) -> Result<(), String> {
     // Docker compose project name rules:

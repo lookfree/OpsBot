@@ -90,20 +90,6 @@ impl SqliteDriver {
         Ok(())
     }
 
-    /// Create a new empty database file
-    pub async fn create_database(file_path: &str) -> Result<(), String> {
-        let url = format!("sqlite://{}?mode=rwc", file_path);
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(&url)
-            .await
-            .map_err(|e| format!("Failed to create database: {}", e))?;
-
-        pool.close().await;
-        Ok(())
-    }
-
     /// Get the database file name (without path)
     fn get_database_name(&self) -> String {
         std::path::Path::new(&self.file_path)

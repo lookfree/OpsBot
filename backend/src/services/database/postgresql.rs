@@ -141,8 +141,28 @@ impl PostgreSqlDriver {
             "JSON" | "JSONB" => row
                 .try_get::<serde_json::Value, _>(index)
                 .unwrap_or(serde_json::Value::Null),
+            "TIMESTAMPTZ" => row
+                .try_get::<chrono::DateTime<chrono::Utc>, _>(index)
+                .map(|dt| serde_json::Value::String(dt.to_rfc3339()))
+                .unwrap_or(serde_json::Value::Null),
+            "TIMESTAMP" => row
+                .try_get::<chrono::NaiveDateTime, _>(index)
+                .map(|dt| {
+                    serde_json::Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                })
+                .unwrap_or(serde_json::Value::Null),
+            "DATE" => row
+                .try_get::<chrono::NaiveDate, _>(index)
+                .map(|d| serde_json::Value::String(d.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+            "TIME" => row
+                .try_get::<chrono::NaiveTime, _>(index)
+                .map(|t| serde_json::Value::String(t.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+            // Custom types (enums, etc.): skip type check, decode raw bytes as UTF-8
             _ => row
                 .try_get::<String, _>(index)
+                .or_else(|_| row.try_get_unchecked::<String, _>(index))
                 .map(serde_json::Value::from)
                 .unwrap_or(serde_json::Value::Null),
         }
@@ -260,6 +280,7 @@ impl DatabaseDriver for PostgreSqlDriver {
     async fn get_tables(&self, _database: &str, schema: Option<&str>) -> Result<Vec<TableInfo>, String> {
         // For PostgreSQL, use schema parameter (default to 'public' if not specified)
         let schema_name = schema.unwrap_or("public");
+        log::info!("PostgreSQL: get_tables for schema='{}', database param='{}'", schema_name, _database);
         let sql = "SELECT table_name FROM information_schema.tables \
                    WHERE table_schema = $1 AND table_type = 'BASE TABLE' ORDER BY table_name";
 
@@ -451,6 +472,7 @@ impl DatabaseDriver for PostgreSqlDriver {
 
     async fn get_objects_count(&self, _database: &str, schema: Option<&str>) -> Result<DatabaseObjectsCount, String> {
         let schema_name = schema.unwrap_or("public");
+        log::info!("PostgreSQL: get_objects_count for schema='{}', database param='{}'", schema_name, _database);
         // Execute all 4 queries in parallel for better performance
         let (tables_result, views_result, functions_result, procedures_result) = tokio::join!(
             sqlx::query(
@@ -497,6 +519,9 @@ impl DatabaseDriver for PostgreSqlDriver {
             .map_err(|e| format!("Failed to count procedures: {}", e))?
             .try_get("cnt")
             .unwrap_or(0);
+
+        log::info!("PostgreSQL: objects count for schema='{}': tables={}, views={}, functions={}, procedures={}",
+            schema_name, tables, views, functions, procedures);
 
         Ok(DatabaseObjectsCount {
             tables: tables as usize,

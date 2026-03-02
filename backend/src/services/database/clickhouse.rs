@@ -52,14 +52,9 @@ impl ClickHouseDriver {
         }
 
         // Test connection
-        #[derive(Row, Deserialize)]
-        struct TestRow {
-            result: u8,
-        }
-
         client
-            .query("SELECT 1 as result")
-            .fetch_one::<TestRow>()
+            .query("SELECT 1")
+            .execute()
             .await
             .map_err(|e| format!("Connection failed: {}", e))?;
 
@@ -99,6 +94,50 @@ impl ClickHouseDriver {
         let driver = Self::connect(host, port, username, password, database).await?;
         drop(driver);
         Ok(())
+    }
+
+    /// Parse a ClickHouse connection URL into (username, password, host, port, database)
+    /// Supports: clickhouse://user:pass@host:8123/database
+    ///       or: http://user:pass@host:8123/database
+    fn parse_url(url: &str) -> Result<(String, String, String, u16, String), String> {
+        let rest = if url.starts_with("clickhouse://") {
+            &url["clickhouse://".len()..]
+        } else if url.starts_with("http://") {
+            &url["http://".len()..]
+        } else {
+            return Err("Invalid ClickHouse URL: must start with clickhouse:// or http://".to_string());
+        };
+
+        let (user_info, host_path) = rest
+            .split_once('@')
+            .ok_or_else(|| "Invalid URL: missing '@' separator".to_string())?;
+
+        let (username, password) = user_info
+            .split_once(':')
+            .map(|(u, p)| (u.to_string(), p.to_string()))
+            .unwrap_or_else(|| (user_info.to_string(), String::new()));
+
+        let (host_port, database) = host_path
+            .split_once('/')
+            .map(|(hp, db)| (hp, if db.is_empty() { "default" } else { db }))
+            .unwrap_or((host_path, "default"));
+
+        let (host, port_str) = host_port.split_once(':').unwrap_or((host_port, "8123"));
+        let port = port_str.parse::<u16>().map_err(|_| "Invalid port in URL".to_string())?;
+
+        Ok((username, password, host.to_string(), port, database.to_string()))
+    }
+
+    /// Create a new ClickHouse connection using a connection URL
+    pub async fn connect_url(url: &str) -> Result<Self, String> {
+        let (username, password, host, port, database) = Self::parse_url(url)?;
+        Self::connect(&host, port, &username, &password, &database).await
+    }
+
+    /// Test connection using a connection URL
+    pub async fn test_connection_url(url: &str) -> Result<(), String> {
+        let (username, password, host, port, database) = Self::parse_url(url)?;
+        Self::test_connection(&host, port, &username, &password, &database).await
     }
 
     /// Execute a query using HTTP API and return JSON results
@@ -261,7 +300,6 @@ struct CreateRow {
 struct EngineRow {
     engine: String,
     engine_full: String,
-    partition_key: String,
     sorting_key: String,
 }
 
@@ -609,7 +647,7 @@ impl DatabaseDriver for ClickHouseDriver {
     async fn get_table_options(&self, database: &str, table: &str) -> Result<TableOptions, String> {
         let sql = format!(
             r#"
-            SELECT engine, engine_full, partition_key, sorting_key
+            SELECT engine, engine_full, sorting_key
             FROM system.tables
             WHERE database = '{}' AND name = '{}'
         "#,

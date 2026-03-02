@@ -208,6 +208,4 @@ impl CloudApiClient for QwenClient {
 struct QwenErrorResponse {
     code: String,
     message: String,
-    #[serde(default)]
-    request_id: Option<String>,
 }

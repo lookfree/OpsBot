@@ -116,11 +116,17 @@ export function DatabaseConnectionDialog({
     }
   }, [open, connection])
 
+  const URL_SUPPORTED_DBS = ['postgresql', 'mysql', 'mariadb', 'clickhouse', 'kingbase'] as const
+
   const handleDbTypeSelect = useCallback((dbType: DatabaseTypeConfig) => {
     setSelectedDbType(dbType)
     // 根据数据库类型设置默认值
     const defaultUsername = dbType.id === 'oracle' ? 'SYSTEM' :
                            dbType.id === 'postgresql' ? 'postgres' : 'root'
+    // 切换到不支持 URL 模式的数据库时，重置连接方式为标准模式
+    if (!(URL_SUPPORTED_DBS as readonly string[]).includes(dbType.id)) {
+      setConnectionMode('standard')
+    }
     setFormData(prev => ({
       ...prev,
       dbType: dbType.id as DatabaseType,
@@ -257,6 +263,27 @@ export function DatabaseConnectionDialog({
     }
   }, [validate, formData, connection, connectionMode, t])
 
+  // URL 模式 placeholder 和提示文字
+  const getUrlPlaceholder = (dbType: string) => {
+    switch (dbType) {
+      case 'mysql': return 'mysql://user:password@host:3306/database'
+      case 'mariadb': return 'mysql://user:password@host:3306/database'
+      case 'clickhouse': return 'clickhouse://user:password@host:8123/database'
+      case 'kingbase': return 'kingbase://user:password@host:54321/database'
+      default: return 'postgres://user:password@host:5432/database?sslmode=require'
+    }
+  }
+
+  const getUrlHint = (dbType: string) => {
+    switch (dbType) {
+      case 'mysql': return t('database.urlHintMysql', '格式: mysql://用户名:密码@主机:端口/数据库')
+      case 'mariadb': return t('database.urlHintMariadb', '格式: mysql://用户名:密码@主机:端口/数据库')
+      case 'clickhouse': return t('database.urlHintClickhouse', '格式: clickhouse://用户名:密码@主机:端口/数据库')
+      case 'kingbase': return t('database.urlHintKingbase', '格式: kingbase://用户名:密码@主机:端口/数据库')
+      default: return t('database.urlHint', '格式: postgres://用户名:密码@主机:端口/数据库?sslmode=require')
+    }
+  }
+
   // 主题相关样式
   const dialogBg = isDark ? 'bg-dark-bg-primary' : 'bg-light-bg-primary'
   const borderColor = isDark ? 'border-dark-border' : 'border-light-border'
@@ -385,8 +412,8 @@ export function DatabaseConnectionDialog({
                   )}
                 </div>
 
-                {/* 连接模式切换 - 仅 PostgreSQL 支持 URL 模式 */}
-                {formData.dbType === 'postgresql' && !selectedDbType?.isFileDatabase && (
+                {/* 连接模式切换 - 支持 URL 模式的数据库 */}
+                {(['postgresql', 'mysql', 'mariadb', 'clickhouse', 'kingbase'] as const).includes(formData.dbType as any) && !selectedDbType?.isFileDatabase && (
                   <div className="flex items-center gap-4">
                     <label className={cn('text-sm font-medium', textSecondary)}>
                       {t('database.connectionMode', '连接方式')}:
@@ -421,7 +448,7 @@ export function DatabaseConnectionDialog({
                 )}
 
                 {/* URL 连接模式 */}
-                {connectionMode === 'url' && formData.dbType === 'postgresql' && (
+                {connectionMode === 'url' && (['postgresql', 'mysql', 'mariadb', 'clickhouse', 'kingbase'] as const).includes(formData.dbType as any) && (
                   <div>
                     <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
                       {t('database.connectionUrl', '连接 URL')}
@@ -430,7 +457,7 @@ export function DatabaseConnectionDialog({
                       type="text"
                       value={formData.connectionUrl}
                       onChange={(e) => handleChange('connectionUrl', e.target.value)}
-                      placeholder="postgres://user:password@host:5432/database?sslmode=require"
+                      placeholder={getUrlPlaceholder(formData.dbType)}
                       className={cn(
                         'w-full px-3 py-2 rounded border text-sm font-mono',
                         'focus:outline-none focus:border-accent-primary',
@@ -444,7 +471,7 @@ export function DatabaseConnectionDialog({
                       <p className="text-xs text-status-error mt-1">{errors.connectionUrl}</p>
                     )}
                     <p className={cn('text-xs mt-1', textSecondary)}>
-                      {t('database.urlHint', '格式: postgres://用户名:密码@主机:端口/数据库?sslmode=require')}
+                      {getUrlHint(formData.dbType)}
                     </p>
                   </div>
                 )}

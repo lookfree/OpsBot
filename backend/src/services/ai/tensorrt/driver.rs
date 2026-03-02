@@ -151,8 +151,6 @@ impl TensorRTDriver {
         #[derive(serde::Deserialize)]
         struct ModelData {
             id: String,
-            #[serde(default)]
-            object: String,
         }
 
         let models_response: ModelsResponse = response

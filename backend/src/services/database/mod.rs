@@ -72,15 +72,19 @@ impl DatabaseService {
 
         let (driver, schema): (Arc<dyn DatabaseDriver>, Option<String>) = match request.db_type {
             DatabaseType::MySQL => {
-                let database = request.database.as_deref().unwrap_or("mysql");
-                let driver = MySqlDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await?;
+                let driver = if let Some(ref url) = request.connection_url {
+                    MySqlDriver::connect_url(url).await?
+                } else {
+                    let database = request.database.as_deref().unwrap_or("mysql");
+                    MySqlDriver::connect(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await?
+                };
                 (Arc::new(driver), None)
             }
             DatabaseType::PostgreSQL => {
@@ -100,15 +104,19 @@ impl DatabaseService {
                 (Arc::new(driver), Some("public".to_string()))
             }
             DatabaseType::MariaDB => {
-                let database = request.database.as_deref().unwrap_or("mysql");
-                let driver = MariaDBDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await?;
+                let driver = if let Some(ref url) = request.connection_url {
+                    MariaDBDriver::connect_url(url).await?
+                } else {
+                    let database = request.database.as_deref().unwrap_or("mysql");
+                    MariaDBDriver::connect(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await?
+                };
                 (Arc::new(driver), None)
             }
             DatabaseType::SQLite => {
@@ -152,15 +160,19 @@ impl DatabaseService {
                 return Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string());
             }
             DatabaseType::KingBase => {
-                let database = request.database.as_deref().unwrap_or("TEST");
-                let driver = KingBaseDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await?;
+                let driver = if let Some(ref url) = request.connection_url {
+                    KingBaseDriver::connect_url(url).await?
+                } else {
+                    let database = request.database.as_deref().unwrap_or("TEST");
+                    KingBaseDriver::connect(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await?
+                };
                 (Arc::new(driver), Some("public".to_string()))
             }
             #[cfg(feature = "dm")]
@@ -182,15 +194,19 @@ impl DatabaseService {
             }
             #[cfg(feature = "clickhouse")]
             DatabaseType::ClickHouse => {
-                let database = request.database.as_deref().unwrap_or("default");
-                let driver = ClickHouseDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await?;
+                let driver = if let Some(ref url) = request.connection_url {
+                    ClickHouseDriver::connect_url(url).await?
+                } else {
+                    let database = request.database.as_deref().unwrap_or("default");
+                    ClickHouseDriver::connect(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await?
+                };
                 (Arc::new(driver), None)
             }
             #[cfg(not(feature = "clickhouse"))]
@@ -240,15 +256,19 @@ impl DatabaseService {
 
         match request.db_type {
             DatabaseType::MySQL => {
-                let database = request.database.as_deref().unwrap_or("mysql");
-                MySqlDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await
+                if let Some(ref url) = request.connection_url {
+                    MySqlDriver::test_connection_url(url).await
+                } else {
+                    let database = request.database.as_deref().unwrap_or("mysql");
+                    MySqlDriver::test_connection(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await
+                }
             }
             DatabaseType::PostgreSQL => {
                 if let Some(ref url) = request.connection_url {
@@ -266,15 +286,19 @@ impl DatabaseService {
                 }
             }
             DatabaseType::MariaDB => {
-                let database = request.database.as_deref().unwrap_or("mysql");
-                MariaDBDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await
+                if let Some(ref url) = request.connection_url {
+                    MariaDBDriver::test_connection_url(url).await
+                } else {
+                    let database = request.database.as_deref().unwrap_or("mysql");
+                    MariaDBDriver::test_connection(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await
+                }
             }
             DatabaseType::SQLite => {
                 let file_path = request.database.as_deref().unwrap_or(":memory:");
@@ -313,15 +337,19 @@ impl DatabaseService {
                 Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string())
             }
             DatabaseType::KingBase => {
-                let database = request.database.as_deref().unwrap_or("TEST");
-                KingBaseDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await
+                if let Some(ref url) = request.connection_url {
+                    KingBaseDriver::test_connection_url(url).await
+                } else {
+                    let database = request.database.as_deref().unwrap_or("TEST");
+                    KingBaseDriver::test_connection(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await
+                }
             }
             #[cfg(feature = "dm")]
             DatabaseType::DM => {
@@ -341,15 +369,19 @@ impl DatabaseService {
             }
             #[cfg(feature = "clickhouse")]
             DatabaseType::ClickHouse => {
-                let database = request.database.as_deref().unwrap_or("default");
-                ClickHouseDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await
+                if let Some(ref url) = request.connection_url {
+                    ClickHouseDriver::test_connection_url(url).await
+                } else {
+                    let database = request.database.as_deref().unwrap_or("default");
+                    ClickHouseDriver::test_connection(
+                        &request.host,
+                        request.port,
+                        &request.username,
+                        password,
+                        database,
+                    )
+                    .await
+                }
             }
             #[cfg(not(feature = "clickhouse"))]
             DatabaseType::ClickHouse => {

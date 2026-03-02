@@ -90,6 +90,58 @@ impl MariaDBDriver {
         Ok(())
     }
 
+    /// Create a new MariaDB connection using a connection URL
+    pub async fn connect_url(url: &str) -> Result<Self, String> {
+        if !url.starts_with("mysql://") && !url.starts_with("mariadb://") {
+            return Err("Invalid MariaDB URL: must start with mysql:// or mariadb://".to_string());
+        }
+
+        // mariadb:// scheme is not supported by sqlx, normalize to mysql://
+        let normalized = url.replacen("mariadb://", "mysql://", 1);
+
+        log::info!("Connecting to MariaDB via URL");
+
+        let pool = MySqlPoolOptions::new()
+            .max_connections(10)
+            .min_connections(2)
+            .connect(&normalized)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to connect to MariaDB via URL: {}", e);
+                "Failed to connect to MariaDB: connection refused or invalid credentials".to_string()
+            })?;
+
+        log::info!("MariaDB URL connection established successfully");
+        Ok(Self { pool })
+    }
+
+    /// Test connection using a connection URL
+    pub async fn test_connection_url(url: &str) -> Result<(), String> {
+        if !url.starts_with("mysql://") && !url.starts_with("mariadb://") {
+            return Err("Invalid MariaDB URL: must start with mysql:// or mariadb://".to_string());
+        }
+
+        let normalized = url.replacen("mariadb://", "mysql://", 1);
+
+        let pool = MySqlPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(10))
+            .connect(&normalized)
+            .await
+            .map_err(|e| {
+                log::error!("MariaDB URL connection test failed: {}", e);
+                "Connection test failed: connection refused or invalid credentials".to_string()
+            })?;
+
+        sqlx::query("SELECT 1")
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("Query test failed: {}", e))?;
+
+        pool.close().await;
+        Ok(())
+    }
+
     fn get_column_value(&self, row: &MySqlRow, index: usize, type_name: &str) -> serde_json::Value {
         match type_name {
             "BIGINT" | "INT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" => row
