@@ -1,6 +1,6 @@
 [package]
 name = "zwd-opsbot"
-version = "0.1.0"
+version = "0.1.5"
 description = "ZWD-OpsBot - Cross-platform Operations Terminal"
 authors = ["ZWD Team"]
 license = "MIT"
