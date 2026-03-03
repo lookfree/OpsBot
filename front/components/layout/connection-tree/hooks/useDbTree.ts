@@ -72,6 +72,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
         password: connection.password,
         database: connection.database,
         connectionUrl: connection.connectionUrl,
+        driverVersion: connection.driverVersion,
       })
 
       onStatusChange('connected')
@@ -128,6 +129,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
               username: connection.username,
               password: connection.password,
               database: dbNode.name,
+              driverVersion: connection.driverVersion,
             })
           }
 
