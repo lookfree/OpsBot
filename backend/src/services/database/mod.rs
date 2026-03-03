@@ -83,7 +83,7 @@ impl DatabaseService {
                     match request.driver_version.as_deref().unwrap_or("5.7+") {
                         "5.6" => {
                             #[cfg(feature = "mysql-legacy")]
-                            { Arc::new(MySqlLegacyDriver::connect(&request.host, request.port, &request.username, password, database).await?) }
+                            { Arc::new(MySqlLegacyDriver::connect(&request.host, request.port, &request.username, password, request.database.as_deref()).await?) }
                             #[cfg(not(feature = "mysql-legacy"))]
                             { return Err("MySQL 5.6 support is not enabled in this build".to_string()); }
                         }
@@ -268,7 +268,7 @@ impl DatabaseService {
                     match request.driver_version.as_deref().unwrap_or("5.7+") {
                         "5.6" => {
                             #[cfg(feature = "mysql-legacy")]
-                            { MySqlLegacyDriver::test_connection(&request.host, request.port, &request.username, password, database).await }
+                            { MySqlLegacyDriver::test_connection(&request.host, request.port, &request.username, password, request.database.as_deref()).await }
                             #[cfg(not(feature = "mysql-legacy"))]
                             { Err("MySQL 5.6 support is not enabled in this build".to_string()) }
                         }

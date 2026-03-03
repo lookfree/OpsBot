@@ -29,9 +29,9 @@ impl MySqlLegacyDriver {
         port: u16,
         username: &str,
         password: &str,
-        database: &str,
+        database: Option<&str>,
     ) -> Result<Self, String> {
-        log::info!("Connecting to MySQL (legacy driver): {}:{}/{}", host, port, database);
+        log::info!("Connecting to MySQL (legacy driver): {}:{}/{}", host, port, database.unwrap_or("(none)"));
 
         let constraints = PoolConstraints::new(2, 10)
             .ok_or_else(|| "Invalid pool constraints".to_string())?;
@@ -41,7 +41,7 @@ impl MySqlLegacyDriver {
             .tcp_port(port)
             .user(Some(username))
             .pass(Some(password))
-            .db_name(Some(database))
+            .db_name(database)
             .prefer_socket(false)
             .pool_opts(pool_opts);
         let pool = Pool::new(opts);
@@ -63,7 +63,7 @@ impl MySqlLegacyDriver {
         port: u16,
         username: &str,
         password: &str,
-        database: &str,
+        database: Option<&str>,
     ) -> Result<(), String> {
         let driver = Self::connect(host, port, username, password, database).await?;
         driver.pool.disconnect().await.map_err(|e| format!("Disconnect failed: {}", e))
