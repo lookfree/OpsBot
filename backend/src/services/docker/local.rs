@@ -859,6 +859,8 @@ impl DockerDriver for LocalDockerDriver {
         use futures::channel::mpsc;
         use futures::SinkExt;
 
+        log::info!("[Docker] exec_start_interactive: container={}, cmd={:?}, cols={}, rows={}", container_id, cmd, cols, rows);
+
         // Create exec instance with TTY
         let exec = self.client
             .create_exec(
@@ -873,23 +875,13 @@ impl DockerDriver for LocalDockerDriver {
                 },
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| { log::error!("[Docker] create_exec failed: {}", e); e.to_string() })?;
 
         let exec_id = exec.id.clone();
+        log::info!("[Docker] exec created: {}", exec_id);
 
-        // Resize to initial size
-        self.client
-            .resize_exec(
-                &exec_id,
-                ResizeExecOptions {
-                    height: rows,
-                    width: cols,
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Start exec with TTY
+        // Start exec with TTY (resize_exec must be called AFTER start_exec)
+        log::info!("[Docker] starting exec...");
         let start_result = self.client
             .start_exec(
                 &exec_id,
@@ -900,7 +892,9 @@ impl DockerDriver for LocalDockerDriver {
                 }),
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| { log::error!("[Docker] start_exec failed: {}", e); e.to_string() })?;
+
+        log::info!("[Docker] exec started successfully");
 
         // Create input channel for this session
         let (input_tx, mut input_rx) = mpsc::unbounded::<Vec<u8>>();
@@ -939,16 +933,34 @@ impl DockerDriver for LocalDockerDriver {
                                 break;
                             }
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            log::warn!("[Docker] exec output error: {}", e);
+                            break;
+                        }
                     }
                 }
 
+                log::info!("[Docker] exec stream ended: {}", exec_id_clone);
                 // Cleanup
                 input_handle.abort();
                 exec_sessions.write().remove(&exec_id_clone);
             });
+        } else {
+            log::warn!("[Docker] start_exec returned Detached (unexpected for interactive session)");
+            return Err("Exec session is detached, cannot start interactive terminal".to_string());
         }
 
+        // Resize PTY after exec is running (non-fatal - ResizeObserver handles this)
+        if cols > 0 && rows > 0 {
+            if let Err(e) = self.client
+                .resize_exec(&exec_id, ResizeExecOptions { height: rows, width: cols })
+                .await
+            {
+                log::warn!("[Docker] Initial resize failed (will be handled by frontend ResizeObserver): {}", e);
+            }
+        }
+
+        log::info!("[Docker] exec_start_interactive returning exec_id={}", exec_id);
         Ok(exec_id)
     }
 
