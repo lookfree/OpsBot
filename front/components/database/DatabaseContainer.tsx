@@ -160,6 +160,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
         password: connection.password,
         database: connection.database,
         connectionUrl: connection.connectionUrl,
+        driverVersion: connection.driverVersion,
       })
 
       setIsConnected(true)
@@ -176,8 +177,11 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
       }
       setDatabases(dbs)
 
-      if (dbs.length > 0) {
-        setSelectedDatabase(dbs[0])
+      // Prefer tab's database, fallback to first in list
+      const tabDb = tabData?.database as string | undefined
+      const defaultDb = tabDb && dbs.includes(tabDb) ? tabDb : dbs[0]
+      if (defaultDb) {
+        setSelectedDatabase(defaultDb)
       }
     } catch (err) {
       setError(String(err))

@@ -249,34 +249,51 @@ impl DatabaseDriver for MySqlLegacyDriver {
     }
 
     async fn get_objects_count(&self, database: &str, _schema: Option<&str>) -> Result<DatabaseObjectsCount, String> {
+        log::info!("[MySQL5.6] get_objects_count for database: {}", database);
         let mut conn = self.pool.get_conn().await
-            .map_err(|e| format!("Failed to get connection: {}", e))?;
+            .map_err(|e| {
+                log::error!("[MySQL5.6] Failed to get connection for get_objects_count: {}", e);
+                format!("Failed to get connection: {}", e)
+            })?;
         let db = database.to_string();
 
-        let tables: i64 = conn.exec_first(
+        let tables: u64 = conn.exec_first(
             "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_TYPE='BASE TABLE'",
             (&db,)
-        ).await.map_err(|e| format!("Query failed: {}", e))?
-            .and_then(|mut r: Row| r.take::<i64, _>(0)).unwrap_or(0);
+        ).await.map_err(|e| {
+            log::error!("[MySQL5.6] Tables count query failed: {}", e);
+            format!("Query failed: {}", e)
+        })?
+            .and_then(|mut r: Row| r.take::<u64, _>(0)).unwrap_or(0);
 
-        let views: i64 = conn.exec_first(
+        let views: u64 = conn.exec_first(
             "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA=?",
             (&db,)
-        ).await.map_err(|e| format!("Query failed: {}", e))?
-            .and_then(|mut r: Row| r.take::<i64, _>(0)).unwrap_or(0);
+        ).await.map_err(|e| {
+            log::error!("[MySQL5.6] Views count query failed: {}", e);
+            format!("Query failed: {}", e)
+        })?
+            .and_then(|mut r: Row| r.take::<u64, _>(0)).unwrap_or(0);
 
-        let functions: i64 = conn.exec_first(
+        let functions: u64 = conn.exec_first(
             "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_TYPE='FUNCTION'",
             (&db,)
-        ).await.map_err(|e| format!("Query failed: {}", e))?
-            .and_then(|mut r: Row| r.take::<i64, _>(0)).unwrap_or(0);
+        ).await.map_err(|e| {
+            log::error!("[MySQL5.6] Functions count query failed: {}", e);
+            format!("Query failed: {}", e)
+        })?
+            .and_then(|mut r: Row| r.take::<u64, _>(0)).unwrap_or(0);
 
-        let procedures: i64 = conn.exec_first(
+        let procedures: u64 = conn.exec_first(
             "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_TYPE='PROCEDURE'",
             (&db,)
-        ).await.map_err(|e| format!("Query failed: {}", e))?
-            .and_then(|mut r: Row| r.take::<i64, _>(0)).unwrap_or(0);
+        ).await.map_err(|e| {
+            log::error!("[MySQL5.6] Procedures count query failed: {}", e);
+            format!("Query failed: {}", e)
+        })?
+            .and_then(|mut r: Row| r.take::<u64, _>(0)).unwrap_or(0);
 
+        log::info!("[MySQL5.6] get_objects_count result: tables={}, views={}, functions={}, procedures={}", tables, views, functions, procedures);
         Ok(DatabaseObjectsCount {
             tables: tables as usize,
             views: views as usize,
