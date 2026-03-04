@@ -133,10 +133,8 @@ export function ContainerTerminal({
 
       const unlisten = await listen<number[]>(eventName, (event) => {
         if (terminalRef.current) {
-          const bytes = new Uint8Array(event.payload)
-          const decoder = new TextDecoder('utf-8')
-          const text = decoder.decode(bytes)
-          terminalRef.current.write(text)
+          // Write raw bytes directly - xterm handles UTF-8 decoding internally
+          terminalRef.current.write(new Uint8Array(event.payload))
         }
       })
 
@@ -397,7 +395,7 @@ export function ContainerTerminal({
         <div
           ref={containerRef}
           className={cn(
-            'w-full h-full overflow-hidden p-2',
+            'absolute inset-0',
             isDark ? 'bg-[#1a1a1a]' : 'bg-white'
           )}
         />
