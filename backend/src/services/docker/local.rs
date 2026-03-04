@@ -871,6 +871,10 @@ impl DockerDriver for LocalDockerDriver {
                     attach_stderr: Some(true),
                     tty: Some(true),
                     cmd: Some(cmd),
+                    env: Some(vec![
+                        "TERM=xterm-256color".to_string(),
+                        "COLORTERM=truecolor".to_string(),
+                    ]),
                     ..Default::default()
                 },
             )

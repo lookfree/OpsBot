@@ -111,16 +111,17 @@ export function ContainerTerminal({
   // Store unlisten function for cleanup
   const unlistenRef = useRef<UnlistenFn | null>(null)
 
-  // Start exec session
-  const startExec = useCallback(async (term: XTerm) => {
+  // Start exec session (shellOverride allows passing shell directly without waiting for state update)
+  const startExec = useCallback(async (term: XTerm, shellOverride?: string) => {
     setConnecting(true)
     setError(null)
 
+    const shellToUse = shellOverride ?? shell
     try {
       const execId = await dockerExecStart(
         connectionId,
         containerId,
-        [shell],
+        [shellToUse],
         term.cols,
         term.rows
       )
@@ -323,7 +324,8 @@ export function ContainerTerminal({
 
     if (terminalRef.current) {
       terminalRef.current.clear()
-      startExec(terminalRef.current)
+      // Pass newShell directly - React state update is async, shell from closure is still old value
+      startExec(terminalRef.current, newShell)
     }
   }, [connectionId, startExec])
 
