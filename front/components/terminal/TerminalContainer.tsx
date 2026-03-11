@@ -107,6 +107,7 @@ function base64ToUtf8(base64: string): string {
 interface TerminalContainerProps {
   sessionId?: string
   className?: string
+  isActive?: boolean
   onConnected?: () => void
   onDisconnected?: () => void
   onError?: (error: string) => void
@@ -118,6 +119,7 @@ export function TerminalContainer({
   onConnected,
   onDisconnected,
   onError,
+  isActive,
 }: TerminalContainerProps) {
   const { t } = useTranslation()
   const { theme } = useThemeStore()
@@ -145,7 +147,9 @@ export function TerminalContainer({
       cursorStyle: 'block',
       scrollback: 10000,
       allowProposedApi: true,
-      rightClickSelectsWord: true, // 禁用右键粘贴菜单，使用 Ctrl+V
+      rightClickSelectsWord: true,
+      // 让 xterm 接管所有普通键盘输入，不要覆盖 macOS 的 Cmd+C/V
+      macOptionIsMeta: true,
     })
 
     // Add addons
@@ -167,6 +171,8 @@ export function TerminalContainer({
 
     terminal.open(containerRef.current)
     fitAddon.fit()
+    // 延迟 focus 确保 xterm 内部 textarea 已挂载到 DOM
+    setTimeout(() => terminal.focus(), 50)
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
@@ -202,9 +208,58 @@ export function TerminalContainer({
       }
     })
 
+    // 用 customKeyEventHandler 只拦截 Cmd+C 复制，Cmd+V 粘贴通过 paste 事件处理
+    terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      // Cmd+C：有选中内容时只做复制，不发送 ^C 给终端；无选中时正常发送 ^C
+      if (e.metaKey && e.key === 'c') {
+        const selection = terminal.getSelection()
+        if (selection) {
+          if (e.type === 'keydown') {
+            writeText(selection).catch(() => {})
+          }
+          return false
+        }
+        return true
+      }
+      // Ctrl+C：始终放行（终端中断信号）
+      if (e.ctrlKey && e.key === 'c') {
+        return true
+      }
+      // Cmd+V / Ctrl+V：完全交给 paste 事件处理，这里只拦截不执行
+      if (e.metaKey && e.key === 'v') {
+        return false
+      }
+      return true
+    })
+
+    // 监听 paste 事件处理粘贴，这是唯一的粘贴入口，防止重复
+    const handlePasteEvent = (e: ClipboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const text = e.clipboardData?.getData('text')
+      if (!text || !currentSessionId.current) return
+      const sid = currentSessionId.current
+      const CHUNK_SIZE = 4096
+      const sendChunks = async () => {
+        for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+          const chunk = text.slice(i, i + CHUNK_SIZE)
+          await invoke('ssh_send_data', {
+            sessionId: sid,
+            data: utf8ToBase64(chunk),
+          }).catch(() => {})
+          if (i + CHUNK_SIZE < text.length) {
+            await new Promise((r) => setTimeout(r, 20))
+          }
+        }
+      }
+      sendChunks()
+    }
+    containerRef.current?.addEventListener('paste', handlePasteEvent)
+
     // Cleanup
     return () => {
       resizeObserver.disconnect()
+      containerRef.current?.removeEventListener('paste', handlePasteEvent)
       terminal.dispose()
     }
   }, [])
@@ -254,6 +309,8 @@ export function TerminalContainer({
       unlistenData = dataListener
       unlistenStatus = statusListener
       onConnected?.()
+      // 连接建立后自动聚焦终端，确保键盘可以立即输入
+      setTimeout(() => terminalRef.current?.focus(), 100)
     }
 
     setupListeners()
@@ -273,44 +330,24 @@ export function TerminalContainer({
     }
   }, [fontSize])
 
-  // Copy & Paste handlers
+  // Tab 激活时重新 fit，修正从 display:none 切换回来后终端尺寸错误的问题
   useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
-        const selection = terminalRef.current?.getSelection()
-        if (selection) {
-          e.preventDefault()
-          await writeText(selection).catch(() => {})
+    if (isActive && fitAddonRef.current) {
+      // 等待 CSS display 变更生效后再 fit
+      requestAnimationFrame(() => {
+        fitAddonRef.current?.fit()
+        if (currentSessionId.current && terminalRef.current) {
+          invoke('ssh_resize', {
+            sessionId: currentSessionId.current,
+            cols: terminalRef.current.cols,
+            rows: terminalRef.current.rows,
+          }).catch(() => { /* ignore */ })
         }
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
-        e.preventDefault()
-        try {
-          console.log('Reading clipboard...')
-          const text = await readText()
-          console.log('Clipboard text:', text)
-          if (text && currentSessionId.current) {
-            const base64Data = utf8ToBase64(text)
-            console.log('Sending data to session:', currentSessionId.current)
-            await invoke('ssh_send_data', {
-              sessionId: currentSessionId.current,
-              data: base64Data,
-            })
-            console.log('Data sent successfully')
-          } else {
-            console.log('No text or no session:', { text, sessionId: currentSessionId.current })
-          }
-        } catch (err) {
-          console.error('Paste error:', err)
-          onError?.(`Failed to paste: ${err}`)
-        }
-      }
+      })
     }
+  }, [isActive])
 
-    const container = containerRef.current
-    container?.addEventListener('keydown', handleKeyDown)
-    return () => container?.removeEventListener('keydown', handleKeyDown)
-  }, [onError])
+  // Copy & Paste 已通过 xterm customKeyEventHandler 处理，无需额外监听器
 
   // 清屏
   const handleClear = useCallback(() => {
@@ -323,12 +360,25 @@ export function TerminalContainer({
   const handlePaste = useCallback(async () => {
     try {
       const text = await readText()
-      if (text && currentSessionId.current) {
-        const base64Data = utf8ToBase64(text)
+      if (!text || !currentSessionId.current) return
+      const sessionId = currentSessionId.current
+      const CHUNK_SIZE = 4096
+      if (text.length <= CHUNK_SIZE) {
         await invoke('ssh_send_data', {
-          sessionId: currentSessionId.current,
-          data: base64Data,
+          sessionId,
+          data: utf8ToBase64(text),
         })
+      } else {
+        for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+          const chunk = text.slice(i, i + CHUNK_SIZE)
+          await invoke('ssh_send_data', {
+            sessionId,
+            data: utf8ToBase64(chunk),
+          })
+          if (i + CHUNK_SIZE < text.length) {
+            await new Promise((r) => setTimeout(r, 20))
+          }
+        }
       }
     } catch (err) {
       console.error('Paste error:', err)
@@ -477,7 +527,11 @@ export function TerminalContainer({
         {/* Terminal with context menu */}
         <ContextMenu.Root>
           <ContextMenu.Trigger asChild>
-            <div ref={containerRef} className={cn("flex-1 overflow-hidden", isDark ? "bg-[#1a1a1a]" : "bg-white")} />
+            <div
+              ref={containerRef}
+              className={cn("flex-1 overflow-hidden", isDark ? "bg-[#1a1a1a]" : "bg-white")}
+              onClick={() => terminalRef.current?.focus()}
+            />
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
             <ContextMenu.Content className={cn(

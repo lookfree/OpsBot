@@ -130,6 +130,13 @@ export async function sshHostKeyResponse(sessionId: string, accept: boolean): Pr
 }
 
 /**
+ * Read a PEM/private key file and return its content
+ */
+export async function readPemFile(path: string): Promise<string> {
+  return await invoke<string>('read_pem_file', { path })
+}
+
+/**
  * Listen for SSH data events
  */
 export async function listenSshData(

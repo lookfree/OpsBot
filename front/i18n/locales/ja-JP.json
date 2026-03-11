@@ -205,7 +205,12 @@
       "trustPrompt": "このホストを信頼して接続を続行しますか？",
       "accept": "承認して接続",
       "reject": "拒否"
-    }
+    },
+    "selectPemFile": "PEM/キーファイルを選択",
+    "privateKeyHint": "右のアイコンをクリックして .pem / .key ファイルを選ぶか、秘密鍵の内容を直接貼り付けてください",
+    "dropZoneHint": "クリックまたはドラッグ＆ドロップでキーファイルを追加",
+    "dropZoneSupport": ".pem / .key / .ppk に対応",
+    "dropZoneReplace": "クリックまたは新しいファイルをドロップして置き換え"
   },
   "terminal": {
     "paste": "貼り付け",
@@ -1037,7 +1042,6 @@
     "composeEditor": "コンポーズファイル",
     "allServices": "すべてのサービス",
     "service": "サービス",
-    "running": "実行中",
     "registries": "レジストリ",
     "registryName": "レジストリ名",
     "registryType": "タイプ",
@@ -1052,12 +1056,10 @@
     "customRegistry": "カスタム",
     "downloadLimit": "ダウンロード制限",
     "skipTlsVerify": "TLS検証をスキップ",
-    "testConnection": "接続テスト",
     "searchImages": "イメージを検索",
     "searchPlaceholder": "イメージ名を入力して検索...",
     "noImagesFound": "イメージが見つかりません",
     "imageName": "イメージ名",
-    "imageTags": "タグ",
     "selectedImages": "{{count}} 個のイメージを選択中",
     "pullImages": "イメージをプル",
     "statusConnected": "接続済み",
@@ -1215,7 +1217,7 @@
     },
     "mcp": {
       "title": "MCP サーバー",
-      "description": "Model Context Protocol",
+      "description": "説明",
       "servers": "サーバー",
       "noServers": "MCP サーバーがありません",
       "createServer": "サーバーを作成",
@@ -1223,7 +1225,6 @@
       "deleteServer": "サーバーを削除",
       "serverName": "サーバー名",
       "serverNamePlaceholder": "サーバー名を入力",
-      "description": "説明",
       "descriptionPlaceholder": "説明（任意）",
       "transportType": "トランスポートタイプ",
       "command": "コマンド",

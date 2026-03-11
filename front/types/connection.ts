@@ -57,6 +57,7 @@ export interface SSHConnection extends ConnectionBase {
   authType: AuthType
   password?: string
   privateKey?: string
+  privateKeyPath?: string
   passphrase?: string
   jumpHost?: {
     host: string

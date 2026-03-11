@@ -67,3 +67,34 @@ pub async fn append_to_file(path: String, content: String) -> Result<(), String>
 
     Ok(())
 }
+
+/// Read a PEM/private key file and return its text content
+///
+/// Only `.pem` and `.key` files are accepted, and path traversal is rejected.
+#[tauri::command]
+pub async fn read_pem_file(path: String) -> Result<String, String> {
+    let path = Path::new(&path);
+
+    // Reject path traversal
+    if path
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err("Path traversal not allowed".to_string());
+    }
+
+    // Only allow .pem and .key extensions
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+    match ext.as_deref() {
+        Some("pem") | Some("key") | Some("ppk") => {}
+        _ => return Err("Only .pem, .key, and .ppk files are supported".to_string()),
+    }
+
+    std::fs::read_to_string(path).map_err(|e| {
+        log::error!("Failed to read PEM file '{}': {}", path.display(), e);
+        format!("Failed to read file: {}", e)
+    })
+}

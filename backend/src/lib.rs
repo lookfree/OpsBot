@@ -345,6 +345,7 @@ pub fn run() {
             commands::ai_remote_get_gpu_processes,
             // Utility commands
             commands::append_to_file,
+            commands::read_pem_file,
             // Crypto commands (password-based for export/import)
             commands::encrypt_config,
             commands::decrypt_config,

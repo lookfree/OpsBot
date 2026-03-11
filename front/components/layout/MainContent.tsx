@@ -248,22 +248,33 @@ export function MainContent({ className }: MainContentProps) {
       {/* 标签页栏 */}
       <TabBar />
 
-      {/* 内容区 */}
-      <div className="flex-1 overflow-auto">
+      {/* 内容区：所有 tab 同时保持挂载，用 CSS display 控制显隐，防止 xterm 被销毁 */}
+      <div className="flex-1 overflow-auto relative">
         <ContentErrorBoundary>
-          {activeTab ? (
-            <TabContent
-              tab={activeTab}
-              onConnect={() => handleConnect(activeTab)}
-              onDisconnected={() => {
-                if (activeTab.connectionId) {
-                  setConnectionStatus(activeTab.connectionId, 'disconnected')
-                  updateTab(activeTab.id, { status: 'disconnected' })
-                }
-              }}
-            />
-          ) : (
+          {tabs.length === 0 ? (
             <EmptyState onNewConnection={() => setShowSshDialog(true)} />
+          ) : (
+            <>
+              {tabs.map((tab) => (
+                <div
+                  key={tab.id}
+                  className="absolute inset-0"
+                  style={{ display: tab.id === activeTabId ? 'flex' : 'none', flexDirection: 'column' }}
+                >
+                  <TabContent
+                    tab={tab}
+                    onConnect={() => handleConnect(tab)}
+                    isActive={tab.id === activeTabId}
+                    onDisconnected={() => {
+                      if (tab.connectionId) {
+                        setConnectionStatus(tab.connectionId, 'disconnected')
+                        updateTab(tab.id, { status: 'disconnected' })
+                      }
+                    }}
+                  />
+                </div>
+              ))}
+            </>
           )}
         </ContentErrorBoundary>
       </div>
@@ -282,10 +293,12 @@ function TabContent({
   tab,
   onConnect,
   onDisconnected,
+  isActive,
 }: {
   tab: Tab
   onConnect: () => void
   onDisconnected?: () => void
+  isActive?: boolean
 }) {
   const { t } = useTranslation()
   const sessionId = tab.data?.sessionId as string | undefined
@@ -300,6 +313,7 @@ function TabContent({
           key={tab.id}
           sessionId={sessionId}
           className="h-full"
+          isActive={isActive}
           onDisconnected={onDisconnected}
         />
       )

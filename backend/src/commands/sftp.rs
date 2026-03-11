@@ -24,9 +24,9 @@ pub async fn sftp_open(
     let ssh_service = &ssh_state.0;
     let sftp_service = &sftp_state.0;
 
-    // Check if SFTP session already exists
+    // If SFTP session already exists, close it first to handle stale sessions
     if sftp_service.has_sftp_session(&session_id).await {
-        return Ok(());
+        let _ = sftp_service.close_sftp(&session_id).await;
     }
 
     // Open SFTP channel on existing SSH connection

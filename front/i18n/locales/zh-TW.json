@@ -205,7 +205,12 @@
       "trustPrompt": "是否信任此主機並繼續連線？",
       "accept": "接受並連線",
       "reject": "拒絕"
-    }
+    },
+    "selectPemFile": "選擇 PEM/金鑰檔案",
+    "privateKeyHint": "點擊右側圖示選擇 .pem / .key 檔案，或直接貼上私鑰內容",
+    "dropZoneHint": "點擊選擇或拖入金鑰檔案",
+    "dropZoneSupport": "支援 .pem / .key / .ppk",
+    "dropZoneReplace": "點擊或拖入新檔案替換"
   },
   "terminal": {
     "paste": "貼上",
@@ -1037,7 +1042,6 @@
     "composeEditor": "編排檔案",
     "allServices": "所有服務",
     "service": "服務",
-    "running": "執行中",
     "registries": "倉庫",
     "registryName": "倉庫名稱",
     "registryType": "類型",
@@ -1052,12 +1056,10 @@
     "customRegistry": "自訂",
     "downloadLimit": "下載限制",
     "skipTlsVerify": "跳過 TLS 驗證",
-    "testConnection": "測試連線",
     "searchImages": "搜尋映像",
     "searchPlaceholder": "輸入映像名稱搜尋...",
     "noImagesFound": "未找到映像",
     "imageName": "映像名稱",
-    "imageTags": "標籤",
     "selectedImages": "已選擇 {{count}} 個映像",
     "pullImages": "拉取映像",
     "statusConnected": "已連線",
@@ -1215,7 +1217,7 @@
     },
     "mcp": {
       "title": "MCP Server",
-      "description": "Model Context Protocol",
+      "description": "描述",
       "servers": "伺服器",
       "noServers": "暫無 MCP 伺服器",
       "createServer": "建立伺服器",
@@ -1223,7 +1225,6 @@
       "deleteServer": "刪除伺服器",
       "serverName": "伺服器名稱",
       "serverNamePlaceholder": "輸入伺服器名稱",
-      "description": "描述",
       "descriptionPlaceholder": "選填描述",
       "transportType": "傳輸類型",
       "command": "命令",

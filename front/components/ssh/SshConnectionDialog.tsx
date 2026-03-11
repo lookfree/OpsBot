@@ -8,12 +8,13 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
 import { X, Eye, EyeOff, FileKey } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore, useThemeStore } from '@/stores'
 import type { SSHConnection, AuthType } from '@/types'
 import { ModuleType as MT } from '@/types'
-import { sshTestConnection } from '@/services/ssh'
+import { sshTestConnection, readPemFile } from '@/services/ssh'
 
 interface SshConnectionDialogProps {
   open: boolean
@@ -43,6 +44,7 @@ export function SshConnectionDialog({
     authType: AuthType
     password: string
     privateKey: string
+    privateKeyPath: string
     passphrase: string
   }>({
     name: connection?.name || '',
@@ -52,6 +54,7 @@ export function SshConnectionDialog({
     authType: connection?.authType || 'password',
     password: connection?.password || '',
     privateKey: connection?.privateKey || '',
+    privateKeyPath: connection?.privateKeyPath || '',
     passphrase: connection?.passphrase || '',
   })
 
@@ -60,6 +63,7 @@ export function SshConnectionDialog({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [loadingPemFile, setLoadingPemFile] = useState(false)
 
   // 重置对话框状态
   useEffect(() => {
@@ -73,6 +77,7 @@ export function SshConnectionDialog({
           authType: connection.authType || 'password',
           password: connection.password || '',
           privateKey: connection.privateKey || '',
+          privateKeyPath: connection.privateKeyPath || '',
           passphrase: connection.passphrase || '',
         })
       } else {
@@ -84,6 +89,7 @@ export function SshConnectionDialog({
           authType: 'password',
           password: '',
           privateKey: '',
+          privateKeyPath: '',
           passphrase: '',
         })
       }
@@ -101,6 +107,32 @@ export function SshConnectionDialog({
     },
     []
   )
+
+  const handleSelectPemFile = useCallback(async () => {
+    setLoadingPemFile(true)
+    try {
+      const selected = await openFileDialog({
+        multiple: false,
+        filters: [
+          { name: 'PEM / Key Files', extensions: ['pem', 'key', 'ppk'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      })
+      if (selected && typeof selected === 'string') {
+        const content = await readPemFile(selected)
+        setFormData((prev) => ({
+          ...prev,
+          privateKey: content,
+          privateKeyPath: selected,
+        }))
+        setErrors((prev) => ({ ...prev, privateKey: '' }))
+      }
+    } catch (err) {
+      console.error('Failed to load PEM file:', err)
+    } finally {
+      setLoadingPemFile(false)
+    }
+  }, [])
 
   const validate = useCallback(() => {
     const newErrors: Record<string, string> = {}
@@ -140,6 +172,7 @@ export function SshConnectionDialog({
         authType: formData.authType,
         password: formData.authType === 'password' ? formData.password : undefined,
         privateKey: formData.authType === 'key' ? formData.privateKey : undefined,
+        privateKeyPath: formData.authType === 'key' ? formData.privateKeyPath || undefined : undefined,
         passphrase: formData.authType === 'key' ? formData.passphrase : undefined,
       })
       onSave?.(connection)
@@ -157,6 +190,7 @@ export function SshConnectionDialog({
         authType: formData.authType,
         password: formData.authType === 'password' ? formData.password : undefined,
         privateKey: formData.authType === 'key' ? formData.privateKey : undefined,
+        privateKeyPath: formData.authType === 'key' ? formData.privateKeyPath || undefined : undefined,
         passphrase: formData.authType === 'key' ? formData.passphrase : undefined,
       }
       const newConnection = createConnection(connectionData as any) as SSHConnection
@@ -395,10 +429,27 @@ export function SshConnectionDialog({
                   <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
                     {t('ssh.privateKey')}
                   </label>
+                  {/* PEM file path display */}
+                  {formData.privateKeyPath && (
+                    <div className={cn(
+                      'flex items-center gap-2 px-3 py-1.5 mb-1.5 rounded border text-xs font-mono truncate',
+                      inputBg,
+                      borderColor,
+                      textSecondary
+                    )}>
+                      <FileKey className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{formData.privateKeyPath}</span>
+                    </div>
+                  )}
                   <div className="relative">
                     <textarea
                       value={formData.privateKey}
-                      onChange={(e) => handleChange('privateKey', e.target.value)}
+                      onChange={(e) => {
+                        handleChange('privateKey', e.target.value)
+                        if (formData.privateKeyPath) {
+                          setFormData((prev) => ({ ...prev, privateKeyPath: '' }))
+                        }
+                      }}
                       placeholder={t('ssh.pastePrivateKey')}
                       rows={4}
                       className={cn(
@@ -412,8 +463,15 @@ export function SshConnectionDialog({
                     />
                     <button
                       type="button"
-                      className={cn('absolute right-2 top-2 p-1 rounded', hoverBg, textSecondary)}
-                      title={t('ssh.selectFile')}
+                      onClick={handleSelectPemFile}
+                      disabled={loadingPemFile}
+                      className={cn(
+                        'absolute right-2 top-2 p-1 rounded transition-colors',
+                        'disabled:opacity-50 disabled:cursor-not-allowed',
+                        hoverBg,
+                        textSecondary
+                      )}
+                      title={t('ssh.selectPemFile')}
                     >
                       <FileKey className="w-4 h-4" />
                     </button>
@@ -421,6 +479,9 @@ export function SshConnectionDialog({
                   {errors.privateKey && (
                     <p className="text-xs text-status-error mt-1">{errors.privateKey}</p>
                   )}
+                  <p className={cn('text-xs mt-1', textSecondary)}>
+                    {t('ssh.privateKeyHint')}
+                  </p>
                 </div>
 
                 <div>

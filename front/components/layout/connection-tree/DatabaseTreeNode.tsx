@@ -101,7 +101,7 @@ export function DatabaseTreeNode({
     <div
       className="tree-item group"
       style={{ paddingLeft: `${(level + depth + 1) * 12}px` }}
-      onClick={() => hasChildren && onNodeClick(dbNode)}
+      onClick={(e) => { e.stopPropagation(); hasChildren && onNodeClick(dbNode) }}
     >
       {hasChildren && (
         <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">

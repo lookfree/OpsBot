@@ -103,6 +103,34 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
     }
   }, [sessionId, initialized])
 
+  // Reopen SFTP session and retry an operation when session has dropped
+  const withSftpRetry = useCallback(
+    async <T,>(op: () => Promise<T>): Promise<T> => {
+      try {
+        return await op()
+      } catch (err) {
+        const msg = String(err)
+        // Session not found or connection reset → reopen and retry once
+        if (
+          msg.includes('SFTP session not found') ||
+          msg.includes('connection reset') ||
+          msg.includes('broken pipe') ||
+          msg.includes('EOF') ||
+          msg.includes('channel')
+        ) {
+          try {
+            await sftpOpen(sessionId)
+          } catch {
+            // ignore reopen error, let original error surface
+          }
+          return await op()
+        }
+        throw err
+      }
+    },
+    [sessionId]
+  )
+
   // Initialize when panel becomes visible
   useEffect(() => {
     if (visible && !initialized) {
@@ -120,7 +148,7 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
       setSelectedFile(null)
 
       try {
-        const entries = await sftpListDir(sessionId, path)
+        const entries = await withSftpRetry(() => sftpListDir(sessionId, path))
         setFiles(entries)
         setCurrentPath(path)
       } catch (err) {
@@ -129,7 +157,7 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
         setLoading(false)
       }
     },
-    [sessionId]
+    [sessionId, withSftpRetry]
   )
 
   // Refresh current directory
@@ -148,12 +176,12 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
   const goHome = useCallback(async () => {
     if (!sessionId) return
     try {
-      const home = await sftpGetCurrentPath(sessionId)
+      const home = await withSftpRetry(() => sftpGetCurrentPath(sessionId))
       loadDirectory(home)
     } catch {
       loadDirectory('/')
     }
-  }, [sessionId, loadDirectory])
+  }, [sessionId, loadDirectory, withSftpRetry])
 
   // Handle file/folder click
   const handleItemClick = useCallback(
@@ -174,15 +202,15 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
       title: t('sftp.newFolderName'),
       defaultValue: '',
       onConfirm: async (name) => {
-        if (!name.trim()) return
-        try {
-          const newPath = `${currentPath}/${name}`.replace('//', '/')
-          await sftpMkdir(sessionId, newPath)
-          refresh()
-        } catch (err) {
-          setError(String(err))
-        }
-      },
+          if (!name.trim()) return
+          try {
+            const newPath = `${currentPath}/${name}`.replace('//', '/')
+            await withSftpRetry(() => sftpMkdir(sessionId, newPath))
+            refresh()
+          } catch (err) {
+            setError(String(err))
+          }
+        },
     })
   }, [sessionId, currentPath, refresh, t])
 
@@ -196,9 +224,9 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
         onConfirm: async () => {
           try {
             if (entry.is_dir) {
-              await sftpRemoveDir(sessionId, entry.path)
+              await withSftpRetry(() => sftpRemoveDir(sessionId, entry.path))
             } else {
-              await sftpRemoveFile(sessionId, entry.path)
+              await withSftpRetry(() => sftpRemoveFile(sessionId, entry.path))
             }
             refresh()
           } catch (err) {
@@ -222,7 +250,7 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
           try {
             const parentPath = entry.path.split('/').slice(0, -1).join('/') || '/'
             const newPath = `${parentPath}/${newName}`.replace('//', '/')
-            await sftpRename(sessionId, entry.path, newPath)
+            await withSftpRetry(() => sftpRename(sessionId, entry.path, newPath))
             refresh()
           } catch (err) {
             setError(String(err))
@@ -247,7 +275,7 @@ export function FilePanel({ sessionId, visible, onClose }: FilePanelProps) {
         if (!localPath) return
 
         setLoading(true)
-        await sftpDownload(sessionId, entry.path, localPath)
+        await withSftpRetry(() => sftpDownload(sessionId, entry.path, localPath))
         setError(null)
       } catch (err) {
         setError(String(err))
