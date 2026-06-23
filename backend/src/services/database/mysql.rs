@@ -191,6 +191,23 @@ impl MySqlDriver {
                 })
             })
     }
+
+    fn extract_string(row: &MySqlRow, column: &str, index: usize) -> Option<String> {
+        row.try_get::<String, _>(column)
+            .ok()
+            .or_else(|| {
+                row.try_get::<Vec<u8>, _>(column)
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            })
+            .or_else(|| {
+                row.try_get::<String, _>(index).ok().or_else(|| {
+                    row.try_get::<Vec<u8>, _>(index)
+                        .ok()
+                        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                })
+            })
+    }
 }
 
 #[async_trait]
@@ -305,6 +322,7 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn get_tables(&self, database: &str, _schema: Option<&str>) -> Result<Vec<TableInfo>, String> {
+        log::info!("[MySQL] get_tables start database={}", database);
         let sql = "SELECT TABLE_NAME FROM information_schema.TABLES \
                    WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME";
 
@@ -314,16 +332,74 @@ impl DatabaseDriver for MySqlDriver {
             .await
             .map_err(|e| format!("Failed to get tables: {}", e))?;
 
-        Ok(rows
+        let mut tables: Vec<TableInfo> = rows
             .iter()
             .filter_map(|row| {
                 Some(TableInfo {
-                    name: row.try_get("TABLE_NAME").ok()?,
+                    name: Self::extract_string(row, "TABLE_NAME", 0)?,
                     table_type: "BASE TABLE".to_string(),
                     row_count: None,
                 })
             })
-            .collect())
+            .collect();
+
+        log::info!(
+            "[MySQL] information_schema.TABLES database={} rows={} tables={}",
+            database,
+            rows.len(),
+            tables.len()
+        );
+
+        if tables.is_empty() {
+            let show_sql = format!(
+                "SHOW FULL TABLES FROM `{}`",
+                escape_backtick_identifier(database)
+            );
+            let show_rows: Vec<MySqlRow> = sqlx::query(&show_sql)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| format!("Failed to show tables: {}", e))?;
+
+            tables = show_rows
+                .iter()
+                .filter_map(|row| {
+                    let name = Self::extract_string(row, "", 0)?;
+                    let table_type = Self::extract_string(row, "Table_type", 1)
+                        .unwrap_or_else(|| "BASE TABLE".to_string());
+                    if table_type.eq_ignore_ascii_case("BASE TABLE") {
+                        Some(TableInfo {
+                            name,
+                            table_type,
+                            row_count: None,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            log::info!(
+                "[MySQL] SHOW FULL TABLES database={} rows={} base_tables={}",
+                database,
+                show_rows.len(),
+                tables.len()
+            );
+        }
+
+        let sample = tables
+            .iter()
+            .take(10)
+            .map(|table| table.name.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        log::info!(
+            "[MySQL] get_tables done database={} count={} sample={}",
+            database,
+            tables.len(),
+            sample
+        );
+
+        Ok(tables)
     }
 
     async fn get_table_structure(
@@ -458,6 +534,7 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn get_objects_count(&self, database: &str, _schema: Option<&str>) -> Result<DatabaseObjectsCount, String> {
+        log::info!("[MySQL] get_objects_count start database={}", database);
         // Execute all 4 queries in parallel for better performance
         let (tables_result, views_result, functions_result, procedures_result) = tokio::join!(
             sqlx::query(
@@ -504,6 +581,15 @@ impl DatabaseDriver for MySqlDriver {
             .map_err(|e| format!("Failed to count procedures: {}", e))?
             .try_get("cnt")
             .unwrap_or(0);
+
+        log::info!(
+            "[MySQL] get_objects_count done database={} tables={} views={} functions={} procedures={}",
+            database,
+            tables,
+            views,
+            functions,
+            procedures
+        );
 
         Ok(DatabaseObjectsCount {
             tables: tables as usize,

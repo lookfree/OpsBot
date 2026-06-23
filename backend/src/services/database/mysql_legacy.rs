@@ -86,6 +86,27 @@ impl MySqlLegacyDriver {
         }
     }
 
+    fn value_to_string(val: Value) -> Option<String> {
+        match val {
+            Value::NULL => None,
+            Value::Bytes(b) => Some(String::from_utf8_lossy(&b).to_string()),
+            Value::Int(i) => Some(i.to_string()),
+            Value::UInt(u) => Some(u.to_string()),
+            Value::Float(f) => Some(f.to_string()),
+            Value::Double(d) => Some(d.to_string()),
+            Value::Date(y, mo, d, h, mi, s, _) => {
+                Some(format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, mo, d, h, mi, s))
+            }
+            Value::Time(neg, _d, h, mi, s, _) => {
+                Some(format!("{}{:02}:{:02}:{:02}", if neg { "-" } else { "" }, h, mi, s))
+            }
+        }
+    }
+
+    fn take_string(row: &mut Row, index: usize) -> Option<String> {
+        row.take::<Value, _>(index).and_then(Self::value_to_string)
+    }
+
     async fn query_rows(&self, sql: &str) -> Result<Vec<Row>, String> {
         let mut conn = self.pool.get_conn().await
             .map_err(|e| format!("Failed to get connection: {}", e))?;
@@ -157,10 +178,27 @@ impl DatabaseDriver for MySqlLegacyDriver {
     }
 
     async fn get_databases(&self) -> Result<Vec<String>, String> {
+        log::info!("[MySQL5.6] Fetching databases list...");
         let rows = self.query_rows("SHOW DATABASES").await?;
-        Ok(rows.into_iter()
+        let mut databases: Vec<String> = rows
+            .into_iter()
             .filter_map(|mut r| r.take::<String, _>(0))
-            .collect())
+            .collect();
+
+        if databases.is_empty() {
+            let fallback_rows = self
+                .query_rows(
+                    "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
+                )
+                .await?;
+            databases = fallback_rows
+                .into_iter()
+                .filter_map(|mut r| r.take::<String, _>(0))
+                .collect();
+        }
+
+        log::info!("[MySQL5.6] Found {} databases", databases.len());
+        Ok(databases)
     }
 
     async fn get_schemas(&self, _database: Option<&str>) -> Result<Vec<String>, String> {
@@ -168,16 +206,74 @@ impl DatabaseDriver for MySqlLegacyDriver {
     }
 
     async fn get_tables(&self, database: &str, _schema: Option<&str>) -> Result<Vec<TableInfo>, String> {
+        log::info!("[MySQL5.6] get_tables start database={}", database);
         let sql = "SELECT TABLE_NAME FROM information_schema.TABLES \
                    WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME";
         let rows = self.query_rows_bind(sql, (database,)).await?;
-        Ok(rows.into_iter()
+
+        let row_count = rows.len();
+        let mut tables: Vec<TableInfo> = rows.into_iter()
             .filter_map(|mut r| Some(TableInfo {
-                name: r.take::<String, _>(0)?,
+                name: Self::take_string(&mut r, 0)?,
                 table_type: "BASE TABLE".to_string(),
                 row_count: None,
             }))
-            .collect())
+            .collect();
+
+        log::info!(
+            "[MySQL5.6] information_schema.TABLES database={} rows={} tables={}",
+            database,
+            row_count,
+            tables.len()
+        );
+
+        if tables.is_empty() {
+            let show_sql = format!(
+                "SHOW FULL TABLES FROM `{}`",
+                escape_backtick_identifier(database)
+            );
+            let show_rows = self.query_rows(&show_sql).await?;
+            let show_row_count = show_rows.len();
+
+            tables = show_rows.into_iter()
+                .filter_map(|mut r| {
+                    let name = Self::take_string(&mut r, 0)?;
+                    let table_type = Self::take_string(&mut r, 1)
+                        .unwrap_or_else(|| "BASE TABLE".to_string());
+                    if table_type.eq_ignore_ascii_case("BASE TABLE") {
+                        Some(TableInfo {
+                            name,
+                            table_type,
+                            row_count: None,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            log::info!(
+                "[MySQL5.6] SHOW FULL TABLES database={} rows={} base_tables={}",
+                database,
+                show_row_count,
+                tables.len()
+            );
+        }
+
+        let sample = tables
+            .iter()
+            .take(10)
+            .map(|table| table.name.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        log::info!(
+            "[MySQL5.6] get_tables done database={} count={} sample={}",
+            database,
+            tables.len(),
+            sample
+        );
+
+        Ok(tables)
     }
 
     async fn get_table_structure(&self, database: &str, table: &str) -> Result<TableStructure, String> {

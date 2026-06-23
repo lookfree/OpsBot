@@ -282,9 +282,25 @@ impl DatabaseService {
             ssh_tunnel,
         ));
 
-        self.sessions
+        let previous_session = self
+            .sessions
             .write()
             .insert(request.connection_id.clone(), session.clone());
+        if let Some(previous_session) = previous_session {
+            previous_session.driver.close().await;
+            if let Some(tunnel) = &previous_session.ssh_tunnel {
+                tunnel.close().await;
+            }
+        }
+
+        log::info!(
+            "[DB_TREE] connected id={} type={:?} host={}:{} database={}",
+            request.connection_id,
+            request.db_type,
+            original_host,
+            original_port,
+            request.database.as_deref().unwrap_or("")
+        );
 
         Ok(DatabaseConnectionInfo {
             connection_id: request.connection_id,
@@ -494,7 +510,62 @@ impl DatabaseService {
     /// Get all databases
     pub async fn get_databases(&self, connection_id: &str) -> Result<Vec<String>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_databases().await
+        let mut databases = Vec::new();
+
+        if matches!(session.db_type, DatabaseType::MySQL | DatabaseType::MariaDB) {
+            if let Some(database) = session.database.as_ref().filter(|db| !db.trim().is_empty()) {
+                databases.push(database.clone());
+            }
+        }
+
+        for database in session.driver.get_databases().await? {
+            if !databases.iter().any(|existing| existing == &database) {
+                databases.push(database);
+            }
+        }
+
+        if databases.is_empty() {
+            if let Some(database) = session.database.as_ref().filter(|db| !db.trim().is_empty()) {
+                databases.push(database.clone());
+            }
+        }
+
+        if databases.is_empty() {
+            let current_database_sql = match session.db_type {
+                DatabaseType::MySQL | DatabaseType::MariaDB => Some("SELECT DATABASE()"),
+                DatabaseType::PostgreSQL => Some("SELECT current_database()"),
+                _ => None,
+            };
+
+            if let Some(sql) = current_database_sql {
+                if let Ok(result) = session.driver.execute_query(sql).await {
+                    if let Some(database) = result
+                        .rows
+                        .first()
+                        .and_then(|row| row.first())
+                        .and_then(|value| value.as_str())
+                        .filter(|db| !db.trim().is_empty())
+                    {
+                        databases.push(database.to_string());
+                    }
+                }
+            }
+        }
+
+        if databases.len() > 1 {
+            databases.sort();
+            databases.dedup();
+        }
+
+        log::info!(
+            "[DB_TREE] databases id={} type={:?} count={} names={}",
+            connection_id,
+            session.db_type,
+            databases.len(),
+            databases.join(",")
+        );
+
+        Ok(databases)
     }
 
     /// Get all schemas (PostgreSQL only)
@@ -511,7 +582,16 @@ impl DatabaseService {
         schema: Option<&str>,
     ) -> Result<Vec<TableInfo>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_tables(database, schema).await
+        let tables = session.driver.get_tables(database, schema).await?;
+        log::info!(
+            "[DB_TREE] tables id={} type={:?} database={} schema={} count={}",
+            connection_id,
+            session.db_type,
+            database,
+            schema.unwrap_or(""),
+            tables.len()
+        );
+        Ok(tables)
     }
 
     /// Get table structure

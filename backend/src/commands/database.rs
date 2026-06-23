@@ -69,7 +69,17 @@ pub async fn db_get_databases(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
 ) -> Result<Vec<String>, String> {
-    state.0.get_databases(&connection_id).await
+    log::info!("[DB_CMD] db_get_databases id={}", connection_id);
+    let result = state.0.get_databases(&connection_id).await;
+    if let Ok(databases) = &result {
+        log::info!(
+            "[DB_CMD] db_get_databases done id={} count={} names={}",
+            connection_id,
+            databases.len(),
+            databases.iter().take(10).cloned().collect::<Vec<_>>().join(",")
+        );
+    }
+    result
 }
 
 /// Get all schemas (PostgreSQL only)
@@ -90,7 +100,28 @@ pub async fn db_get_tables(
     database: String,
     schema: Option<String>,
 ) -> Result<Vec<TableInfo>, String> {
-    state.0.get_tables(&connection_id, &database, schema.as_deref()).await
+    log::info!(
+        "[DB_CMD] db_get_tables id={} database={} schema={}",
+        connection_id,
+        database,
+        schema.as_deref().unwrap_or("")
+    );
+    let result = state.0.get_tables(&connection_id, &database, schema.as_deref()).await;
+    if let Ok(tables) = &result {
+        log::info!(
+            "[DB_CMD] db_get_tables done id={} database={} count={} sample={}",
+            connection_id,
+            database,
+            tables.len(),
+            tables
+                .iter()
+                .take(10)
+                .map(|table| table.name.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+    result
 }
 
 /// Get table structure
@@ -134,7 +165,25 @@ pub async fn db_get_objects_count(
     database: String,
     schema: Option<String>,
 ) -> Result<DatabaseObjectsCount, String> {
-    state.0.get_objects_count(&connection_id, &database, schema.as_deref()).await
+    log::info!(
+        "[DB_CMD] db_get_objects_count id={} database={} schema={}",
+        connection_id,
+        database,
+        schema.as_deref().unwrap_or("")
+    );
+    let result = state.0.get_objects_count(&connection_id, &database, schema.as_deref()).await;
+    if let Ok(counts) = &result {
+        log::info!(
+            "[DB_CMD] db_get_objects_count done id={} database={} tables={} views={} functions={} procedures={}",
+            connection_id,
+            database,
+            counts.tables,
+            counts.views,
+            counts.functions,
+            counts.procedures
+        );
+    }
+    result
 }
 
 /// Get table DDL

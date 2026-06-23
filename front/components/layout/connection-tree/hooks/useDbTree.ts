@@ -43,6 +43,13 @@ function updateTreeNode(nodes: DbTreeNode[], targetId: string, update: Partial<D
   })
 }
 
+function hasTreeNode(nodes: DbTreeNode[], targetId: string): boolean {
+  return nodes.some((n) => {
+    if (n.id === targetId) return true
+    return n.children ? hasTreeNode(n.children, targetId) : false
+  })
+}
+
 export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): UseDbTreeResult {
   const { t } = useTranslation()
   const { connections } = useConnectionStore()
@@ -54,6 +61,17 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
 
   const hasSchemaSupport = connection.dbType === 'postgresql' || connection.dbType === 'kingbase'
   const isClickHouse = connection.dbType === 'clickhouse'
+  const fallbackDatabase = connection.database?.trim()
+
+  const getVisibleDatabases = useCallback((dbs: string[]) => {
+    const visible = fallbackDatabase ? [fallbackDatabase] : []
+    for (const db of dbs) {
+      if (!visible.includes(db)) {
+        visible.push(db)
+      }
+    }
+    return visible
+  }, [fallbackDatabase])
 
   // Handle database connection expand/collapse
   const handleDbConnectionClick = useCallback(async () => {
@@ -71,7 +89,16 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
       onStatusChange('connected')
 
       const dbs = await dbGetDatabases(connection.id)
-      const tree: DbTreeNode[] = dbs.map((dbName) => ({
+      const visibleDbs = getVisibleDatabases(dbs)
+      console.info('[DB_TREE_UI] databases loaded', {
+        connectionId: connection.id,
+        dbType: connection.dbType,
+        fallbackDatabase,
+        backendCount: dbs.length,
+        visibleCount: visibleDbs.length,
+        visibleDbs: visibleDbs.slice(0, 10),
+      })
+      const tree: DbTreeNode[] = visibleDbs.map((dbName) => ({
         id: `db:${connection.id}:${dbName}`,
         name: dbName,
         type: 'database' as const,
@@ -86,7 +113,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
     } finally {
       setDbLoading(false)
     }
-  }, [connection, connections, dbExpanded, onStatusChange])
+  }, [connection, connections, dbExpanded, fallbackDatabase, getVisibleDatabases, onStatusChange])
 
   // Handle database node expand
   const handleDbNodeClick = useCallback(async (dbNode: DbTreeNode) => {
@@ -110,6 +137,12 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
 
       setLoadingDbNodes((prev) => new Set(prev).add(nodeId))
       try {
+        console.info('[DB_TREE_UI] expand database node', {
+          connectionId: connection.id,
+          dbType: connection.dbType,
+          nodeId,
+          database: dbNode.name,
+        })
         if (hasSchemaSupport) {
           // For URL mode, don't reconnect if it's the same database from URL
           // Otherwise reconnect to the specified database
@@ -128,12 +161,21 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
           setDbTree((prev) => updateTreeNode(prev, nodeId, { children: schemaNodes }))
         } else {
           const counts = await dbGetObjectsCount(connection.id, dbNode.name)
-          const tablesCategoryId = `cat:${connection.id}:${dbNode.name}::tables`
           const tables = await dbGetTables(connection.id, dbNode.name)
+          const tablesCategoryId = `cat:${connection.id}:${dbNode.name}::tables`
+          console.info('[DB_TREE_UI] database objects loaded', {
+            connectionId: connection.id,
+            dbType: connection.dbType,
+            database: dbNode.name,
+            counts,
+            tableCount: tables.length,
+            tables: tables.slice(0, 10).map((table) => table.name),
+          })
           const tableNodes: DbTreeNode[] = tables.map((tbl) => ({
-            id: `tbl:${connection.id}:${dbNode.name}:${tbl.name}`,
+            id: `tbl:${connection.id}:${dbNode.name}::${tbl.name}`,
             name: tbl.name,
             type: 'table' as const,
+            dbName: dbNode.name,
             engine: tbl.tableType,
           }))
           const categories: DbTreeNode[] = [
@@ -144,8 +186,17 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
               { id: `cat:${connection.id}:${dbNode.name}::procedures`, name: t('database.procedures'), type: 'category' as const, count: counts.procedures, dbName: dbNode.name, children: [] },
             ] : []),
           ]
-          setDbTree((prev) => updateTreeNode(prev, nodeId, { children: categories }))
-          setExpandedDbNodes((prev) => new Set(prev).add(tablesCategoryId))
+          setDbTree((prev) => {
+            if (!hasTreeNode(prev, nodeId)) {
+              return [{ ...dbNode, children: categories }]
+            }
+            return updateTreeNode(prev, nodeId, { children: categories })
+          })
+          setExpandedDbNodes((prev) => {
+            const next = new Set(prev)
+            next.add(tablesCategoryId)
+            return next
+          })
         }
       } catch (err) {
         console.error('Failed to load database objects:', err)
@@ -195,15 +246,28 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
         let items: DbTreeNode[] = []
         if (catType === 'tables') {
           const tables = await dbGetTables(connection.id, dbName, schemaName)
-          items = tables.map((tbl) => ({ id: `tbl:${connection.id}:${dbName}:${schemaName || ''}:${tbl.name}`, name: tbl.name, type: 'table' as const, engine: tbl.tableType }))
+          items = tables.map((tbl) => ({
+            id: `tbl:${connection.id}:${dbName}:${schemaName || ''}:${tbl.name}`,
+            name: tbl.name,
+            type: 'table' as const,
+            dbName,
+            schemaName,
+            engine: tbl.tableType,
+          }))
         } else if (catType === 'views') {
           const views = await dbGetViews(connection.id, dbName, schemaName)
-          items = views.map((v) => ({ id: `view:${connection.id}:${dbName}:${schemaName || ''}:${v.name}`, name: v.name, type: 'view' as const }))
+          items = views.map((v) => ({ id: `view:${connection.id}:${dbName}:${schemaName || ''}:${v.name}`, name: v.name, type: 'view' as const, dbName, schemaName }))
         } else if (catType === 'functions' || catType === 'procedures') {
           const routines = await dbGetRoutines(connection.id, dbName, schemaName)
           items = routines
             .filter((r) => (catType === 'functions' ? r.routineType === 'FUNCTION' : r.routineType === 'PROCEDURE'))
-            .map((r) => ({ id: `${catType}:${connection.id}:${dbName}:${schemaName || ''}:${r.name}`, name: r.name, type: catType === 'functions' ? 'function' as const : 'procedure' as const }))
+            .map((r) => ({
+              id: `${catType}:${connection.id}:${dbName}:${schemaName || ''}:${r.name}`,
+              name: r.name,
+              type: catType === 'functions' ? 'function' as const : 'procedure' as const,
+              dbName,
+              schemaName,
+            }))
         }
 
         setDbTree((prev) => updateTreeNode(prev, nodeId, { children: items }))
@@ -231,7 +295,16 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
       } else {
         dbs = await dbGetDatabases(connection.id)
       }
-      const tree: DbTreeNode[] = dbs.map((dbName) => ({
+      const visibleDbs = getVisibleDatabases(dbs)
+      console.info('[DB_TREE_UI] databases refreshed', {
+        connectionId: connection.id,
+        dbType: connection.dbType,
+        fallbackDatabase,
+        backendCount: dbs.length,
+        visibleCount: visibleDbs.length,
+        visibleDbs: visibleDbs.slice(0, 10),
+      })
+      const tree: DbTreeNode[] = visibleDbs.map((dbName) => ({
         id: `db:${connection.id}:${dbName}`,
         name: dbName,
         type: 'database' as const,
@@ -244,7 +317,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
     } finally {
       setDbLoading(false)
     }
-  }, [connection])
+  }, [connection, fallbackDatabase, getVisibleDatabases])
 
   // Collapse all and reset
   const collapseAll = useCallback(() => {

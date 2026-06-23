@@ -125,8 +125,8 @@ export function DatabaseTreeNode({
 
   // Parse node ID to get database and schema info
   const parts = dbNode.id.split(':')
-  const dbName = parts[2]
-  const schemaName = parts[3] || undefined
+  const dbName = dbNode.dbName || parts[2]
+  const schemaName = dbNode.schemaName || parts[3] || undefined
 
   // Table node with context menu
   if (dbNode.type === 'table') {
