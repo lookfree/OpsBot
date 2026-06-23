@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::SshAuthType;
+
 /// Database types supported
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -37,6 +39,22 @@ pub struct DatabaseConnectRequest {
     pub connection_url: Option<String>,
     /// Driver version override, e.g. "5.6" for MySQL legacy driver
     pub driver_version: Option<String>,
+    /// Optional SSH tunnel used to reach the database host.
+    pub ssh_tunnel: Option<DatabaseSshTunnelConfig>,
+}
+
+/// SSH tunnel configuration for database connections.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseSshTunnelConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_type: SshAuthType,
+    pub password: Option<String>,
+    pub private_key: Option<String>,
+    pub passphrase: Option<String>,
 }
 
 /// Database connection info

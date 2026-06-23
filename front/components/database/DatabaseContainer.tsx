@@ -29,6 +29,7 @@ import { ERDiagramDesigner } from './designer'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useDatabaseQuery } from './useDatabaseQuery'
 import type { ThemeStyles } from './types'
+import { buildDatabaseConnectRequest } from '@/utils/databaseConnection'
 
 // Error Boundary for catching render errors
 interface ErrorBoundaryProps {
@@ -151,17 +152,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
     setConnectionStatus(connectionId, 'connecting')
 
     try {
-      await dbConnect({
-        connectionId: connection.id,
-        dbType: connection.dbType || 'mysql',
-        host: connection.host,
-        port: connection.port,
-        username: connection.username,
-        password: connection.password,
-        database: connection.database,
-        connectionUrl: connection.connectionUrl,
-        driverVersion: connection.driverVersion,
-      })
+      await dbConnect(buildDatabaseConnectRequest(connection, connections))
 
       setIsConnected(true)
       setConnectionStatus(connectionId, 'connected')
@@ -189,7 +180,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
     } finally {
       setIsConnecting(false)
     }
-  }, [connection, connectionId, setConnectionStatus])
+  }, [connection, connections, connectionId, setConnectionStatus])
 
   // Refresh databases list
   const handleRefresh = useCallback(async () => {
@@ -261,15 +252,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
       if (isPostgres && database && connection) {
         // Reconnect to the specified database
         try {
-          await dbConnect({
-            connectionId: connection.id,
-            dbType: 'postgresql',
-            host: connection.host,
-            port: connection.port,
-            username: connection.username,
-            password: connection.password,
-            database: database,
-          })
+          await dbConnect(buildDatabaseConnectRequest(connection, connections, { database }))
         } catch (err) {
           console.error('Failed to switch database:', err)
         }
@@ -341,7 +324,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
       })
       return
     }
-  }, [isConnected, tabData, activeTabId, selectedDatabase, setSql, connection])
+  }, [isConnected, tabData, activeTabId, selectedDatabase, setSql, connection, connections])
 
   // Handle back to query mode - MUST be before any conditional returns (React hooks rule)
   const handleBackToQuery = useCallback(() => {

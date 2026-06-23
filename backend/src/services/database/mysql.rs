@@ -16,6 +16,27 @@ use crate::models::{
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
 use super::utils::{escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
 
+fn build_mysql_url(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+    database: Option<&str>,
+) -> String {
+    let base = format!(
+        "mysql://{}:{}@{}:{}",
+        encode(username),
+        encode(password),
+        host,
+        port
+    );
+
+    match database.filter(|db| !db.trim().is_empty()) {
+        Some(db) => format!("{}/{}?ssl-mode=preferred", base, encode(db)),
+        None => format!("{}?ssl-mode=preferred", base),
+    }
+}
+
 /// MySQL database driver
 pub struct MySqlDriver {
     pool: MySqlPool,
@@ -28,16 +49,16 @@ impl MySqlDriver {
         port: u16,
         username: &str,
         password: &str,
-        database: &str,
+        database: Option<&str>,
     ) -> Result<Self, String> {
-        // URL encode username and password to handle special characters
-        // Use ssl-mode=preferred to use TLS when available, fall back otherwise
-        let url = format!(
-            "mysql://{}:{}@{}:{}/{}?ssl-mode=preferred",
-            encode(username), encode(password), host, port, database
-        );
+        let url = build_mysql_url(host, port, username, password, database);
 
-        log::info!("Connecting to MySQL: {}:{}/{}", host, port, database);
+        log::info!(
+            "Connecting to MySQL: {}:{}/{}",
+            host,
+            port,
+            database.unwrap_or("")
+        );
 
         let pool = MySqlPoolOptions::new()
             .max_connections(10)
@@ -59,14 +80,9 @@ impl MySqlDriver {
         port: u16,
         username: &str,
         password: &str,
-        database: &str,
+        database: Option<&str>,
     ) -> Result<(), String> {
-        // URL encode username and password to handle special characters
-        // Use ssl-mode=preferred to use TLS when available, fall back otherwise
-        let url = format!(
-            "mysql://{}:{}@{}:{}/{}?ssl-mode=preferred",
-            encode(username), encode(password), host, port, database
-        );
+        let url = build_mysql_url(host, port, username, password, database);
 
         let pool = MySqlPoolOptions::new()
             .max_connections(1)
@@ -158,6 +174,23 @@ impl MySqlDriver {
                 .unwrap_or(serde_json::Value::Null),
         }
     }
+
+    fn extract_database_name(row: &MySqlRow) -> Option<String> {
+        row.try_get::<String, _>("Database")
+            .ok()
+            .or_else(|| {
+                row.try_get::<Vec<u8>, _>("Database")
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+            })
+            .or_else(|| {
+                row.try_get::<String, _>(0).ok().or_else(|| {
+                    row.try_get::<Vec<u8>, _>(0)
+                        .ok()
+                        .and_then(|bytes| String::from_utf8(bytes).ok())
+                })
+            })
+    }
 }
 
 #[async_trait]
@@ -240,10 +273,27 @@ impl DatabaseDriver for MySqlDriver {
                 format!("Failed to get databases: {}", e)
             })?;
 
-        let databases: Vec<String> = rows
+        let mut databases: Vec<String> = rows
             .iter()
-            .filter_map(|row| row.try_get::<String, _>(0).ok())
+            .filter_map(Self::extract_database_name)
             .collect();
+
+        if databases.is_empty() {
+            let fallback_rows: Vec<MySqlRow> = sqlx::query(
+                "SELECT SCHEMA_NAME AS Database FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to get databases via information_schema: {}", e);
+                format!("Failed to get databases: {}", e)
+            })?;
+
+            databases = fallback_rows
+                .iter()
+                .filter_map(Self::extract_database_name)
+                .collect();
+        }
 
         log::info!("Found {} databases", databases.len());
         Ok(databases)

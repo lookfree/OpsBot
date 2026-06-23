@@ -12,6 +12,7 @@ export interface DbTreeNode {
   count?: number
   children?: DbTreeNode[]
   loading?: boolean
+  expanded?: boolean
   dbName?: string  // For schema/category nodes to track parent database
   schemaName?: string  // For category nodes in PostgreSQL
   engine?: string  // For ClickHouse tables to distinguish local vs distributed

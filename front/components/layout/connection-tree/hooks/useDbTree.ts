@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next'
 import { dbConnect, dbGetDatabases, dbGetSchemas, dbGetObjectsCount, dbGetTables, dbGetViews, dbGetRoutines } from '@/services/database'
 import { DatabaseConnection } from '@/types'
 import { DbTreeNode } from '../types'
+import { useConnectionStore } from '@/stores'
+import { buildDatabaseConnectRequest } from '@/utils/databaseConnection'
 
 interface UseDbTreeOptions {
   connection: DatabaseConnection
@@ -43,6 +45,7 @@ function updateTreeNode(nodes: DbTreeNode[], targetId: string, update: Partial<D
 
 export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): UseDbTreeResult {
   const { t } = useTranslation()
+  const { connections } = useConnectionStore()
   const [dbExpanded, setDbExpanded] = useState(false)
   const [dbLoading, setDbLoading] = useState(false)
   const [dbTree, setDbTree] = useState<DbTreeNode[]>([])
@@ -63,17 +66,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
     onStatusChange('connecting')
 
     try {
-      await dbConnect({
-        connectionId: connection.id,
-        dbType: connection.dbType || 'mysql',
-        host: connection.host,
-        port: connection.port,
-        username: connection.username,
-        password: connection.password,
-        database: connection.database,
-        connectionUrl: connection.connectionUrl,
-        driverVersion: connection.driverVersion,
-      })
+      await dbConnect(buildDatabaseConnectRequest(connection, connections))
 
       onStatusChange('connected')
 
@@ -93,7 +86,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
     } finally {
       setDbLoading(false)
     }
-  }, [connection, dbExpanded, onStatusChange])
+  }, [connection, connections, dbExpanded, onStatusChange])
 
   // Handle database node expand
   const handleDbNodeClick = useCallback(async (dbNode: DbTreeNode) => {
@@ -121,16 +114,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
           // For URL mode, don't reconnect if it's the same database from URL
           // Otherwise reconnect to the specified database
           if (!connection.connectionUrl) {
-            await dbConnect({
-              connectionId: connection.id,
-              dbType: connection.dbType,
-              host: connection.host,
-              port: connection.port,
-              username: connection.username,
-              password: connection.password,
-              database: dbNode.name,
-              driverVersion: connection.driverVersion,
-            })
+            await dbConnect(buildDatabaseConnectRequest(connection, connections, { database: dbNode.name }))
           }
 
           const schemas = await dbGetSchemas(connection.id, dbNode.name)
@@ -144,8 +128,16 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
           setDbTree((prev) => updateTreeNode(prev, nodeId, { children: schemaNodes }))
         } else {
           const counts = await dbGetObjectsCount(connection.id, dbNode.name)
+          const tablesCategoryId = `cat:${connection.id}:${dbNode.name}::tables`
+          const tables = await dbGetTables(connection.id, dbNode.name)
+          const tableNodes: DbTreeNode[] = tables.map((tbl) => ({
+            id: `tbl:${connection.id}:${dbNode.name}:${tbl.name}`,
+            name: tbl.name,
+            type: 'table' as const,
+            engine: tbl.tableType,
+          }))
           const categories: DbTreeNode[] = [
-            { id: `cat:${connection.id}:${dbNode.name}::tables`, name: t('database.tables'), type: 'category', count: counts.tables, dbName: dbNode.name, children: [] },
+            { id: tablesCategoryId, name: t('database.tables'), type: 'category', count: counts.tables, dbName: dbNode.name, children: tableNodes, expanded: true },
             { id: `cat:${connection.id}:${dbNode.name}::views`, name: t('database.views'), type: 'category', count: counts.views, dbName: dbNode.name, children: [] },
             ...(!isClickHouse ? [
               { id: `cat:${connection.id}:${dbNode.name}::functions`, name: t('database.functions'), type: 'category' as const, count: counts.functions, dbName: dbNode.name, children: [] },
@@ -153,6 +145,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
             ] : []),
           ]
           setDbTree((prev) => updateTreeNode(prev, nodeId, { children: categories }))
+          setExpandedDbNodes((prev) => new Set(prev).add(tablesCategoryId))
         }
       } catch (err) {
         console.error('Failed to load database objects:', err)
@@ -226,7 +219,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
     }
 
     setExpandedDbNodes((prev) => new Set(prev).add(nodeId))
-  }, [connection, expandedDbNodes, hasSchemaSupport, isClickHouse, t])
+  }, [connection, connections, expandedDbNodes, hasSchemaSupport, isClickHouse, t])
 
   // Refresh databases
   const refreshDatabases = useCallback(async () => {

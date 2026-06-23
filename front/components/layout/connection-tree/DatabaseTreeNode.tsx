@@ -89,7 +89,7 @@ export function DatabaseTreeNode({
   renderChildren,
 }: DatabaseTreeNodeProps) {
   const { t } = useTranslation()
-  const isExpanded = expandedDbNodes.has(dbNode.id)
+  const isExpanded = dbNode.expanded === true || expandedDbNodes.has(dbNode.id)
   const isLoading = loadingDbNodes.has(dbNode.id)
   const hasChildren = dbNode.type === 'database' || dbNode.type === 'schema' || dbNode.type === 'category'
   const isClickHouse = dbType === 'clickhouse'

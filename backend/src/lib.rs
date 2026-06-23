@@ -405,6 +405,8 @@ pub fn run() {
 
             let ssh_service = Arc::new(SshService::new_with_known_hosts(known_hosts));
             ssh_service.start_cleanup_task();
+            let database_state = app.state::<DatabaseServiceState>();
+            database_state.0.set_ssh_service(ssh_service.clone());
             let docker_service = Arc::new(DockerService::new(ssh_service.clone()));
             app.manage(SshServiceState(ssh_service));
             app.manage(DockerServiceState(docker_service));

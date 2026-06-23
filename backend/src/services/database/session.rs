@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::models::DatabaseType;
 
 use super::traits::DatabaseDriver;
+use crate::services::SshTunnelHandle;
 
 /// Database session holding connection info and driver
 pub struct DatabaseSession {
@@ -17,6 +18,7 @@ pub struct DatabaseSession {
     pub database: Option<String>,
     pub schema: Option<String>,
     pub driver: Arc<dyn DatabaseDriver>,
+    pub ssh_tunnel: Option<SshTunnelHandle>,
     pub connected_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -29,6 +31,7 @@ impl DatabaseSession {
         database: Option<String>,
         schema: Option<String>,
         driver: Arc<dyn DatabaseDriver>,
+        ssh_tunnel: Option<SshTunnelHandle>,
     ) -> Self {
         Self {
             connection_id,
@@ -38,6 +41,7 @@ impl DatabaseSession {
             database,
             schema,
             driver,
+            ssh_tunnel,
             connected_at: chrono::Utc::now(),
         }
     }

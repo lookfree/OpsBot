@@ -12,7 +12,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { X, Eye, EyeOff, ChevronLeft, FolderOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore, useThemeStore } from '@/stores'
-import type { DatabaseConnection, DatabaseType } from '@/types'
+import type { DatabaseConnection, DatabaseType, SSHConnection } from '@/types'
 import { ModuleType } from '@/types'
 import { dbTestConnection } from '@/services/database'
 import { DatabaseTypeSelector } from './DatabaseTypeSelector'
@@ -40,7 +40,7 @@ export function DatabaseConnectionDialog({
   const { t } = useTranslation()
   const { theme } = useThemeStore()
   const isDark = theme === 'dark'
-  const { createConnection, updateConnection } = useConnectionStore()
+  const { connections, createConnection, updateConnection } = useConnectionStore()
 
   // 编辑模式直接进入表单，新建模式从选择类型开始
   const [step, setStep] = useState<DialogStep>(connection ? 'connection-form' : 'select-type')
@@ -63,6 +63,8 @@ export function DatabaseConnectionDialog({
     database: string
     connectionUrl: string
     driverVersion: string
+    sshTunnelEnabled: boolean
+    sshConnectionId: string
   }>({
     name: connection?.name || '',
     dbType: connection?.dbType || 'mysql',
@@ -73,6 +75,8 @@ export function DatabaseConnectionDialog({
     database: connection?.database || '',
     connectionUrl: connection?.connectionUrl || '',
     driverVersion: connection?.driverVersion || '5.7+',
+    sshTunnelEnabled: connection?.sshTunnel?.enabled || false,
+    sshConnectionId: connection?.sshTunnel?.sshConnectionId || '',
   })
 
   const [showPassword, setShowPassword] = useState(false)
@@ -97,6 +101,8 @@ export function DatabaseConnectionDialog({
           database: connection.database || '',
           connectionUrl: connection.connectionUrl || '',
           driverVersion: connection.driverVersion || '5.7+',
+          sshTunnelEnabled: connection.sshTunnel?.enabled || false,
+          sshConnectionId: connection.sshTunnel?.sshConnectionId || '',
         })
       } else {
         setStep('select-type')
@@ -112,6 +118,8 @@ export function DatabaseConnectionDialog({
           database: '',
           connectionUrl: '',
           driverVersion: '5.7+',
+          sshTunnelEnabled: false,
+          sshConnectionId: '',
         })
       }
       setErrors({})
@@ -121,6 +129,10 @@ export function DatabaseConnectionDialog({
   }, [open, connection])
 
   const URL_SUPPORTED_DBS = ['postgresql', 'mysql', 'mariadb', 'clickhouse', 'kingbase'] as const
+  const sshConnections = connections.filter(
+    (item): item is SSHConnection => item.moduleType === ModuleType.SSH
+  )
+  const selectedSshConnection = sshConnections.find((item) => item.id === formData.sshConnectionId)
 
   const handleDbTypeSelect = useCallback((dbType: DatabaseTypeConfig) => {
     setSelectedDbType(dbType)
@@ -151,7 +163,7 @@ export function DatabaseConnectionDialog({
   }, [])
 
   const handleChange = useCallback(
-    (field: keyof typeof formData, value: string | number) => {
+    (field: keyof typeof formData, value: string | number | boolean) => {
       setFormData((prev) => ({ ...prev, [field]: value }))
       setErrors((prev) => ({ ...prev, [field]: '' }))
     },
@@ -171,6 +183,9 @@ export function DatabaseConnectionDialog({
       if (!formData.connectionUrl?.trim()) {
         newErrors.connectionUrl = t('database.errors.urlRequired', '请输入连接 URL')
       }
+      if (formData.sshTunnelEnabled) {
+        newErrors.sshTunnel = t('database.errors.sshTunnelUrlUnsupported', 'SSH 隧道暂不支持 URL 模式，请使用标准连接方式')
+      }
     } else if (isFileDb) {
       // 文件数据库只需要文件路径
       if (!formData.database?.trim()) {
@@ -189,6 +204,12 @@ export function DatabaseConnectionDialog({
       }
     }
 
+    if (formData.sshTunnelEnabled && !selectedDbType?.isFileDatabase) {
+      if (!formData.sshConnectionId) {
+        newErrors.sshTunnel = t('database.errors.sshConnectionRequired', '请选择 SSH 连接')
+      }
+    }
+
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }, [formData, selectedDbType, connectionMode, t])
@@ -198,6 +219,9 @@ export function DatabaseConnectionDialog({
 
     const connectionUrlValue = connectionMode === 'url' ? formData.connectionUrl : undefined
     const driverVersionValue = formData.dbType === 'mysql' ? formData.driverVersion : undefined
+    const sshTunnelValue = formData.sshTunnelEnabled
+      ? { enabled: true, sshConnectionId: formData.sshConnectionId }
+      : undefined
 
     if (connection) {
       updateConnection(connection.id, {
@@ -210,6 +234,7 @@ export function DatabaseConnectionDialog({
         database: formData.database || undefined,
         connectionUrl: connectionUrlValue,
         driverVersion: driverVersionValue,
+        sshTunnel: sshTunnelValue,
       })
       onSave?.(connection)
     } else {
@@ -228,6 +253,7 @@ export function DatabaseConnectionDialog({
         database: formData.database || undefined,
         connectionUrl: connectionUrlValue,
         driverVersion: driverVersionValue,
+        sshTunnel: sshTunnelValue,
       }
       const newConnection = createConnection(connectionData as any) as DatabaseConnection
       onSave?.(newConnection)
@@ -252,6 +278,19 @@ export function DatabaseConnectionDialog({
     setTesting(true)
     setTestResult(null)
     try {
+      const sshTunnel = formData.sshTunnelEnabled && selectedSshConnection
+        ? {
+            enabled: true,
+            host: selectedSshConnection.host,
+            port: selectedSshConnection.port,
+            username: selectedSshConnection.username,
+            authType: selectedSshConnection.authType,
+            password: selectedSshConnection.password,
+            privateKey: selectedSshConnection.privateKey,
+            passphrase: selectedSshConnection.passphrase,
+          }
+        : undefined
+
       await dbTestConnection({
         connectionId: connection?.id || 'test',
         dbType: formData.dbType,
@@ -262,6 +301,7 @@ export function DatabaseConnectionDialog({
         database: formData.database || undefined,
         connectionUrl: connectionMode === 'url' ? formData.connectionUrl : undefined,
         driverVersion: formData.dbType === 'mysql' ? formData.driverVersion : undefined,
+        sshTunnel,
       })
       setTestResult({ success: true, message: t('database.connectionSuccess') })
     } catch (err) {
@@ -269,7 +309,7 @@ export function DatabaseConnectionDialog({
     } finally {
       setTesting(false)
     }
-  }, [validate, formData, connection, connectionMode, t])
+  }, [validate, formData, selectedSshConnection, connection, connectionMode, t])
 
   // URL 模式 placeholder 和提示文字
   const getUrlPlaceholder = (dbType: string) => {
@@ -478,6 +518,59 @@ export function DatabaseConnectionDialog({
                         URL
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {!selectedDbType?.isFileDatabase && (
+                  <div className={cn('rounded border p-3 space-y-3', borderColor)}>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={formData.sshTunnelEnabled}
+                        onChange={(e) => handleChange('sshTunnelEnabled', e.target.checked)}
+                        className="w-4 h-4"
+                      />
+                      <span className={cn('text-sm font-medium', textSecondary)}>
+                        {t('database.sshTunnel', '通过 SSH 连接')}
+                      </span>
+                    </label>
+
+                    {formData.sshTunnelEnabled && (
+                      <div>
+                        <label className={cn('block text-sm font-medium mb-1', textSecondary)}>
+                          {t('database.sshConnection', 'SSH 连接')}
+                        </label>
+                        <select
+                          value={formData.sshConnectionId}
+                          onChange={(e) => handleChange('sshConnectionId', e.target.value)}
+                          className={cn(
+                            'w-full px-3 py-2 rounded border text-sm',
+                            'focus:outline-none focus:border-accent-primary',
+                            inputBg,
+                            borderColor,
+                            textPrimary,
+                            errors.sshTunnel && 'border-status-error'
+                          )}
+                        >
+                          <option value="">
+                            {t('database.selectSshConnection', '选择 SSH 连接')}
+                          </option>
+                          {sshConnections.map((ssh) => (
+                            <option key={ssh.id} value={ssh.id}>
+                              {ssh.name} ({ssh.username}@{ssh.host}:{ssh.port})
+                            </option>
+                          ))}
+                        </select>
+                        {errors.sshTunnel && (
+                          <p className="text-xs text-status-error mt-1">{errors.sshTunnel}</p>
+                        )}
+                        {sshConnections.length === 0 && (
+                          <p className={cn('text-xs mt-1', textSecondary)}>
+                            {t('database.noSshConnections', '暂无 SSH 连接，请先创建 SSH 连接')}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

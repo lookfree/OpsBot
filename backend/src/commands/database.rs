@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::models::{
     CheckConstraintInfo, DatabaseConnectRequest, DatabaseConnectionInfo, DatabaseObjectsCount,
@@ -19,10 +19,11 @@ pub struct DatabaseServiceState(pub Arc<DatabaseService>);
 /// Connect to MySQL database
 #[tauri::command]
 pub async fn db_connect(
+    app: AppHandle,
     state: State<'_, DatabaseServiceState>,
     request: DatabaseConnectRequest,
 ) -> Result<DatabaseConnectionInfo, String> {
-    state.0.connect(request).await
+    state.0.connect(request, Some(app)).await
 }
 
 /// Disconnect from database
@@ -37,10 +38,11 @@ pub async fn db_disconnect(
 /// Test database connection
 #[tauri::command]
 pub async fn db_test_connection(
+    app: AppHandle,
     state: State<'_, DatabaseServiceState>,
     request: DatabaseConnectRequest,
 ) -> Result<(), String> {
-    state.0.test_connection(request).await
+    state.0.test_connection(request, Some(app)).await
 }
 
 /// Check if connection is active

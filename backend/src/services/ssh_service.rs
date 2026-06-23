@@ -3,20 +3,26 @@
 //! Provides SSH connection management using russh library.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use futures::channel::mpsc;
-use tokio::sync::RwLock;
 use russh::*;
 use russh_keys::*;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::models::{JumpHostConfig, SessionStatus, SshAuthType, SshConnectRequest, SshSessionInfo, TerminalSize};
 use super::known_hosts::{HostKeyLookup, KnownHostsStore};
+use crate::models::{
+    DatabaseSshTunnelConfig, JumpHostConfig, SessionStatus, SshAuthType, SshConnectRequest,
+    SshSessionInfo, TerminalSize,
+};
 
 /// Get current epoch seconds
 fn now_secs() -> u64 {
@@ -55,6 +61,30 @@ pub struct InteractiveExecSession {
     pub exec_id: String,
     pub session_id: String,
     command_tx: tokio::sync::mpsc::UnboundedSender<ExecCommand>,
+}
+
+/// Local SSH tunnel handle. Dropping it aborts the listener and disconnects the SSH client.
+pub struct SshTunnelHandle {
+    pub local_host: String,
+    pub local_port: u16,
+    task: JoinHandle<()>,
+    handle: Arc<TokioMutex<client::Handle<SshClientHandler>>>,
+}
+
+impl SshTunnelHandle {
+    pub async fn close(&self) {
+        self.task.abort();
+        let handle = self.handle.lock().await;
+        let _ = handle
+            .disconnect(Disconnect::ByApplication, "Tunnel closed", "")
+            .await;
+    }
+}
+
+impl Drop for SshTunnelHandle {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 impl SshSession {
@@ -277,6 +307,123 @@ impl SshService {
             known_hosts: Some(known_hosts),
             pending_verifications: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Open a local TCP tunnel to `target_host:target_port` through an SSH server.
+    pub async fn open_local_tunnel(
+        &self,
+        tunnel: &DatabaseSshTunnelConfig,
+        target_host: String,
+        target_port: u16,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Result<SshTunnelHandle> {
+        let config = client::Config {
+            inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            keepalive_interval: Some(std::time::Duration::from_secs(15)),
+            keepalive_max: 3,
+            ..Default::default()
+        };
+        let config = Arc::new(config);
+
+        let (dummy_tx, _dummy_rx) = mpsc::unbounded::<Vec<u8>>();
+        let session_id = Uuid::new_v4().to_string();
+        let host_port = format!("{}:{}", tunnel.host, tunnel.port);
+        let handler = SshClientHandler {
+            session_id,
+            data_tx: dummy_tx,
+            terminal_channel_id: Arc::new(RwLock::new(None)),
+            known_hosts: self.known_hosts.clone(),
+            host_port,
+            app_handle,
+            pending_verifications: self.pending_verifications.clone(),
+        };
+
+        let addr = format!("{}:{}", tunnel.host, tunnel.port);
+        let mut handle = client::connect(config, addr, handler).await?;
+
+        match tunnel.auth_type {
+            SshAuthType::Password => {
+                let password = tunnel
+                    .password
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("SSH tunnel password is required"))?;
+                let auth_result = handle
+                    .authenticate_password(&tunnel.username, password)
+                    .await?;
+                if !auth_result {
+                    return Err(anyhow!("SSH tunnel password authentication failed"));
+                }
+            }
+            SshAuthType::Key => {
+                let private_key_str = tunnel
+                    .private_key
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("SSH tunnel private key is required"))?;
+                let key_pair = if let Some(passphrase) = &tunnel.passphrase {
+                    decode_secret_key(private_key_str, Some(passphrase))?
+                } else {
+                    decode_secret_key(private_key_str, None)?
+                };
+                let auth_result = handle
+                    .authenticate_publickey(&tunnel.username, Arc::new(key_pair))
+                    .await?;
+                if !auth_result {
+                    return Err(anyhow!("SSH tunnel key authentication failed"));
+                }
+            }
+            SshAuthType::Interactive => {
+                return Err(anyhow!("Interactive auth not supported for database SSH tunnel"));
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let local_port = listener.local_addr()?.port();
+        let local_host = "127.0.0.1".to_string();
+        let handle = Arc::new(TokioMutex::new(handle));
+        let tunnel_handle = handle.clone();
+
+        let task = tokio::spawn(async move {
+            loop {
+                let (local_stream, _) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(err) => {
+                        log::error!("SSH tunnel listener failed: {}", err);
+                        break;
+                    }
+                };
+
+                let handle = tunnel_handle.clone();
+                let target_host = target_host.clone();
+                tokio::spawn(async move {
+                    if let Err(err) = Self::forward_tunnel_stream(handle, local_stream, target_host, target_port).await {
+                        log::error!("SSH tunnel stream failed: {}", err);
+                    }
+                });
+            }
+        });
+
+        Ok(SshTunnelHandle {
+            local_host,
+            local_port,
+            task,
+            handle,
+        })
+    }
+
+    async fn forward_tunnel_stream(
+        handle: Arc<TokioMutex<client::Handle<SshClientHandler>>>,
+        mut local_stream: TcpStream,
+        target_host: String,
+        target_port: u16,
+    ) -> Result<()> {
+        let channel = handle
+            .lock()
+            .await
+            .channel_open_direct_tcpip(&target_host, target_port as u32, "127.0.0.1", 0)
+            .await?;
+        let mut remote_stream = channel.into_stream();
+        let _ = tokio::io::copy_bidirectional(&mut local_stream, &mut remote_stream).await?;
+        Ok(())
     }
 
     /// Send a user's host key accept/reject response

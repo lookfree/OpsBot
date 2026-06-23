@@ -36,6 +36,7 @@ use crate::models::{
     DatabaseType, ForeignKeyInfo, QueryResult, RoutineInfo, SqlExecuteRequest, TableInfo,
     TableOptions, TableStructure, TableStructureExt, TriggerInfo, ViewInfo,
 };
+use crate::services::{SshService, SshTunnelHandle};
 
 #[cfg(feature = "clickhouse")]
 pub use clickhouse::{ClusterInfo, ClusterNode};
@@ -58,20 +59,63 @@ use sqlite::SqliteDriver;
 /// Database service managing all database connections
 pub struct DatabaseService {
     sessions: RwLock<HashMap<String, Arc<DatabaseSession>>>,
+    ssh_service: RwLock<Option<Arc<SshService>>>,
 }
 
 impl DatabaseService {
     pub fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
+            ssh_service: RwLock::new(None),
         }
+    }
+
+    pub fn set_ssh_service(&self, ssh_service: Arc<SshService>) {
+        *self.ssh_service.write() = Some(ssh_service);
+    }
+
+    async fn prepare_ssh_tunnel(
+        &self,
+        request: &DatabaseConnectRequest,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Result<Option<SshTunnelHandle>, String> {
+        let Some(tunnel_config) = request.ssh_tunnel.as_ref().filter(|config| config.enabled) else {
+            return Ok(None);
+        };
+
+        if request.connection_url.is_some() {
+            return Err(
+                "SSH tunnel is not supported with database connection URL mode yet".to_string(),
+            );
+        }
+
+        let ssh_service = self
+            .ssh_service
+            .read()
+            .clone()
+            .ok_or_else(|| "SSH service is not available for database tunnel".to_string())?;
+
+        ssh_service
+            .open_local_tunnel(tunnel_config, request.host.clone(), request.port, app_handle)
+            .await
+            .map(Some)
+            .map_err(|err| err.to_string())
     }
 
     /// Connect to database
     pub async fn connect(
         &self,
-        request: DatabaseConnectRequest,
+        mut request: DatabaseConnectRequest,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Result<DatabaseConnectionInfo, String> {
+        let original_host = request.host.clone();
+        let original_port = request.port;
+        let ssh_tunnel = self.prepare_ssh_tunnel(&request, app_handle).await?;
+        if let Some(tunnel) = &ssh_tunnel {
+            request.host = tunnel.local_host.clone();
+            request.port = tunnel.local_port;
+        }
+
         let password = request.password.as_deref().unwrap_or("");
 
         let (driver, schema): (Arc<dyn DatabaseDriver>, Option<String>) = match request.db_type {
@@ -79,7 +123,6 @@ impl DatabaseService {
                 let driver: Arc<dyn DatabaseDriver> = if let Some(ref url) = request.connection_url {
                     Arc::new(MySqlDriver::connect_url(url).await?)
                 } else {
-                    let database = request.database.as_deref().unwrap_or("mysql");
                     match request.driver_version.as_deref().unwrap_or("5.7+") {
                         "5.6" => {
                             #[cfg(feature = "mysql-legacy")]
@@ -87,7 +130,16 @@ impl DatabaseService {
                             #[cfg(not(feature = "mysql-legacy"))]
                             { return Err("MySQL 5.6 support is not enabled in this build".to_string()); }
                         }
-                        _ => Arc::new(MySqlDriver::connect(&request.host, request.port, &request.username, password, database).await?),
+                        _ => Arc::new(
+                            MySqlDriver::connect(
+                                &request.host,
+                                request.port,
+                                &request.username,
+                                password,
+                                request.database.as_deref(),
+                            )
+                            .await?,
+                        ),
                     }
                 };
                 (driver, None)
@@ -112,13 +164,12 @@ impl DatabaseService {
                 let driver = if let Some(ref url) = request.connection_url {
                     MariaDBDriver::connect_url(url).await?
                 } else {
-                    let database = request.database.as_deref().unwrap_or("mysql");
                     MariaDBDriver::connect(
                         &request.host,
                         request.port,
                         &request.username,
                         password,
-                        database,
+                        request.database.as_deref(),
                     )
                     .await?
                 };
@@ -228,6 +279,7 @@ impl DatabaseService {
             request.database.clone(),
             schema,
             driver,
+            ssh_tunnel,
         ));
 
         self.sessions
@@ -237,8 +289,8 @@ impl DatabaseService {
         Ok(DatabaseConnectionInfo {
             connection_id: request.connection_id,
             db_type: request.db_type,
-            host: request.host,
-            port: request.port,
+            host: original_host,
+            port: original_port,
             database: request.database,
             connected_at: session.connected_at.to_rfc3339(),
         })
@@ -249,6 +301,9 @@ impl DatabaseService {
         let session = self.sessions.write().remove(connection_id);
         if let Some(session) = session {
             session.driver.close().await;
+            if let Some(tunnel) = &session.ssh_tunnel {
+                tunnel.close().await;
+            }
             Ok(())
         } else {
             Err("Connection not found".to_string())
@@ -256,15 +311,24 @@ impl DatabaseService {
     }
 
     /// Test database connection
-    pub async fn test_connection(&self, request: DatabaseConnectRequest) -> Result<(), String> {
+    pub async fn test_connection(
+        &self,
+        mut request: DatabaseConnectRequest,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Result<(), String> {
+        let ssh_tunnel = self.prepare_ssh_tunnel(&request, app_handle).await?;
+        if let Some(tunnel) = &ssh_tunnel {
+            request.host = tunnel.local_host.clone();
+            request.port = tunnel.local_port;
+        }
+
         let password = request.password.as_deref().unwrap_or("");
 
-        match request.db_type {
+        let result = match request.db_type {
             DatabaseType::MySQL => {
                 if let Some(ref url) = request.connection_url {
                     MySqlDriver::test_connection_url(url).await
                 } else {
-                    let database = request.database.as_deref().unwrap_or("mysql");
                     match request.driver_version.as_deref().unwrap_or("5.7+") {
                         "5.6" => {
                             #[cfg(feature = "mysql-legacy")]
@@ -272,7 +336,14 @@ impl DatabaseService {
                             #[cfg(not(feature = "mysql-legacy"))]
                             { Err("MySQL 5.6 support is not enabled in this build".to_string()) }
                         }
-                        _ => MySqlDriver::test_connection(&request.host, request.port, &request.username, password, database).await,
+                        _ => MySqlDriver::test_connection(
+                            &request.host,
+                            request.port,
+                            &request.username,
+                            password,
+                            request.database.as_deref(),
+                        )
+                        .await,
                     }
                 }
             }
@@ -295,13 +366,12 @@ impl DatabaseService {
                 if let Some(ref url) = request.connection_url {
                     MariaDBDriver::test_connection_url(url).await
                 } else {
-                    let database = request.database.as_deref().unwrap_or("mysql");
                     MariaDBDriver::test_connection(
                         &request.host,
                         request.port,
                         &request.username,
                         password,
-                        database,
+                        request.database.as_deref(),
                     )
                     .await
                 }
@@ -393,7 +463,13 @@ impl DatabaseService {
             DatabaseType::ClickHouse => {
                 Err("ClickHouse support is not enabled. Rebuild with --features clickhouse".to_string())
             }
+        };
+
+        if let Some(tunnel) = &ssh_tunnel {
+            tunnel.close().await;
         }
+
+        result
     }
 
     /// Execute SQL query

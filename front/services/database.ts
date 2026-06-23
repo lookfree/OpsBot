@@ -20,6 +20,16 @@ export interface DatabaseConnectRequest {
   connectionUrl?: string
   /** Driver version override, e.g. "5.6" for MySQL legacy */
   driverVersion?: string
+  sshTunnel?: {
+    enabled: boolean
+    host: string
+    port: number
+    username: string
+    authType: 'password' | 'key' | 'interactive'
+    password?: string
+    privateKey?: string
+    passphrase?: string
+  }
 }
 
 // Connection info
