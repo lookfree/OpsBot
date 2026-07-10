@@ -21,8 +21,14 @@ pub enum EsAuthType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EsTlsConfig {
+    #[serde(default)]
     pub enabled: bool,
+    /// Whether to reject certificates that fail verification.
+    /// Accepts the frontend's `verifyCertificate` field (same semantics:
+    /// verify the server cert == reject unauthorized certs).
+    #[serde(default, alias = "verifyCertificate")]
     pub reject_unauthorized: bool,
+    #[serde(default)]
     pub ca: Option<String>,
 }
 
