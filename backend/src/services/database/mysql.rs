@@ -151,27 +151,56 @@ impl MySqlDriver {
     }
 
     fn get_column_value(&self, row: &MySqlRow, index: usize, type_name: &str) -> serde_json::Value {
+        use serde_json::Value;
         match type_name {
-            "BIGINT" | "INT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" => row
+            "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => row
                 .try_get::<i64, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
-            "BIGINT UNSIGNED" | "INT UNSIGNED" | "SMALLINT UNSIGNED" | "TINYINT UNSIGNED" => row
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED"
+            | "BIGINT UNSIGNED" => row
                 .try_get::<u64, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
-            "FLOAT" | "DOUBLE" | "DECIMAL" => row
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "FLOAT" | "DOUBLE" => row
                 .try_get::<f64, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            // DECIMAL/NUMERIC: keep as string to preserve precision (f64 would lose it)
+            "DECIMAL" | "NUMERIC" => row
+                .try_get::<sqlx::types::BigDecimal, _>(index)
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null),
             "BOOLEAN" | "BOOL" => row
                 .try_get::<bool, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "JSON" => row
+                .try_get::<serde_json::Value, _>(index)
+                .unwrap_or(Value::Null),
+            "DATE" => row
+                .try_get::<chrono::NaiveDate, _>(index)
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null),
+            "DATETIME" | "TIMESTAMP" => row
+                .try_get::<chrono::NaiveDateTime, _>(index)
+                .map(|dt| Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()))
+                .unwrap_or(Value::Null),
+            "TIME" => row
+                .try_get::<chrono::NaiveTime, _>(index)
+                .map(|t| Value::String(t.to_string()))
+                .unwrap_or(Value::Null),
+            // Text/ENUM/SET/BLOB/BINARY/BIT: prefer UTF-8 string, fall back to lossy bytes
             _ => row
                 .try_get::<String, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
+                .ok()
+                .map(Value::from)
+                .or_else(|| {
+                    row.try_get::<Vec<u8>, _>(index)
+                        .ok()
+                        .map(|b| Value::String(String::from_utf8_lossy(&b).to_string()))
+                })
+                .unwrap_or(Value::Null),
         }
     }
 
