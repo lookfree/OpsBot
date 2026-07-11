@@ -125,46 +125,76 @@ impl PostgreSqlDriver {
     }
 
     fn get_column_value(&self, row: &PgRow, index: usize, type_name: &str) -> serde_json::Value {
+        use serde_json::Value;
+        // NOTE: sqlx-postgres matches integer/float widths strictly, so INT4 must be
+        // decoded as i32 (not i64) etc. Using the wrong width makes try_get fail and
+        // silently yields Null. Keep the Rust type aligned with the SQL type.
         match type_name {
-            "INT8" | "INT4" | "INT2" | "SERIAL" | "BIGSERIAL" => row
+            "INT2" => row
+                .try_get::<i16, _>(index)
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "INT4" => row
+                .try_get::<i32, _>(index)
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "INT8" => row
                 .try_get::<i64, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
-            "FLOAT8" | "FLOAT4" | "NUMERIC" => row
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "FLOAT4" => row
+                .try_get::<f32, _>(index)
+                .map(|v| Value::from(v as f64))
+                .unwrap_or(Value::Null),
+            "FLOAT8" => row
                 .try_get::<f64, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            // NUMERIC/DECIMAL: decode via BigDecimal and keep as string to preserve precision
+            "NUMERIC" => row
+                .try_get::<sqlx::types::BigDecimal, _>(index)
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null),
             "BOOL" => row
                 .try_get::<bool, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
+                .map(Value::from)
+                .unwrap_or(Value::Null),
             "JSON" | "JSONB" => row
                 .try_get::<serde_json::Value, _>(index)
-                .unwrap_or(serde_json::Value::Null),
+                .unwrap_or(Value::Null),
+            "UUID" => row
+                .try_get::<sqlx::types::Uuid, _>(index)
+                .map(|u| Value::String(u.to_string()))
+                .unwrap_or(Value::Null),
             "TIMESTAMPTZ" => row
                 .try_get::<chrono::DateTime<chrono::Utc>, _>(index)
-                .map(|dt| serde_json::Value::String(dt.to_rfc3339()))
-                .unwrap_or(serde_json::Value::Null),
+                .map(|dt| Value::String(dt.to_rfc3339()))
+                .unwrap_or(Value::Null),
             "TIMESTAMP" => row
                 .try_get::<chrono::NaiveDateTime, _>(index)
-                .map(|dt| {
-                    serde_json::Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                })
-                .unwrap_or(serde_json::Value::Null),
+                .map(|dt| Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()))
+                .unwrap_or(Value::Null),
             "DATE" => row
                 .try_get::<chrono::NaiveDate, _>(index)
-                .map(|d| serde_json::Value::String(d.to_string()))
-                .unwrap_or(serde_json::Value::Null),
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null),
             "TIME" => row
                 .try_get::<chrono::NaiveTime, _>(index)
-                .map(|t| serde_json::Value::String(t.to_string()))
-                .unwrap_or(serde_json::Value::Null),
+                .map(|t| Value::String(t.to_string()))
+                .unwrap_or(Value::Null),
+            "BYTEA" => row
+                .try_get::<Vec<u8>, _>(index)
+                .map(|b| {
+                    let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+                    Value::String(format!("\\x{}", hex))
+                })
+                .unwrap_or(Value::Null),
             // Custom types (enums, etc.): skip type check, decode raw bytes as UTF-8
             _ => row
                 .try_get::<String, _>(index)
                 .or_else(|_| row.try_get_unchecked::<String, _>(index))
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
+                .map(Value::from)
+                .unwrap_or(Value::Null),
         }
     }
 }
