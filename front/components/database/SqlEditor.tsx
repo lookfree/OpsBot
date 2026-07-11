@@ -6,6 +6,8 @@ import { useRef, useCallback } from 'react'
 import Editor, { OnMount, Monaco } from '@monaco-editor/react'
 import type { editor, IRange, Position } from 'monaco-editor'
 import { useThemeStore } from '@/stores'
+// 让 Monaco 使用本地打包资源而非 CDN(Tauri CSP 会拦截外部脚本),必须在编辑器渲染前导入
+import '@/lib/monacoSetup'
 
 interface ITextModel {
   getWordUntilPosition(position: Position): { word: string; startColumn: number; endColumn: number }
