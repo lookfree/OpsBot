@@ -187,17 +187,18 @@ impl DatabaseService {
             .await?;
 
         let sql = request.sql.trim();
-        let sql_upper = sql.to_uppercase();
-        let is_select = sql_upper.starts_with("SELECT")
-            || sql_upper.starts_with("SHOW")
-            || sql_upper.starts_with("DESCRIBE")
-            || sql_upper.starts_with("EXPLAIN")
-            || sql_upper.starts_with("\\D");
-
-        if is_select {
+        if utils::is_row_returning_sql(sql) {
             driver.execute_query(sql).await
         } else {
             driver.execute_update(sql).await
+        }
+    }
+
+    /// MySQL-family database names are case-insensitive on common setups.
+    fn database_names_match(db_type: &DatabaseType, a: &str, b: &str) -> bool {
+        match db_type {
+            DatabaseType::MySQL | DatabaseType::MariaDB => a.eq_ignore_ascii_case(b),
+            _ => a == b,
         }
     }
 
@@ -215,29 +216,45 @@ impl DatabaseService {
             return Ok(session.driver.clone());
         };
         if !session.driver.supports_database_switch()
-            || session.database.as_deref() == Some(db)
+            || session
+                .database
+                .as_deref()
+                .is_some_and(|current| Self::database_names_match(&session.db_type, current, db))
         {
             return Ok(session.driver.clone());
         }
-        if let Some(driver) = session.derived_drivers.read().get(db).cloned() {
+        // Case-insensitive engines share one cache entry per logical database
+        let cache_key = match session.db_type {
+            DatabaseType::MySQL | DatabaseType::MariaDB => db.to_ascii_lowercase(),
+            _ => db.to_string(),
+        };
+        if let Some(driver) = session.derived_drivers.read().get(&cache_key).cloned() {
             return Ok(driver);
         }
 
         // Serialize creation so concurrent first requests share one pool.
         let _creating = session.creation_lock.lock().await;
-        if let Some(driver) = session.derived_drivers.read().get(db).cloned() {
+        if let Some(driver) = session.derived_drivers.read().get(&cache_key).cloned() {
             return Ok(driver);
         }
         if !Self::database_exists(session, db).await? {
             return Err(format!("Database '{}' does not exist on this server", db));
         }
-        let driver = factory::create_driver_for_database(session, db).await?;
+        let driver = match factory::create_driver_for_database(session, db).await {
+            Ok(driver) => driver,
+            Err(err) => {
+                // The cached list may be stale (database dropped since) —
+                // force revalidation on the next attempt.
+                *session.known_databases.write() = None;
+                return Err(err);
+            }
+        };
         session
             .derived_drivers
             .write()
-            .insert(db.to_string(), driver.clone());
+            .insert(cache_key.clone(), driver.clone());
         if session.is_closed() {
-            session.derived_drivers.write().remove(db);
+            session.derived_drivers.write().remove(&cache_key);
             driver.close().await;
             return Err("Connection was closed".to_string());
         }
@@ -253,9 +270,9 @@ impl DatabaseService {
     /// per session, refreshed on a miss). Listing failures propagate — they
     /// must not silently reroute an explicitly selected database.
     async fn database_exists(session: &Arc<DatabaseSession>, db: &str) -> Result<bool, String> {
-        let cached = session.known_databases.read().clone();
-        if let Some(list) = cached {
-            if list.iter().any(|name| name == db) {
+        let matches = |name: &String| Self::database_names_match(&session.db_type, name, db);
+        if let Some(list) = session.known_databases.read().as_ref() {
+            if list.iter().any(matches) {
                 return Ok(true);
             }
         }
@@ -264,7 +281,7 @@ impl DatabaseService {
             .get_databases()
             .await
             .map_err(|err| format!("Failed to verify database '{}': {}", db, err))?;
-        let found = list.iter().any(|name| name == db);
+        let found = list.iter().any(matches);
         *session.known_databases.write() = Some(list);
         Ok(found)
     }
@@ -359,6 +376,9 @@ impl DatabaseService {
             databases.len(),
             databases.join(",")
         );
+
+        // Keep routing validation in sync with the list offered to the UI
+        *session.known_databases.write() = Some(databases.clone());
 
         Ok(databases)
     }

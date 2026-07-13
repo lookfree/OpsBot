@@ -48,7 +48,7 @@ impl KingBaseDriver {
 
         let pool = PgPoolOptions::new()
             .max_connections(10)
-            .min_connections(2)
+            .idle_timeout(std::time::Duration::from_secs(300))
             .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(&url)
             .await
@@ -108,7 +108,7 @@ impl KingBaseDriver {
 
         let pool = PgPoolOptions::new()
             .max_connections(10)
-            .min_connections(2)
+            .idle_timeout(std::time::Duration::from_secs(300))
             .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(&normalized)
             .await

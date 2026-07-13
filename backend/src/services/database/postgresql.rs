@@ -38,7 +38,7 @@ impl PostgreSqlDriver {
 
         let pool = PgPoolOptions::new()
             .max_connections(10)
-            .min_connections(2)
+            .idle_timeout(std::time::Duration::from_secs(300))
             .connect(&url)
             .await
             .map_err(|e| {
@@ -57,7 +57,7 @@ impl PostgreSqlDriver {
 
         let pool = PgPoolOptions::new()
             .max_connections(10)
-            .min_connections(2)
+            .idle_timeout(std::time::Duration::from_secs(300))
             .connect(url)
             .await
             .map_err(|e| {
