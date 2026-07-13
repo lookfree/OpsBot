@@ -106,6 +106,39 @@ async fn execute_sql_routes_to_requested_database() {
 
 #[tokio::test]
 #[ignore]
+async fn pgvector_embedding_decodes_as_text() {
+    let Some(env) = pg_env() else {
+        panic!("ZWD_TEST_PG_* env vars are required for this test");
+    };
+    let service = DatabaseService::new();
+    service
+        .connect(connect_request(&env, "test-pgvector"), None)
+        .await
+        .expect("connect failed");
+
+    let result = service
+        .execute_sql(SqlExecuteRequest {
+            connection_id: "test-pgvector".to_string(),
+            sql: "SELECT embedding FROM agent.rag_chunks LIMIT 1".to_string(),
+            database: Some(env.alt_db.clone()),
+        })
+        .await
+        .expect("embedding query failed");
+    assert_eq!(result.rows.len(), 1);
+    let value = result.rows[0][0]
+        .as_str()
+        .expect("embedding should decode to a string, not null");
+    assert!(
+        value.starts_with('[') && value.ends_with(']') && value.len() > 2,
+        "unexpected embedding rendering: {}",
+        &value[..value.len().min(80)]
+    );
+
+    service.disconnect("test-pgvector").await.expect("disconnect failed");
+}
+
+#[tokio::test]
+#[ignore]
 async fn url_mode_records_effective_database_and_routes() {
     let Some(env) = pg_env() else {
         panic!("ZWD_TEST_PG_* env vars are required for this test");

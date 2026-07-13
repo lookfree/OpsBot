@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::postgres::{PgPool, PgPoolOptions, PgRow, PgValueFormat};
+use sqlx::{Column, Row, TypeInfo, ValueRef};
 use urlencoding::encode;
 
 use crate::models::{
@@ -189,14 +189,64 @@ impl PostgreSqlDriver {
                     Value::String(format!("\\x{}", hex))
                 })
                 .unwrap_or(Value::Null),
+            // pgvector columns arrive in the extension's binary wire format
+            "vector" | "VECTOR" => Self::decode_raw_value(row, index),
             // Custom types (enums, etc.): skip type check, decode raw bytes as UTF-8
             _ => row
                 .try_get::<String, _>(index)
                 .or_else(|_| row.try_get_unchecked::<String, _>(index))
                 .map(Value::from)
-                .unwrap_or(Value::Null),
+                .unwrap_or_else(|_| Self::decode_raw_value(row, index)),
         }
     }
+
+    /// Decode a value sqlx has no codec for from its raw wire bytes.
+    /// Handles pgvector's binary format; anything else falls back to UTF-8
+    /// text or a hex literal so the cell is never silently blank.
+    fn decode_raw_value(row: &PgRow, index: usize) -> serde_json::Value {
+        use serde_json::Value;
+        let Ok(raw) = row.try_get_raw(index) else {
+            return Value::Null;
+        };
+        if raw.is_null() {
+            return Value::Null;
+        }
+        let type_name = raw.type_info().name().to_ascii_lowercase();
+        let format = raw.format();
+        let Ok(bytes) = raw.as_bytes() else {
+            return Value::Null;
+        };
+        if format == PgValueFormat::Binary && type_name == "vector" {
+            if let Some(rendered) = render_pgvector(bytes) {
+                return Value::String(rendered);
+            }
+        }
+        match std::str::from_utf8(bytes) {
+            Ok(text) => Value::String(text.to_string()),
+            Err(_) => {
+                let hex: String = bytes.iter().map(|byte| format!("{:02x}", byte)).collect();
+                Value::String(format!("\\x{}", hex))
+            }
+        }
+    }
+}
+
+/// Render pgvector's binary wire format (u16 dim, u16 flags, dim × f32 BE)
+/// as the extension's text form `[v1,v2,...]`.
+fn render_pgvector(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    let dim = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+    if bytes.len() != 4 + dim * 4 {
+        return None;
+    }
+    let mut parts = Vec::with_capacity(dim);
+    for chunk in bytes[4..].chunks_exact(4) {
+        let v = f32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        parts.push(v.to_string());
+    }
+    Some(format!("[{}]", parts.join(",")))
 }
 
 #[async_trait]
@@ -346,7 +396,10 @@ impl DatabaseDriver for PostgreSqlDriver {
         table: &str,
     ) -> Result<TableStructure, String> {
         let column_sql = r#"
-            SELECT c.column_name, c.data_type, c.is_nullable, c.column_default,
+            SELECT c.column_name,
+                   CASE WHEN c.data_type = 'USER-DEFINED' THEN c.udt_name
+                        ELSE c.data_type END as data_type,
+                   c.is_nullable, c.column_default,
                    c.character_maximum_length, c.numeric_precision, c.numeric_scale,
                    CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END as key,
                    COALESCE(pgd.description, '') as comment
@@ -790,5 +843,35 @@ impl DatabaseDriver for PostgreSqlDriver {
 
     async fn close(&self) {
         self.pool.close().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_pgvector;
+
+    fn vector_bytes(values: &[f32]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend((values.len() as u16).to_be_bytes());
+        bytes.extend(0u16.to_be_bytes());
+        for v in values {
+            bytes.extend(v.to_be_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn renders_pgvector_binary_format() {
+        assert_eq!(
+            render_pgvector(&vector_bytes(&[1.0, -2.5, 0.0])).as_deref(),
+            Some("[1,-2.5,0]")
+        );
+        assert_eq!(render_pgvector(&vector_bytes(&[])).as_deref(), Some("[]"));
+    }
+
+    #[test]
+    fn rejects_malformed_vector_bytes() {
+        assert_eq!(render_pgvector(&[]), None);
+        assert_eq!(render_pgvector(&[0, 3, 0, 0, 1, 2]), None);
     }
 }
