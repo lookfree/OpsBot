@@ -232,9 +232,10 @@ export async function dbGetTables(connectionId: string, database: string, schema
 export async function dbGetTableStructure(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<TableStructure> {
-  return invoke<TableStructure>('db_get_table_structure', { connectionId, database, table })
+  return invoke<TableStructure>('db_get_table_structure', { connectionId, database, schema, table })
 }
 
 /**
@@ -268,9 +269,10 @@ export async function dbGetObjectsCount(
 export async function dbGetTableDdl(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<string> {
-  return invoke<string>('db_get_table_ddl', { connectionId, database, table })
+  return invoke<string>('db_get_table_ddl', { connectionId, database, schema, table })
 }
 
 /**
@@ -280,9 +282,10 @@ export async function dbRenameTable(
   connectionId: string,
   database: string,
   oldName: string,
-  newName: string
+  newName: string,
+  schema?: string
 ): Promise<void> {
-  return invoke('db_rename_table', { connectionId, database, oldName, newName })
+  return invoke('db_rename_table', { connectionId, database, schema, oldName, newName })
 }
 
 /**
@@ -291,9 +294,10 @@ export async function dbRenameTable(
 export async function dbDropTable(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<void> {
-  return invoke('db_drop_table', { connectionId, database, table })
+  return invoke('db_drop_table', { connectionId, database, schema, table })
 }
 
 /**
@@ -302,9 +306,10 @@ export async function dbDropTable(
 export async function dbGetForeignKeys(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<ForeignKeyInfo[]> {
-  return invoke<ForeignKeyInfo[]>('db_get_foreign_keys', { connectionId, database, table })
+  return invoke<ForeignKeyInfo[]>('db_get_foreign_keys', { connectionId, database, schema, table })
 }
 
 /**
@@ -313,9 +318,10 @@ export async function dbGetForeignKeys(
 export async function dbGetCheckConstraints(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<CheckConstraintInfo[]> {
-  return invoke<CheckConstraintInfo[]>('db_get_check_constraints', { connectionId, database, table })
+  return invoke<CheckConstraintInfo[]>('db_get_check_constraints', { connectionId, database, schema, table })
 }
 
 /**
@@ -324,9 +330,10 @@ export async function dbGetCheckConstraints(
 export async function dbGetTriggers(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<TriggerInfo[]> {
-  return invoke<TriggerInfo[]>('db_get_triggers', { connectionId, database, table })
+  return invoke<TriggerInfo[]>('db_get_triggers', { connectionId, database, schema, table })
 }
 
 /**
@@ -335,9 +342,10 @@ export async function dbGetTriggers(
 export async function dbGetTableOptions(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<TableOptions> {
-  return invoke<TableOptions>('db_get_table_options', { connectionId, database, table })
+  return invoke<TableOptions>('db_get_table_options', { connectionId, database, schema, table })
 }
 
 /**
@@ -346,7 +354,8 @@ export async function dbGetTableOptions(
 export async function dbGetTableStructureExt(
   connectionId: string,
   database: string,
-  table: string
+  table: string,
+  schema?: string
 ): Promise<TableStructureExt> {
-  return invoke<TableStructureExt>('db_get_table_structure_ext', { connectionId, database, table })
+  return invoke<TableStructureExt>('db_get_table_structure_ext', { connectionId, database, schema, table })
 }

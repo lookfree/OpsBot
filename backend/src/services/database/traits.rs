@@ -12,6 +12,20 @@ use crate::models::{
 /// Database driver trait - defines the interface for all database implementations
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
+    /// Whether queries may be routed to a database other than the session's
+    /// by opening a dedicated per-database pool.
+    fn supports_database_switch(&self) -> bool {
+        false
+    }
+
+    /// Whether metadata queries (tables/views/...) must run on a pool
+    /// connected to the requested database. True for the PostgreSQL family,
+    /// where a connection is pinned to one database; MySQL-family drivers
+    /// scope these queries with the database name in SQL instead.
+    fn requires_dedicated_database_pool(&self) -> bool {
+        false
+    }
+
     /// Execute a SQL query (SELECT, SHOW, etc.)
     async fn execute_query(&self, sql: &str) -> Result<QueryResult, String>;
 

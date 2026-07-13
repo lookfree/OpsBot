@@ -144,12 +144,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
           database: dbNode.name,
         })
         if (hasSchemaSupport) {
-          // For URL mode, don't reconnect if it's the same database from URL
-          // Otherwise reconnect to the specified database
-          if (!connection.connectionUrl) {
-            await dbConnect(buildDatabaseConnectRequest(connection, connections, { database: dbNode.name }))
-          }
-
+          // The backend routes this to a pool for dbNode.name — no reconnect needed
           const schemas = await dbGetSchemas(connection.id, dbNode.name)
           const schemaNodes: DbTreeNode[] = schemas.map((schemaName) => ({
             id: `schema:${connection.id}:${dbNode.name}:${schemaName}`,
@@ -283,7 +278,7 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
     }
 
     setExpandedDbNodes((prev) => new Set(prev).add(nodeId))
-  }, [connection, connections, expandedDbNodes, hasSchemaSupport, isClickHouse, t])
+  }, [connection, expandedDbNodes, hasSchemaSupport, isClickHouse, t])
 
   // Refresh databases
   const refreshDatabases = useCallback(async () => {

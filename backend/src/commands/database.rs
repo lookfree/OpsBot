@@ -130,9 +130,10 @@ pub async fn db_get_table_structure(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<TableStructure, String> {
-    state.0.get_table_structure(&connection_id, &database, &table).await
+    state.0.get_table_structure(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Get views in a database
@@ -192,9 +193,10 @@ pub async fn db_get_table_ddl(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<String, String> {
-    state.0.get_table_ddl(&connection_id, &database, &table).await
+    state.0.get_table_ddl(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Rename a table
@@ -203,10 +205,11 @@ pub async fn db_rename_table(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     old_name: String,
     new_name: String,
 ) -> Result<(), String> {
-    state.0.rename_table(&connection_id, &database, &old_name, &new_name).await
+    state.0.rename_table(&connection_id, &database, schema.as_deref(), &old_name, &new_name).await
 }
 
 /// Drop a table
@@ -215,9 +218,10 @@ pub async fn db_drop_table(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<(), String> {
-    state.0.drop_table(&connection_id, &database, &table).await
+    state.0.drop_table(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Get foreign keys for a table
@@ -226,9 +230,10 @@ pub async fn db_get_foreign_keys(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<Vec<ForeignKeyInfo>, String> {
-    state.0.get_foreign_keys(&connection_id, &database, &table).await
+    state.0.get_foreign_keys(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Get check constraints for a table
@@ -237,9 +242,10 @@ pub async fn db_get_check_constraints(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<Vec<CheckConstraintInfo>, String> {
-    state.0.get_check_constraints(&connection_id, &database, &table).await
+    state.0.get_check_constraints(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Get triggers for a table
@@ -248,9 +254,10 @@ pub async fn db_get_triggers(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<Vec<TriggerInfo>, String> {
-    state.0.get_triggers(&connection_id, &database, &table).await
+    state.0.get_triggers(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Get table options
@@ -259,9 +266,10 @@ pub async fn db_get_table_options(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<TableOptions, String> {
-    state.0.get_table_options(&connection_id, &database, &table).await
+    state.0.get_table_options(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Get extended table structure with all details
@@ -270,9 +278,10 @@ pub async fn db_get_table_structure_ext(
     state: State<'_, DatabaseServiceState>,
     connection_id: String,
     database: String,
+    schema: Option<String>,
     table: String,
 ) -> Result<TableStructureExt, String> {
-    state.0.get_table_structure_ext(&connection_id, &database, &table).await
+    state.0.get_table_structure_ext(&connection_id, &database, schema.as_deref(), &table).await
 }
 
 /// Get ClickHouse clusters (ClickHouse only)

@@ -240,7 +240,7 @@ export function TreeNodeItem({
     const conn = node.data as DatabaseConnection
     const location = schemaName || dbName
     try {
-      const ddl = await dbGetTableDdl(conn.id, dbName, tableName)
+      const ddl = await dbGetTableDdl(conn.id, dbName, tableName, schemaName)
       const tab = createTabFromConnection(conn.id, `${t('database.viewDDL')} - ${tableName} [${location}]`, ModuleType.Database, 'database', 'connected')
       tab.data = { ...tab.data, initialSql: ddl, database: dbName, schemaName }
       addTab(tab)
@@ -267,7 +267,7 @@ export function TreeNodeItem({
     if (!node.data || !dropTableInfo) return
     const conn = node.data as DatabaseConnection
     try {
-      await dbDropTable(conn.id, dropTableInfo.db, dropTableInfo.table)
+      await dbDropTable(conn.id, dropTableInfo.db, dropTableInfo.table, dropTableInfo.schema)
       setDropConfirmOpen(false)
       setDropTableInfo(null)
       dbTreeHook?.handleDbConnectionClick()
@@ -286,7 +286,7 @@ export function TreeNodeItem({
     if (!node.data || !renameTableInfo) return
     const conn = node.data as DatabaseConnection
     try {
-      await dbRenameTable(conn.id, renameTableInfo.db, renameTableInfo.table, newName)
+      await dbRenameTable(conn.id, renameTableInfo.db, renameTableInfo.table, newName, renameTableInfo.schema)
       setRenameTableDialogOpen(false)
       setRenameTableInfo(null)
       dbTreeHook?.handleDbConnectionClick()

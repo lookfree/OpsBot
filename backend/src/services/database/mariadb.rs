@@ -232,6 +232,10 @@ impl MariaDBDriver {
 
 #[async_trait]
 impl DatabaseDriver for MariaDBDriver {
+    fn supports_database_switch(&self) -> bool {
+        true
+    }
+
     async fn execute_query(&self, sql: &str) -> Result<QueryResult, String> {
         let start = Instant::now();
 

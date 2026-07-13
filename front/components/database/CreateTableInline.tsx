@@ -36,6 +36,7 @@ import { getDataTypeNames } from '@/config/datatypes'
 interface CreateTableInlineProps {
   connectionId: string
   database: string
+  schema?: string
   onSuccess: () => void
   onClose: () => void
 }
@@ -91,6 +92,7 @@ type TabType = 'columns' | 'indexes' | 'foreignKeys' | 'constraints' | 'triggers
 export function CreateTableInline({
   connectionId,
   database,
+  schema,
   onSuccess,
   onClose: _onClose,
 }: CreateTableInlineProps) {
@@ -366,7 +368,7 @@ export function CreateTableInline({
 
       // First create the local table
       sql = `-- Create local table on each node\n`
-      sql += `CREATE TABLE ${qTable(database, localName)} ON CLUSTER ${q(chCluster)} (\n${defs.join(',\n')}\n)`
+      sql += `CREATE TABLE ${qTable(schema || database, localName)} ON CLUSTER ${q(chCluster)} (\n${defs.join(',\n')}\n)`
       sql += `\nENGINE = ${engine || 'MergeTree'}`
       const orderByCols = pkCols.length > 0 ? pkCols : [q(validColumns[0].name)]
       sql += `\nORDER BY (${orderByCols.join(', ')})`
@@ -375,11 +377,11 @@ export function CreateTableInline({
 
       // Then create the distributed table
       sql += `-- Create distributed table\n`
-      sql += `CREATE TABLE ${qTable(database, tableName)} ON CLUSTER ${q(chCluster)} AS ${qTable(database, localName)}`
+      sql += `CREATE TABLE ${qTable(schema || database, tableName)} ON CLUSTER ${q(chCluster)} AS ${qTable(schema || database, localName)}`
       sql += `\nENGINE = Distributed(${q(chCluster)}, ${q(database)}, ${q(localName)}, ${chShardingKey || 'rand()'})`
       sql += ';'
     } else {
-      sql = `CREATE TABLE ${qTable(database, tableName)} (\n${defs.join(',\n')}\n)`
+      sql = `CREATE TABLE ${qTable(schema || database, tableName)} (\n${defs.join(',\n')}\n)`
       // Engine and charset are MySQL/MariaDB-specific
       if (isMySQLLike) {
         sql += ` ENGINE=${engine} DEFAULT CHARSET=${charset}`
@@ -402,9 +404,9 @@ export function CreateTableInline({
         const colList = idx.columns.map((c) => q(c)).join(', ')
         if (isOracle) {
           // Oracle doesn't support USING for index type in CREATE INDEX
-          sql += `\n\nCREATE ${uniqueStr}INDEX ${q(idx.name)} ON ${qTable(database, tableName)} (${colList});`
+          sql += `\n\nCREATE ${uniqueStr}INDEX ${q(idx.name)} ON ${qTable(schema || database, tableName)} (${colList});`
         } else {
-          sql += `\n\nCREATE ${uniqueStr}INDEX ${q(idx.name)} ON ${qTable(database, tableName)} USING ${idx.indexType} (${colList});`
+          sql += `\n\nCREATE ${uniqueStr}INDEX ${q(idx.name)} ON ${qTable(schema || database, tableName)} USING ${idx.indexType} (${colList});`
         }
       })
     }
@@ -412,12 +414,12 @@ export function CreateTableInline({
     triggers.filter((t) => t.statement).forEach((trg) => {
       if (isPostgres) {
         // PostgreSQL trigger syntax is different
-        sql += `\n\nCREATE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(database, tableName)} FOR EACH ROW EXECUTE FUNCTION ${trg.statement}`
+        sql += `\n\nCREATE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(schema || database, tableName)} FOR EACH ROW EXECUTE FUNCTION ${trg.statement}`
       } else if (isOracle) {
         // Oracle trigger syntax
-        sql += `\n\nCREATE OR REPLACE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(database, tableName)} FOR EACH ROW\n${trg.statement}`
+        sql += `\n\nCREATE OR REPLACE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(schema || database, tableName)} FOR EACH ROW\n${trg.statement}`
       } else {
-        sql += `\n\nCREATE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(database, tableName)} FOR EACH ROW ${trg.statement}`
+        sql += `\n\nCREATE TRIGGER ${q(trg.name)} ${trg.timing} ${trg.event} ON ${qTable(schema || database, tableName)} FOR EACH ROW ${trg.statement}`
       }
     })
 

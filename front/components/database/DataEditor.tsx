@@ -20,7 +20,10 @@ import type { DatabaseConnection } from '@/types'
 
 interface DataEditorProps {
   connectionId: string
+  /** Real database name — used to route queries to the right connection */
   database: string
+  /** Schema for engines that have one (PostgreSQL); qualifies table names in SQL */
+  schema?: string
   tableName: string
   onClose?: () => void
   isDark: boolean
@@ -52,7 +55,7 @@ interface FilterConfig {
   value: string
 }
 
-export function DataEditor({ connectionId, database, tableName, onClose, isDark }: DataEditorProps) {
+export function DataEditor({ connectionId, database, schema, tableName, onClose, isDark }: DataEditorProps) {
   const { t } = useTranslation()
   const { connections } = useConnectionStore()
   const connection = connections.find((c) => c.id === connectionId) as DatabaseConnection | undefined
@@ -65,6 +68,9 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
     }
     return `\`${identifier}\``
   }, [dbType])
+
+  // SQL qualifier: schema for engines that have one, database otherwise
+  const tableScope = schema || database
 
   // Quote table with schema/database prefix
   const qTable = useCallback((db: string, table: string) => {
@@ -111,14 +117,14 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
 
   // Build SQL query
   const buildQuery = useCallback(() => {
-    let sql = `SELECT * FROM ${qTable(database, tableName)}`
+    let sql = `SELECT * FROM ${qTable(tableScope, tableName)}`
     sql += buildWhereClause()
     if (sortConfig) {
       sql += ` ORDER BY ${q(sortConfig.column)} ${sortConfig.direction.toUpperCase()}`
     }
     sql += ` LIMIT ${limit} OFFSET ${offset}`
     return sql
-  }, [database, tableName, buildWhereClause, sortConfig, limit, offset, q, qTable])
+  }, [tableScope, tableName, buildWhereClause, sortConfig, limit, offset, q, qTable])
 
   const currentSql = useMemo(() => buildQuery(), [buildQuery])
 
@@ -132,7 +138,7 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
     setError(null)
     try {
       // First get total count
-      const countSql = `SELECT COUNT(*) as cnt FROM ${qTable(database, tableName)}${buildWhereClause()}`
+      const countSql = `SELECT COUNT(*) as cnt FROM ${qTable(tableScope, tableName)}${buildWhereClause()}`
       const countResult = await dbExecuteSql({ connectionId, sql: countSql, database })
       const total = Number(countResult.rows[0]?.[0] || 0)
       setTotalRows(total)
@@ -261,14 +267,14 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
       // Delete statements
       rows.filter(r => r._isDeleted && !r._isNew).forEach(r => {
         const pkValue = r.values[0]
-        statements.push(`DELETE FROM ${qTable(database, tableName)} WHERE ${q(pkCol)} = '${pkValue}';`)
+        statements.push(`DELETE FROM ${qTable(tableScope, tableName)} WHERE ${q(pkCol)} = '${pkValue}';`)
       })
 
       // Insert statements
       rows.filter(r => r._isNew && !r._isDeleted).forEach(r => {
         const cols = columns.map(c => q(c.name)).join(', ')
         const vals = r.values.map(v => v === null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`).join(', ')
-        statements.push(`INSERT INTO ${qTable(database, tableName)} (${cols}) VALUES (${vals});`)
+        statements.push(`INSERT INTO ${qTable(tableScope, tableName)} (${cols}) VALUES (${vals});`)
       })
 
       // Update statements
@@ -283,7 +289,7 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
         })
         if (updates.length > 0) {
           const pkValue = orig.values[0]
-          statements.push(`UPDATE ${qTable(database, tableName)} SET ${updates.join(', ')} WHERE ${q(pkCol)} = '${pkValue}';`)
+          statements.push(`UPDATE ${qTable(tableScope, tableName)} SET ${updates.join(', ')} WHERE ${q(pkCol)} = '${pkValue}';`)
         }
       })
 
@@ -315,7 +321,7 @@ export function DataEditor({ connectionId, database, tableName, onClose, isDark 
   // Show DDL
   const handleShowDdl = async () => {
     try {
-      const ddl = await dbGetTableDdl(connectionId, database, tableName)
+      const ddl = await dbGetTableDdl(connectionId, database, tableName, schema)
       setDdlContent(ddl)
       setShowDdl(true)
     } catch (err) {

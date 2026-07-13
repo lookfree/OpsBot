@@ -18,6 +18,7 @@ interface EditTableStructureDialogProps {
   onOpenChange: (open: boolean) => void
   connectionId: string
   database: string
+  schema?: string
   tableName: string
   onSuccess: () => void
 }
@@ -91,7 +92,7 @@ const FK_ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT
 type TabType = 'columns' | 'indexes' | 'foreignKeys' | 'constraints' | 'triggers' | 'advanced'
 
 export function EditTableStructureDialog({
-  open, onOpenChange, connectionId, database, tableName, onSuccess,
+  open, onOpenChange, connectionId, database, schema, tableName, onSuccess,
 }: EditTableStructureDialogProps) {
   const { t } = useTranslation()
   const { theme } = useThemeStore()
@@ -125,7 +126,7 @@ export function EditTableStructureDialog({
   const loadTableStructure = async () => {
     setIsLoading(true); setError(null)
     try {
-      const s = await dbGetTableStructureExt(connectionId, database, tableName)
+      const s = await dbGetTableStructureExt(connectionId, database, tableName, schema)
       setColumns(s.columns.map(mapColumn))
       setIndexes(s.indexes.map(mapIndex))
       setForeignKeys(s.foreignKeys.map(mapForeignKey))

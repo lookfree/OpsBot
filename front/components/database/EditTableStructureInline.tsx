@@ -25,6 +25,7 @@ import { getDataTypeNames } from '@/config/datatypes'
 interface EditTableStructureInlineProps {
   connectionId: string
   database: string
+  schema?: string
   tableName: string
   onSuccess: () => void
   onClose: () => void
@@ -93,7 +94,7 @@ interface TriggerDef {
 type TabType = 'columns' | 'indexes' | 'foreignKeys' | 'constraints' | 'triggers' | 'advanced'
 
 export function EditTableStructureInline({
-  connectionId, database, tableName, onSuccess, onClose,
+  connectionId, database, schema, tableName, onSuccess, onClose,
 }: EditTableStructureInlineProps) {
   const { t } = useTranslation()
   const { theme } = useThemeStore()
@@ -145,7 +146,7 @@ export function EditTableStructureInline({
   const loadTableStructure = async () => {
     setIsLoading(true); setError(null)
     try {
-      const s = await dbGetTableStructureExt(connectionId, database, tableName)
+      const s = await dbGetTableStructureExt(connectionId, database, tableName, schema)
       setColumns(s.columns.map(mapColumn))
       setIndexes(s.indexes.map(mapIndex))
       setForeignKeys(s.foreignKeys.map(mapForeignKey))
@@ -276,7 +277,7 @@ export function EditTableStructureInline({
 
   const generateAlterStatements = (): string[] => {
     const stmts: string[] = []
-    const tbl = qTable(database, tableName)
+    const tbl = qTable(schema || database, tableName)
     const isPg = dbType === 'postgresql'
     const isOracle = dbType === 'oracle'
     const isCH = dbType === 'clickhouse'
@@ -371,7 +372,7 @@ export function EditTableStructureInline({
       if (isPg) {
         stmts.push(`DROP TRIGGER IF EXISTS ${q(t.originalName)} ON ${tbl};`)
       } else {
-        stmts.push(`DROP TRIGGER IF EXISTS ${qTable(database, t.originalName)};`)
+        stmts.push(`DROP TRIGGER IF EXISTS ${qTable(schema || database, t.originalName)};`)
       }
     })
 

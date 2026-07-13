@@ -18,6 +18,7 @@ interface RenameTableDialogProps {
   onOpenChange: (open: boolean) => void
   connectionId: string
   database: string
+  schema?: string
   tableName: string
   onSuccess: () => void
 }
@@ -27,6 +28,7 @@ export function RenameTableDialog({
   onOpenChange,
   connectionId,
   database,
+  schema,
   tableName,
   onSuccess,
 }: RenameTableDialogProps) {
@@ -67,7 +69,7 @@ export function RenameTableDialog({
     setError(null)
 
     try {
-      await dbRenameTable(connectionId, database, tableName, newName.trim())
+      await dbRenameTable(connectionId, database, tableName, newName.trim(), schema)
       onSuccess()
       onOpenChange(false)
     } catch (err) {

@@ -157,6 +157,10 @@ impl MySqlLegacyDriver {
 
 #[async_trait]
 impl DatabaseDriver for MySqlLegacyDriver {
+    fn supports_database_switch(&self) -> bool {
+        true
+    }
+
     async fn execute_query(&self, sql: &str) -> Result<QueryResult, String> {
         let start = Instant::now();
         let rows = self.query_rows(sql).await?;

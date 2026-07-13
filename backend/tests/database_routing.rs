@@ -90,11 +90,52 @@ async fn execute_sql_routes_to_requested_database() {
         env.alt_db
     );
 
-    // Unknown name (e.g. frontend passing a schema name) -> falls back to session database
-    assert_eq!(
-        current_database(&service, "test-routing", Some("no_such_database_zwd")).await,
-        env.db
-    );
+    // Unknown database names must error (fail closed), never run elsewhere
+    let err = service
+        .execute_sql(SqlExecuteRequest {
+            connection_id: "test-routing".to_string(),
+            sql: "SELECT current_database()".to_string(),
+            database: Some("no_such_database_zwd".to_string()),
+        })
+        .await
+        .expect_err("unknown database should be an error");
+    assert!(err.contains("no_such_database_zwd"), "unexpected error: {err}");
 
     service.disconnect("test-routing").await.expect("disconnect failed");
+}
+
+#[tokio::test]
+#[ignore]
+async fn url_mode_records_effective_database_and_routes() {
+    let Some(env) = pg_env() else {
+        panic!("ZWD_TEST_PG_* env vars are required for this test");
+    };
+    let service = DatabaseService::new();
+    let url = format!(
+        "postgres://{}:{}@{}:{}/{}",
+        env.user, env.password, env.host, env.port, env.db
+    );
+    let mut request = connect_request(&env, "test-url-routing");
+    request.database = None;
+    request.connection_url = Some(url);
+
+    let info = service
+        .connect(request, None)
+        .await
+        .expect("URL-mode connect failed");
+    // Effective database must be resolved from the URL path
+    assert_eq!(info.database.as_deref(), Some(env.db.as_str()));
+
+    // Selecting the session's own database must not error (and stays there)
+    assert_eq!(
+        current_database(&service, "test-url-routing", Some(&env.db)).await,
+        env.db
+    );
+    // Routing to another database still works in URL mode
+    assert_eq!(
+        current_database(&service, "test-url-routing", Some(&env.alt_db)).await,
+        env.alt_db
+    );
+
+    service.disconnect("test-url-routing").await.expect("disconnect failed");
 }

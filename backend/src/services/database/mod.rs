@@ -103,31 +103,32 @@ impl DatabaseService {
         }
 
         let (driver, schema) = factory::create_driver(&request).await?;
-        let session = Arc::new(DatabaseSession::new(&request, schema, driver, ssh_tunnel));
+        let database = factory::effective_database(&request);
+        let session = Arc::new(DatabaseSession::new(request, database, schema, driver, ssh_tunnel));
 
         let previous_session = self
             .sessions
             .write()
-            .insert(request.connection_id.clone(), session.clone());
+            .insert(session.connection_id.clone(), session.clone());
         if let Some(previous_session) = previous_session {
             Self::close_session(&previous_session).await;
         }
 
         log::info!(
             "[DB_TREE] connected id={} type={:?} host={}:{} database={}",
-            request.connection_id,
-            request.db_type,
+            session.connection_id,
+            session.db_type,
             original_host,
             original_port,
-            request.database.as_deref().unwrap_or("")
+            session.database.as_deref().unwrap_or("")
         );
 
         Ok(DatabaseConnectionInfo {
-            connection_id: request.connection_id,
-            db_type: request.db_type,
+            connection_id: session.connection_id.clone(),
+            db_type: session.db_type.clone(),
             host: original_host,
             port: original_port,
-            database: request.database,
+            database: session.database.clone(),
             connected_at: session.connected_at.to_rfc3339(),
         })
     }
@@ -145,6 +146,9 @@ impl DatabaseService {
 
     /// Close a session's drivers (base + per-database pools) and SSH tunnel.
     async fn close_session(session: &DatabaseSession) {
+        // Mark closed before draining so a racing resolve_driver can detect
+        // the teardown and close its late-created pool itself.
+        session.mark_closed();
         for driver in session.take_derived_drivers() {
             driver.close().await;
         }
@@ -200,8 +204,8 @@ impl DatabaseService {
     /// Resolve the driver a query should run on. When a database different
     /// from the session's is requested on an engine that pins connections to
     /// one database, a dedicated pool for that database is opened (and cached
-    /// on the session). Unknown names fall back to the session driver so
-    /// callers passing schema names keep the old behavior.
+    /// on the session). Requesting a database that does not exist on the
+    /// server is an error — silently running on another database is worse.
     async fn resolve_driver(
         &self,
         session: &Arc<DatabaseSession>,
@@ -210,7 +214,7 @@ impl DatabaseService {
         let Some(db) = database.map(str::trim).filter(|db| !db.is_empty()) else {
             return Ok(session.driver.clone());
         };
-        if !factory::supports_database_switch(&session.db_type)
+        if !session.driver.supports_database_switch()
             || session.database.as_deref() == Some(db)
         {
             return Ok(session.driver.clone());
@@ -218,22 +222,25 @@ impl DatabaseService {
         if let Some(driver) = session.derived_drivers.read().get(db).cloned() {
             return Ok(driver);
         }
-        if !Self::database_exists(session, db).await {
-            log::warn!(
-                "[DB_ROUTE] id={} requested database '{}' not found on server, using session database '{}'",
-                session.connection_id,
-                db,
-                session.database.as_deref().unwrap_or("")
-            );
-            return Ok(session.driver.clone());
+
+        // Serialize creation so concurrent first requests share one pool.
+        let _creating = session.creation_lock.lock().await;
+        if let Some(driver) = session.derived_drivers.read().get(db).cloned() {
+            return Ok(driver);
+        }
+        if !Self::database_exists(session, db).await? {
+            return Err(format!("Database '{}' does not exist on this server", db));
         }
         let driver = factory::create_driver_for_database(session, db).await?;
-        let driver = session
+        session
             .derived_drivers
             .write()
-            .entry(db.to_string())
-            .or_insert(driver)
-            .clone();
+            .insert(db.to_string(), driver.clone());
+        if session.is_closed() {
+            session.derived_drivers.write().remove(db);
+            driver.close().await;
+            return Err("Connection was closed".to_string());
+        }
         log::info!(
             "[DB_ROUTE] id={} opened dedicated pool for database '{}'",
             session.connection_id,
@@ -243,29 +250,23 @@ impl DatabaseService {
     }
 
     /// Check the requested name against the server's database list (cached
-    /// per session, refreshed on a miss).
-    async fn database_exists(session: &Arc<DatabaseSession>, db: &str) -> bool {
+    /// per session, refreshed on a miss). Listing failures propagate — they
+    /// must not silently reroute an explicitly selected database.
+    async fn database_exists(session: &Arc<DatabaseSession>, db: &str) -> Result<bool, String> {
         let cached = session.known_databases.read().clone();
         if let Some(list) = cached {
             if list.iter().any(|name| name == db) {
-                return true;
+                return Ok(true);
             }
         }
-        match session.driver.get_databases().await {
-            Ok(list) => {
-                let found = list.iter().any(|name| name == db);
-                *session.known_databases.write() = Some(list);
-                found
-            }
-            Err(err) => {
-                log::warn!(
-                    "[DB_ROUTE] id={} failed to list databases: {}",
-                    session.connection_id,
-                    err
-                );
-                false
-            }
-        }
+        let list = session
+            .driver
+            .get_databases()
+            .await
+            .map_err(|err| format!("Failed to verify database '{}': {}", db, err))?;
+        let found = list.iter().any(|name| name == db);
+        *session.known_databases.write() = Some(list);
+        Ok(found)
     }
 
     /// Driver for metadata/object operations scoped to a database. Only the
@@ -276,10 +277,28 @@ impl DatabaseService {
         session: &Arc<DatabaseSession>,
         database: Option<&str>,
     ) -> Result<Arc<dyn DatabaseDriver>, String> {
-        if factory::requires_dedicated_database_pool(&session.db_type) {
+        if session.driver.requires_dedicated_database_pool() {
             self.resolve_driver(session, database).await
         } else {
             Ok(session.driver.clone())
+        }
+    }
+
+    /// The scope string passed to a driver's table-level methods: the schema
+    /// for engines that organize objects by schema (PostgreSQL family),
+    /// otherwise the database itself (MySQL family embeds it in SQL).
+    fn object_scope<'a>(
+        session: &'a DatabaseSession,
+        database: &'a str,
+        schema: Option<&'a str>,
+    ) -> &'a str {
+        if let Some(schema) = schema.filter(|s| !s.trim().is_empty()) {
+            return schema;
+        }
+        if session.driver.requires_dedicated_database_pool() {
+            session.schema.as_deref().unwrap_or("public")
+        } else {
+            database
         }
     }
 
@@ -377,11 +396,14 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<TableStructure, String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.get_table_structure(database, table).await
+        driver
+            .get_table_structure(Self::object_scope(&session, database, schema), table)
+            .await
     }
 
     /// Get views in a database/schema
@@ -425,11 +447,14 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<String, String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.get_table_ddl(database, table).await
+        driver
+            .get_table_ddl(Self::object_scope(&session, database, schema), table)
+            .await
     }
 
     /// Rename a table
@@ -437,12 +462,15 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.rename_table(database, old_name, new_name).await
+        driver
+            .rename_table(Self::object_scope(&session, database, schema), old_name, new_name)
+            .await
     }
 
     /// Drop a table
@@ -450,11 +478,14 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<(), String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.drop_table(database, table).await
+        driver
+            .drop_table(Self::object_scope(&session, database, schema), table)
+            .await
     }
 
     /// Get foreign keys for a table
@@ -462,11 +493,14 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>, String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.get_foreign_keys(database, table).await
+        driver
+            .get_foreign_keys(Self::object_scope(&session, database, schema), table)
+            .await
     }
 
     /// Get check constraints for a table
@@ -474,11 +508,14 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<Vec<CheckConstraintInfo>, String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.get_check_constraints(database, table).await
+        driver
+            .get_check_constraints(Self::object_scope(&session, database, schema), table)
+            .await
     }
 
     /// Get triggers for a table
@@ -486,11 +523,14 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<Vec<TriggerInfo>, String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.get_triggers(database, table).await
+        driver
+            .get_triggers(Self::object_scope(&session, database, schema), table)
+            .await
     }
 
     /// Get table options
@@ -498,11 +538,14 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<TableOptions, String> {
         let session = self.get_session(connection_id)?;
         let driver = self.driver_for_object(&session, Some(database)).await?;
-        driver.get_table_options(database, table).await
+        driver
+            .get_table_options(Self::object_scope(&session, database, schema), table)
+            .await
     }
 
     /// Get extended table structure with all details
@@ -510,15 +553,22 @@ impl DatabaseService {
         &self,
         connection_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
     ) -> Result<TableStructureExt, String> {
-        let basic = self.get_table_structure(connection_id, database, table).await?;
-        let foreign_keys = self.get_foreign_keys(connection_id, database, table).await?;
-        let check_constraints = self
-            .get_check_constraints(connection_id, database, table)
+        let basic = self
+            .get_table_structure(connection_id, database, schema, table)
             .await?;
-        let triggers = self.get_triggers(connection_id, database, table).await?;
-        let options = self.get_table_options(connection_id, database, table).await?;
+        let foreign_keys = self
+            .get_foreign_keys(connection_id, database, schema, table)
+            .await?;
+        let check_constraints = self
+            .get_check_constraints(connection_id, database, schema, table)
+            .await?;
+        let triggers = self.get_triggers(connection_id, database, schema, table).await?;
+        let options = self
+            .get_table_options(connection_id, database, schema, table)
+            .await?;
 
         Ok(TableStructureExt {
             database: basic.database,

@@ -356,6 +356,7 @@ function TabContent({
     return (
       <DatabaseContainer
         key={tab.id}
+        tabId={tab.id}
         connectionId={tab.connectionId}
         className="h-full"
       />

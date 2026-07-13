@@ -77,21 +77,24 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
 interface DatabaseContainerProps {
   connectionId: string
+  /** The tab this container belongs to — its data drives this instance only */
+  tabId: string
   className?: string
 }
 
-export function DatabaseContainer({ connectionId, className }: DatabaseContainerProps) {
+export function DatabaseContainer({ connectionId, tabId, className }: DatabaseContainerProps) {
   const { t } = useTranslation()
   const { theme } = useThemeStore()
   const isDark = theme === 'dark'
   const { connections, setConnectionStatus } = useConnectionStore()
-  const { tabs, activeTabId } = useTabStore()
+  const { tabs } = useTabStore()
   const connection = connections.find((c) => c.id === connectionId) as
     | DatabaseConnection
     | undefined
 
-  // Get current tab data - use activeTabId to find the correct tab
-  const currentTab = tabs.find((t) => t.id === activeTabId)
+  // This container's own tab — never the active one, so tab switches
+  // cannot leak another tab's data into this editor
+  const currentTab = tabs.find((t) => t.id === tabId)
   const tabData = currentTab?.data as Record<string, unknown> | undefined
 
   const [isConnected, setIsConnected] = useState(false)
@@ -104,14 +107,16 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
   type ViewMode = 'query' | 'createTable' | 'editStructure' | 'dataEditor' | 'erDesigner'
   const [viewMode, setViewMode] = useState<ViewMode>('query')
 
+  // Table target: real database plus schema for engines that have one
+  type TableTarget = { db: string; schema?: string; table: string }
   // Dialog states (only for modal dialogs like rename, drop)
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
-  const [renameTableInfo, _setRenameTableInfo] = useState<{ db: string; table: string } | null>(null)
-  const [createTableDb, setCreateTableDb] = useState('')
-  const [editStructureTableInfo, setEditStructureTableInfo] = useState<{ db: string; table: string } | null>(null)
+  const [renameTableInfo, _setRenameTableInfo] = useState<TableTarget | null>(null)
+  const [createTableInfo, setCreateTableInfo] = useState<{ db: string; schema?: string } | null>(null)
+  const [editStructureTableInfo, setEditStructureTableInfo] = useState<TableTarget | null>(null)
   const [dropConfirmOpen, setDropConfirmOpen] = useState(false)
-  const [dropTableInfo, setDropTableInfo] = useState<{ db: string; table: string } | null>(null)
-  const [dataEditorInfo, setDataEditorInfo] = useState<{ db: string; table: string } | null>(null)
+  const [dropTableInfo, setDropTableInfo] = useState<TableTarget | null>(null)
+  const [dataEditorInfo, setDataEditorInfo] = useState<TableTarget | null>(null)
 
   // Theme styles
   const styles: ThemeStyles = useMemo(
@@ -151,7 +156,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
     setConnectionStatus(connectionId, 'connecting')
 
     try {
-      await dbConnect(buildDatabaseConnectRequest(connection, connections))
+      const info = await dbConnect(buildDatabaseConnectRequest(connection, connections))
 
       setIsConnected(true)
       setConnectionStatus(connectionId, 'connected')
@@ -161,13 +166,14 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
       const dbs = await dbGetDatabases(connection.id)
       setDatabases(dbs)
 
-      // Prefer tab's database, then the connection's default, then first in list
+      // Prefer tab's database, then the database the session actually
+      // connected to (resolved from the URL for URL-mode connections)
       const tabDb = tabData?.database as string | undefined
-      const configDb = connection.database?.trim()
+      const sessionDb = info.database ?? undefined
       const defaultDb =
-        (tabDb && dbs.includes(tabDb) && tabDb) ||
-        (configDb && dbs.includes(configDb) && configDb) ||
-        dbs[0]
+        [tabDb, sessionDb, connection.database?.trim()].find(
+          (db) => db && dbs.includes(db)
+        ) || dbs[0]
       if (defaultDb) {
         setSelectedDatabase(defaultDb)
       }
@@ -195,7 +201,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
   const handleConfirmDropTable = useCallback(async () => {
     if (!connectionId || !dropTableInfo) return
     try {
-      await dbDropTable(connectionId, dropTableInfo.db, dropTableInfo.table)
+      await dbDropTable(connectionId, dropTableInfo.db, dropTableInfo.table, dropTableInfo.schema)
       setDropConfirmOpen(false)
       setDropTableInfo(null)
       handleRefresh()
@@ -228,100 +234,61 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
     }
   }, [connection, isConnected, isConnecting, handleConnect])
 
-  // Process tab.data flags after connection - track which tab was processed
-  const processedTabId = useRef<string | null>(null)
+  // Process this tab's data once after connection
+  const tabDataProcessed = useRef(false)
   useEffect(() => {
-    // Skip if not connected, no tab data, or already processed this tab
-    if (!isConnected || !tabData || !activeTabId || processedTabId.current === activeTabId) return
-    processedTabId.current = activeTabId
+    if (!isConnected || !tabData || tabDataProcessed.current) return
+    tabDataProcessed.current = true
 
+    // The backend routes each request to (database, schema) — no reconnect needed
     const database = (tabData.database as string) || selectedDatabase
-    const isPostgres = connection?.dbType === 'postgresql'
+    const hasSchemas = connection?.dbType === 'postgresql' || connection?.dbType === 'kingbase'
+    const schema = (tabData.schemaName as string | undefined) || (hasSchemas ? 'public' : undefined)
 
-    // For PostgreSQL, ensure we're connected to the correct database before opening editors
-    const ensureConnection = async () => {
-      if (isPostgres && database && connection) {
-        // Reconnect to the specified database
-        try {
-          await dbConnect(buildDatabaseConnectRequest(connection, connections, { database }))
-        } catch (err) {
-          console.error('Failed to switch database:', err)
-        }
-      }
+    if (database) {
+      setSelectedDatabase(database)
     }
 
     // Handle initialSql
     if (tabData.initialSql) {
-      ensureConnection().then(() => {
-        setSql(tabData.initialSql as string)
-        if (database) {
-          setSelectedDatabase(database)
-        }
-        setViewMode('query')
-      })
+      setSql(tabData.initialSql as string)
+      setViewMode('query')
       return
     }
 
     // Handle editMode - open DataEditor inline
     if (tabData.editMode && tabData.tableName) {
-      ensureConnection().then(() => {
-        // For PostgreSQL, use schemaName as the table prefix (since we're connected to the database)
-        // For MySQL, use database name as the prefix
-        const schemaOrDb = (tabData.schemaName as string) || database
-        setDataEditorInfo({ db: schemaOrDb, table: tabData.tableName as string })
-        setViewMode('dataEditor')
-        if (database) {
-          setSelectedDatabase(database)
-        }
-      })
+      setDataEditorInfo({ db: database, schema, table: tabData.tableName as string })
+      setViewMode('dataEditor')
       return
     }
 
     // Handle createTable - open CreateTable inline
     if (tabData.createTable) {
-      ensureConnection().then(() => {
-        // For PostgreSQL, use schemaName as the table prefix
-        const schemaOrDb = (tabData.schemaName as string) || database
-        setCreateTableDb(schemaOrDb)
-        setViewMode('createTable')
-        if (database) {
-          setSelectedDatabase(database)
-        }
-      })
+      setCreateTableInfo({ db: database, schema })
+      setViewMode('createTable')
       return
     }
 
     // Handle editStructure - open EditStructure inline
     if (tabData.editStructure && tabData.tableName) {
-      ensureConnection().then(() => {
-        // For PostgreSQL, use schemaName as the table prefix
-        const schemaOrDb = (tabData.schemaName as string) || database
-        setEditStructureTableInfo({ db: schemaOrDb, table: tabData.tableName as string })
-        setViewMode('editStructure')
-        if (database) {
-          setSelectedDatabase(database)
-        }
-      })
+      setEditStructureTableInfo({ db: database, schema, table: tabData.tableName as string })
+      setViewMode('editStructure')
       return
     }
 
     // Handle erDesigner - open ER Diagram Designer
     if (tabData.erDesigner) {
-      ensureConnection().then(() => {
-        setViewMode('erDesigner')
-        if (database) {
-          setSelectedDatabase(database)
-        }
-      })
+      setViewMode('erDesigner')
       return
     }
-  }, [isConnected, tabData, activeTabId, selectedDatabase, setSql, connection, connections])
+  }, [isConnected, tabData, selectedDatabase, setSql, connection])
 
   // Handle back to query mode - MUST be before any conditional returns (React hooks rule)
   const handleBackToQuery = useCallback(() => {
     setViewMode('query')
     setDataEditorInfo(null)
-    setCreateTableDb('')
+    setCreateTableInfo(null)
     setEditStructureTableInfo(null)
   }, [])
 
@@ -368,6 +335,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
           <DataEditor
             connectionId={connectionId}
             database={dataEditorInfo.db}
+            schema={dataEditorInfo.schema}
             tableName={dataEditorInfo.table}
             onClose={handleBackToQuery}
             isDark={isDark}
@@ -375,7 +343,8 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
         ) : viewMode === 'createTable' ? (
           <CreateTableInline
             connectionId={connectionId}
-            database={createTableDb || selectedDatabase || ''}
+            database={createTableInfo?.db || selectedDatabase || ''}
+            schema={createTableInfo?.schema}
             onSuccess={() => {
               handleTableOperationSuccess()
               handleBackToQuery()
@@ -386,6 +355,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
           <EditTableStructureInline
             connectionId={connectionId}
             database={editStructureTableInfo.db}
+            schema={editStructureTableInfo.schema}
             tableName={editStructureTableInfo.table}
             onSuccess={() => {
               handleTableOperationSuccess()
@@ -450,6 +420,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
           onOpenChange={setRenameDialogOpen}
           connectionId={connectionId}
           database={renameTableInfo.db}
+          schema={renameTableInfo.schema}
           tableName={renameTableInfo.table}
           onSuccess={handleTableOperationSuccess}
         />
