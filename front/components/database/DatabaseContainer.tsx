@@ -14,7 +14,6 @@ import {
   dbConnect,
   dbDisconnect,
   dbGetDatabases,
-  dbGetSchemas,
   dbDropTable,
 } from '@/services/database'
 import type { DatabaseConnection } from '@/types'
@@ -157,20 +156,18 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
       setIsConnected(true)
       setConnectionStatus(connectionId, 'connected')
 
-      // Get databases/schemas list
-      let dbs: string[]
-      if (connection.dbType === 'postgresql') {
-        // For PostgreSQL, get schemas
-        dbs = await dbGetSchemas(connection.id)
-      } else {
-        // For MySQL, get databases
-        dbs = await dbGetDatabases(connection.id)
-      }
+      // The selector always lists real databases; the backend routes queries
+      // to the selected database (PostgreSQL gets a dedicated pool per database)
+      const dbs = await dbGetDatabases(connection.id)
       setDatabases(dbs)
 
-      // Prefer tab's database, fallback to first in list
+      // Prefer tab's database, then the connection's default, then first in list
       const tabDb = tabData?.database as string | undefined
-      const defaultDb = tabDb && dbs.includes(tabDb) ? tabDb : dbs[0]
+      const configDb = connection.database?.trim()
+      const defaultDb =
+        (tabDb && dbs.includes(tabDb) && tabDb) ||
+        (configDb && dbs.includes(configDb) && configDb) ||
+        dbs[0]
       if (defaultDb) {
         setSelectedDatabase(defaultDb)
       }
@@ -187,13 +184,7 @@ export function DatabaseContainer({ connectionId, className }: DatabaseContainer
     if (!connectionId || !isConnected || !connection) return
 
     try {
-      // Get databases/schemas list
-      let dbs: string[]
-      if (connection.dbType === 'postgresql') {
-        dbs = await dbGetSchemas(connectionId)
-      } else {
-        dbs = await dbGetDatabases(connectionId)
-      }
+      const dbs = await dbGetDatabases(connectionId)
       setDatabases(dbs)
     } catch (err) {
       console.error('Refresh error:', err)

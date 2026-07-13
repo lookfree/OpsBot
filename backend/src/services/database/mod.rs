@@ -8,6 +8,7 @@
 mod clickhouse;
 #[cfg(feature = "dm")]
 mod dm;
+mod factory;
 mod kingbase;
 mod mariadb;
 #[cfg(feature = "mssql")]
@@ -40,21 +41,6 @@ use crate::services::{SshService, SshTunnelHandle};
 
 #[cfg(feature = "clickhouse")]
 pub use clickhouse::{ClusterInfo, ClusterNode};
-#[cfg(feature = "clickhouse")]
-use clickhouse::ClickHouseDriver;
-#[cfg(feature = "dm")]
-use dm::DmDriver;
-use kingbase::KingBaseDriver;
-use mariadb::MariaDBDriver;
-#[cfg(feature = "mssql")]
-use mssql::MssqlDriver;
-use mysql::MySqlDriver;
-#[cfg(feature = "mysql-legacy")]
-use mysql_legacy::MySqlLegacyDriver;
-#[cfg(feature = "oracle")]
-use oracle::OracleDriver;
-use postgresql::PostgreSqlDriver;
-use sqlite::SqliteDriver;
 
 /// Database service managing all database connections
 pub struct DatabaseService {
@@ -116,181 +102,15 @@ impl DatabaseService {
             request.port = tunnel.local_port;
         }
 
-        let password = request.password.as_deref().unwrap_or("");
-
-        let (driver, schema): (Arc<dyn DatabaseDriver>, Option<String>) = match request.db_type {
-            DatabaseType::MySQL => {
-                let driver: Arc<dyn DatabaseDriver> = if let Some(ref url) = request.connection_url {
-                    Arc::new(MySqlDriver::connect_url(url).await?)
-                } else {
-                    match request.driver_version.as_deref().unwrap_or("5.7+") {
-                        "5.6" => {
-                            #[cfg(feature = "mysql-legacy")]
-                            { Arc::new(MySqlLegacyDriver::connect(&request.host, request.port, &request.username, password, request.database.as_deref()).await?) }
-                            #[cfg(not(feature = "mysql-legacy"))]
-                            { return Err("MySQL 5.6 support is not enabled in this build".to_string()); }
-                        }
-                        _ => Arc::new(
-                            MySqlDriver::connect(
-                                &request.host,
-                                request.port,
-                                &request.username,
-                                password,
-                                request.database.as_deref(),
-                            )
-                            .await?,
-                        ),
-                    }
-                };
-                (driver, None)
-            }
-            DatabaseType::PostgreSQL => {
-                let driver = if let Some(ref url) = request.connection_url {
-                    PostgreSqlDriver::connect_url(url).await?
-                } else {
-                    let database = request.database.as_deref().unwrap_or("postgres");
-                    PostgreSqlDriver::connect(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await?
-                };
-                (Arc::new(driver), Some("public".to_string()))
-            }
-            DatabaseType::MariaDB => {
-                let driver = if let Some(ref url) = request.connection_url {
-                    MariaDBDriver::connect_url(url).await?
-                } else {
-                    MariaDBDriver::connect(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        request.database.as_deref(),
-                    )
-                    .await?
-                };
-                (Arc::new(driver), None)
-            }
-            DatabaseType::SQLite => {
-                // For SQLite, the database field contains the file path
-                let file_path = request.database.as_deref().unwrap_or(":memory:");
-                let driver = SqliteDriver::connect(file_path).await?;
-                (Arc::new(driver), Some("main".to_string()))
-            }
-            #[cfg(feature = "oracle")]
-            DatabaseType::Oracle => {
-                let service_name = request.database.as_deref().unwrap_or("ORCL");
-                let driver = OracleDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    service_name,
-                )
-                .await?;
-                (Arc::new(driver), None)
-            }
-            #[cfg(not(feature = "oracle"))]
-            DatabaseType::Oracle => {
-                return Err("Oracle support is not enabled. Rebuild with --features oracle".to_string());
-            }
-            #[cfg(feature = "mssql")]
-            DatabaseType::MSSQL => {
-                let database = request.database.as_deref().unwrap_or("master");
-                let driver = MssqlDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await?;
-                (Arc::new(driver), Some("dbo".to_string()))
-            }
-            #[cfg(not(feature = "mssql"))]
-            DatabaseType::MSSQL => {
-                return Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string());
-            }
-            DatabaseType::KingBase => {
-                let driver = if let Some(ref url) = request.connection_url {
-                    KingBaseDriver::connect_url(url).await?
-                } else {
-                    let database = request.database.as_deref().unwrap_or("TEST");
-                    KingBaseDriver::connect(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await?
-                };
-                (Arc::new(driver), Some("public".to_string()))
-            }
-            #[cfg(feature = "dm")]
-            DatabaseType::DM => {
-                let database = request.database.as_deref().unwrap_or("SYSDBA");
-                let driver = DmDriver::connect(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await?;
-                (Arc::new(driver), None)
-            }
-            #[cfg(not(feature = "dm"))]
-            DatabaseType::DM => {
-                return Err("DM Database support is not enabled. Rebuild with --features dm".to_string());
-            }
-            #[cfg(feature = "clickhouse")]
-            DatabaseType::ClickHouse => {
-                let driver = if let Some(ref url) = request.connection_url {
-                    ClickHouseDriver::connect_url(url).await?
-                } else {
-                    let database = request.database.as_deref().unwrap_or("default");
-                    ClickHouseDriver::connect(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await?
-                };
-                (Arc::new(driver), None)
-            }
-            #[cfg(not(feature = "clickhouse"))]
-            DatabaseType::ClickHouse => {
-                return Err("ClickHouse support is not enabled. Rebuild with --features clickhouse".to_string());
-            }
-        };
-
-        let session = Arc::new(DatabaseSession::new(
-            request.connection_id.clone(),
-            request.db_type.clone(),
-            request.host.clone(),
-            request.port,
-            request.database.clone(),
-            schema,
-            driver,
-            ssh_tunnel,
-        ));
+        let (driver, schema) = factory::create_driver(&request).await?;
+        let session = Arc::new(DatabaseSession::new(&request, schema, driver, ssh_tunnel));
 
         let previous_session = self
             .sessions
             .write()
             .insert(request.connection_id.clone(), session.clone());
         if let Some(previous_session) = previous_session {
-            previous_session.driver.close().await;
-            if let Some(tunnel) = &previous_session.ssh_tunnel {
-                tunnel.close().await;
-            }
+            Self::close_session(&previous_session).await;
         }
 
         log::info!(
@@ -316,13 +136,21 @@ impl DatabaseService {
     pub async fn disconnect(&self, connection_id: &str) -> Result<(), String> {
         let session = self.sessions.write().remove(connection_id);
         if let Some(session) = session {
-            session.driver.close().await;
-            if let Some(tunnel) = &session.ssh_tunnel {
-                tunnel.close().await;
-            }
+            Self::close_session(&session).await;
             Ok(())
         } else {
             Err("Connection not found".to_string())
+        }
+    }
+
+    /// Close a session's drivers (base + per-database pools) and SSH tunnel.
+    async fn close_session(session: &DatabaseSession) {
+        for driver in session.take_derived_drivers() {
+            driver.close().await;
+        }
+        session.driver.close().await;
+        if let Some(tunnel) = &session.ssh_tunnel {
+            tunnel.close().await;
         }
     }
 
@@ -338,148 +166,7 @@ impl DatabaseService {
             request.port = tunnel.local_port;
         }
 
-        let password = request.password.as_deref().unwrap_or("");
-
-        let result = match request.db_type {
-            DatabaseType::MySQL => {
-                if let Some(ref url) = request.connection_url {
-                    MySqlDriver::test_connection_url(url).await
-                } else {
-                    match request.driver_version.as_deref().unwrap_or("5.7+") {
-                        "5.6" => {
-                            #[cfg(feature = "mysql-legacy")]
-                            { MySqlLegacyDriver::test_connection(&request.host, request.port, &request.username, password, request.database.as_deref()).await }
-                            #[cfg(not(feature = "mysql-legacy"))]
-                            { Err("MySQL 5.6 support is not enabled in this build".to_string()) }
-                        }
-                        _ => MySqlDriver::test_connection(
-                            &request.host,
-                            request.port,
-                            &request.username,
-                            password,
-                            request.database.as_deref(),
-                        )
-                        .await,
-                    }
-                }
-            }
-            DatabaseType::PostgreSQL => {
-                if let Some(ref url) = request.connection_url {
-                    PostgreSqlDriver::test_connection_url(url).await
-                } else {
-                    let database = request.database.as_deref().unwrap_or("postgres");
-                    PostgreSqlDriver::test_connection(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await
-                }
-            }
-            DatabaseType::MariaDB => {
-                if let Some(ref url) = request.connection_url {
-                    MariaDBDriver::test_connection_url(url).await
-                } else {
-                    MariaDBDriver::test_connection(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        request.database.as_deref(),
-                    )
-                    .await
-                }
-            }
-            DatabaseType::SQLite => {
-                let file_path = request.database.as_deref().unwrap_or(":memory:");
-                SqliteDriver::test_connection(file_path).await
-            }
-            #[cfg(feature = "oracle")]
-            DatabaseType::Oracle => {
-                let service_name = request.database.as_deref().unwrap_or("ORCL");
-                OracleDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    service_name,
-                )
-                .await
-            }
-            #[cfg(not(feature = "oracle"))]
-            DatabaseType::Oracle => {
-                Err("Oracle support is not enabled. Rebuild with --features oracle".to_string())
-            }
-            #[cfg(feature = "mssql")]
-            DatabaseType::MSSQL => {
-                let database = request.database.as_deref().unwrap_or("master");
-                MssqlDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await
-            }
-            #[cfg(not(feature = "mssql"))]
-            DatabaseType::MSSQL => {
-                Err("SQL Server support is not enabled. Rebuild with --features mssql".to_string())
-            }
-            DatabaseType::KingBase => {
-                if let Some(ref url) = request.connection_url {
-                    KingBaseDriver::test_connection_url(url).await
-                } else {
-                    let database = request.database.as_deref().unwrap_or("TEST");
-                    KingBaseDriver::test_connection(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await
-                }
-            }
-            #[cfg(feature = "dm")]
-            DatabaseType::DM => {
-                let database = request.database.as_deref().unwrap_or("SYSDBA");
-                DmDriver::test_connection(
-                    &request.host,
-                    request.port,
-                    &request.username,
-                    password,
-                    database,
-                )
-                .await
-            }
-            #[cfg(not(feature = "dm"))]
-            DatabaseType::DM => {
-                Err("DM Database support is not enabled. Rebuild with --features dm".to_string())
-            }
-            #[cfg(feature = "clickhouse")]
-            DatabaseType::ClickHouse => {
-                if let Some(ref url) = request.connection_url {
-                    ClickHouseDriver::test_connection_url(url).await
-                } else {
-                    let database = request.database.as_deref().unwrap_or("default");
-                    ClickHouseDriver::test_connection(
-                        &request.host,
-                        request.port,
-                        &request.username,
-                        password,
-                        database,
-                    )
-                    .await
-                }
-            }
-            #[cfg(not(feature = "clickhouse"))]
-            DatabaseType::ClickHouse => {
-                Err("ClickHouse support is not enabled. Rebuild with --features clickhouse".to_string())
-            }
-        };
+        let result = factory::test_driver(&request).await;
 
         if let Some(tunnel) = &ssh_tunnel {
             tunnel.close().await;
@@ -491,6 +178,9 @@ impl DatabaseService {
     /// Execute SQL query
     pub async fn execute_sql(&self, request: SqlExecuteRequest) -> Result<QueryResult, String> {
         let session = self.get_session(&request.connection_id)?;
+        let driver = self
+            .resolve_driver(&session, request.database.as_deref())
+            .await?;
 
         let sql = request.sql.trim();
         let sql_upper = sql.to_uppercase();
@@ -501,9 +191,95 @@ impl DatabaseService {
             || sql_upper.starts_with("\\D");
 
         if is_select {
-            session.driver.execute_query(sql).await
+            driver.execute_query(sql).await
         } else {
-            session.driver.execute_update(sql).await
+            driver.execute_update(sql).await
+        }
+    }
+
+    /// Resolve the driver a query should run on. When a database different
+    /// from the session's is requested on an engine that pins connections to
+    /// one database, a dedicated pool for that database is opened (and cached
+    /// on the session). Unknown names fall back to the session driver so
+    /// callers passing schema names keep the old behavior.
+    async fn resolve_driver(
+        &self,
+        session: &Arc<DatabaseSession>,
+        database: Option<&str>,
+    ) -> Result<Arc<dyn DatabaseDriver>, String> {
+        let Some(db) = database.map(str::trim).filter(|db| !db.is_empty()) else {
+            return Ok(session.driver.clone());
+        };
+        if !factory::supports_database_switch(&session.db_type)
+            || session.database.as_deref() == Some(db)
+        {
+            return Ok(session.driver.clone());
+        }
+        if let Some(driver) = session.derived_drivers.read().get(db).cloned() {
+            return Ok(driver);
+        }
+        if !Self::database_exists(session, db).await {
+            log::warn!(
+                "[DB_ROUTE] id={} requested database '{}' not found on server, using session database '{}'",
+                session.connection_id,
+                db,
+                session.database.as_deref().unwrap_or("")
+            );
+            return Ok(session.driver.clone());
+        }
+        let driver = factory::create_driver_for_database(session, db).await?;
+        let driver = session
+            .derived_drivers
+            .write()
+            .entry(db.to_string())
+            .or_insert(driver)
+            .clone();
+        log::info!(
+            "[DB_ROUTE] id={} opened dedicated pool for database '{}'",
+            session.connection_id,
+            db
+        );
+        Ok(driver)
+    }
+
+    /// Check the requested name against the server's database list (cached
+    /// per session, refreshed on a miss).
+    async fn database_exists(session: &Arc<DatabaseSession>, db: &str) -> bool {
+        let cached = session.known_databases.read().clone();
+        if let Some(list) = cached {
+            if list.iter().any(|name| name == db) {
+                return true;
+            }
+        }
+        match session.driver.get_databases().await {
+            Ok(list) => {
+                let found = list.iter().any(|name| name == db);
+                *session.known_databases.write() = Some(list);
+                found
+            }
+            Err(err) => {
+                log::warn!(
+                    "[DB_ROUTE] id={} failed to list databases: {}",
+                    session.connection_id,
+                    err
+                );
+                false
+            }
+        }
+    }
+
+    /// Driver for metadata/object operations scoped to a database. Only the
+    /// PostgreSQL family needs a dedicated pool; MySQL-family drivers scope
+    /// these queries with the database name in SQL.
+    async fn driver_for_object(
+        &self,
+        session: &Arc<DatabaseSession>,
+        database: Option<&str>,
+    ) -> Result<Arc<dyn DatabaseDriver>, String> {
+        if factory::requires_dedicated_database_pool(&session.db_type) {
+            self.resolve_driver(session, database).await
+        } else {
+            Ok(session.driver.clone())
         }
     }
 
@@ -571,7 +347,8 @@ impl DatabaseService {
     /// Get all schemas (PostgreSQL only)
     pub async fn get_schemas(&self, connection_id: &str, database: Option<&str>) -> Result<Vec<String>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_schemas(database).await
+        let driver = self.driver_for_object(&session, database).await?;
+        driver.get_schemas(database).await
     }
 
     /// Get tables in a database/schema
@@ -582,7 +359,8 @@ impl DatabaseService {
         schema: Option<&str>,
     ) -> Result<Vec<TableInfo>, String> {
         let session = self.get_session(connection_id)?;
-        let tables = session.driver.get_tables(database, schema).await?;
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        let tables = driver.get_tables(database, schema).await?;
         log::info!(
             "[DB_TREE] tables id={} type={:?} database={} schema={} count={}",
             connection_id,
@@ -602,7 +380,8 @@ impl DatabaseService {
         table: &str,
     ) -> Result<TableStructure, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_table_structure(database, table).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_table_structure(database, table).await
     }
 
     /// Get views in a database/schema
@@ -613,7 +392,8 @@ impl DatabaseService {
         schema: Option<&str>,
     ) -> Result<Vec<ViewInfo>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_views(database, schema).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_views(database, schema).await
     }
 
     /// Get functions and procedures
@@ -624,7 +404,8 @@ impl DatabaseService {
         schema: Option<&str>,
     ) -> Result<Vec<RoutineInfo>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_routines(database, schema).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_routines(database, schema).await
     }
 
     /// Get database objects count
@@ -635,7 +416,8 @@ impl DatabaseService {
         schema: Option<&str>,
     ) -> Result<DatabaseObjectsCount, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_objects_count(database, schema).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_objects_count(database, schema).await
     }
 
     /// Get table DDL
@@ -646,7 +428,8 @@ impl DatabaseService {
         table: &str,
     ) -> Result<String, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_table_ddl(database, table).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_table_ddl(database, table).await
     }
 
     /// Rename a table
@@ -658,10 +441,8 @@ impl DatabaseService {
         new_name: &str,
     ) -> Result<(), String> {
         let session = self.get_session(connection_id)?;
-        session
-            .driver
-            .rename_table(database, old_name, new_name)
-            .await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.rename_table(database, old_name, new_name).await
     }
 
     /// Drop a table
@@ -672,7 +453,8 @@ impl DatabaseService {
         table: &str,
     ) -> Result<(), String> {
         let session = self.get_session(connection_id)?;
-        session.driver.drop_table(database, table).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.drop_table(database, table).await
     }
 
     /// Get foreign keys for a table
@@ -683,7 +465,8 @@ impl DatabaseService {
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_foreign_keys(database, table).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_foreign_keys(database, table).await
     }
 
     /// Get check constraints for a table
@@ -694,7 +477,8 @@ impl DatabaseService {
         table: &str,
     ) -> Result<Vec<CheckConstraintInfo>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_check_constraints(database, table).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_check_constraints(database, table).await
     }
 
     /// Get triggers for a table
@@ -705,7 +489,8 @@ impl DatabaseService {
         table: &str,
     ) -> Result<Vec<TriggerInfo>, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_triggers(database, table).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_triggers(database, table).await
     }
 
     /// Get table options
@@ -716,7 +501,8 @@ impl DatabaseService {
         table: &str,
     ) -> Result<TableOptions, String> {
         let session = self.get_session(connection_id)?;
-        session.driver.get_table_options(database, table).await
+        let driver = self.driver_for_object(&session, Some(database)).await?;
+        driver.get_table_options(database, table).await
     }
 
     /// Get extended table structure with all details

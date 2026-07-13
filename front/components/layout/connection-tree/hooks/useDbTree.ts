@@ -289,12 +289,8 @@ export function useDbTree({ connection, onStatusChange }: UseDbTreeOptions): Use
   const refreshDatabases = useCallback(async () => {
     setDbLoading(true)
     try {
-      let dbs: string[]
-      if (connection.dbType === 'postgresql') {
-        dbs = await dbGetSchemas(connection.id)
-      } else {
-        dbs = await dbGetDatabases(connection.id)
-      }
+      // Top level of the tree is always real databases (schemas live one level below)
+      const dbs = await dbGetDatabases(connection.id)
       const visibleDbs = getVisibleDatabases(dbs)
       console.info('[DB_TREE_UI] databases refreshed', {
         connectionId: connection.id,
