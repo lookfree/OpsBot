@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { useThemeStore } from '@/stores'
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 import {
   RefreshCw,
   Settings,
@@ -116,7 +117,7 @@ export function DockerSettings({ connectionId }: DockerSettingsProps) {
 
   // Stop daemon
   const handleStopDaemon = async () => {
-    if (!confirm(t('docker.confirmStopDaemon'))) return
+    if (!(await confirmDialog(t('docker.confirmStopDaemon')))) return
     setError(null)
     try {
       await dockerStopDaemon(connectionId)
@@ -128,7 +129,7 @@ export function DockerSettings({ connectionId }: DockerSettingsProps) {
 
   // Restart daemon
   const handleRestartDaemon = async () => {
-    if (!confirm(t('docker.confirmRestartDaemon'))) return
+    if (!(await confirmDialog(t('docker.confirmRestartDaemon')))) return
     setError(null)
     try {
       await dockerRestartDaemon(connectionId)

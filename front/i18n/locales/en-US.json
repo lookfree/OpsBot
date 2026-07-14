@@ -893,7 +893,8 @@
       "usernameRequired": "Username is required for basic auth",
       "passwordRequired": "Password is required for basic auth",
       "apiKeyRequired": "API Key is required"
-    }
+    },
+    "deleting": "Deleting indices..."
   },
   "docker": {
     "newConnection": "New Docker Connection",

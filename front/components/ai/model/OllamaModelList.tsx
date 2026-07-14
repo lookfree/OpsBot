@@ -17,6 +17,7 @@ import {
 import type { OllamaModel } from '@/types'
 import { formatModelSize, formatModelTime } from '@/types'
 import { useAiStyles } from '../hooks'
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 
 interface OllamaModelListProps {
   models: OllamaModel[]
@@ -44,7 +45,7 @@ export function OllamaModelList({
   const handleDelete = async (modelName: string) => {
     if (deletingModel) return
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       t('ai.model.confirmDelete', 'Are you sure you want to delete {{name}}?').replace(
         '{{name}}',
         modelName

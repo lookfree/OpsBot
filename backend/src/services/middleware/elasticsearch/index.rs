@@ -18,12 +18,18 @@ pub async fn get_indices(
     driver: &ElasticsearchDriver,
     pattern: Option<&str>,
 ) -> Result<Vec<EsIndexSummary>, String> {
-    let index_pattern = pattern.unwrap_or("*");
+    // _cat/indices does index-expression matching (exact name or explicit
+    // wildcards), so wrap plain text for the substring search users expect.
+    let index_pattern = match pattern.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) if p.contains('*') || p.contains('?') => p.to_string(),
+        Some(p) => format!("*{}*", p),
+        None => "*".to_string(),
+    };
 
     let response = driver
         .client()
         .cat()
-        .indices(CatIndicesParts::Index(&[index_pattern]))
+        .indices(CatIndicesParts::Index(&[index_pattern.as_str()]))
         .format("json")
         .h(&[
             "index", "health", "status", "uuid", "docs.count", "docs.deleted",
@@ -32,6 +38,16 @@ pub async fn get_indices(
         .send()
         .await
         .map_err(|e| format!("Failed to get indices: {}", e))?;
+
+    // No index matches the pattern — an empty list, not an error
+    if response.status_code().as_u16() == 404 {
+        return Ok(Vec::new());
+    }
+    if !response.status_code().is_success() {
+        let status = response.status_code();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Failed to get indices ({}): {}", status, body));
+    }
 
     let indices: Vec<serde_json::Value> = response
         .json()

@@ -893,7 +893,8 @@
       "usernameRequired": "基础认证需要用户名",
       "passwordRequired": "基础认证需要密码",
       "apiKeyRequired": "API Key 不能为空"
-    }
+    },
+    "deleting": "正在删除索引..."
   },
   "docker": {
     "newConnection": "新建 Docker 连接",

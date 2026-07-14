@@ -37,6 +37,7 @@ import {
   type EsIndexSummary,
   type EsCreateIndexRequest,
 } from '@/services/middleware'
+import { confirm as confirmDialog, message as messageDialog } from '@tauri-apps/plugin-dialog'
 
 interface ThemeStyles {
   bgSecondary: string
@@ -70,6 +71,7 @@ export function ElasticsearchIndices({ connectionId, styles }: ElasticsearchIndi
   const [isEditMode, setIsEditMode] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null)
 
   // Create index form state
   const [newIndexName, setNewIndexName] = useState('')
@@ -168,18 +170,19 @@ export function ElasticsearchIndices({ connectionId, styles }: ElasticsearchIndi
       loadIndices()
     } catch (err) {
       console.error('Failed to create index:', err)
-      alert(String(err))
+      messageDialog(String(err), { kind: 'error' })
     }
   }, [connectionId, newIndexName, newIndexSettings, newIndexMappings, loadIndices])
 
   // Delete index
   const handleDeleteIndex = useCallback(async (indexName: string) => {
-    if (!confirm(t('elasticsearch.confirmDelete', `Delete index "${indexName}"?`))) return
+    if (!(await confirmDialog(t('elasticsearch.confirmDelete', { indexName, defaultValue: `Delete index "${indexName}"?` })))) return
     try {
       await mwEsDeleteIndex(connectionId, indexName)
       loadIndices()
     } catch (err) {
       console.error('Failed to delete index:', err)
+      messageDialog(String(err), { kind: 'error' })
     }
     setContextMenuIndex(null)
   }, [connectionId, loadIndices, t])
@@ -187,15 +190,26 @@ export function ElasticsearchIndices({ connectionId, styles }: ElasticsearchIndi
   // Delete selected indices
   const handleDeleteSelected = useCallback(async () => {
     if (selectedIndices.size === 0) return
-    if (!confirm(t('elasticsearch.confirmDeleteMultiple', `Delete ${selectedIndices.size} indices?`))) return
+    if (!(await confirmDialog(t('elasticsearch.confirmDeleteMultiple', { count: selectedIndices.size, defaultValue: `Delete ${selectedIndices.size} indices?` })))) return
+    const targets = Array.from(selectedIndices)
+    const failures: string[] = []
+    setDeleteProgress({ done: 0, total: targets.length })
     try {
-      for (const indexName of selectedIndices) {
-        await mwEsDeleteIndex(connectionId, indexName)
+      for (let i = 0; i < targets.length; i++) {
+        try {
+          await mwEsDeleteIndex(connectionId, targets[i])
+        } catch (err) {
+          failures.push(`${targets[i]}: ${err}`)
+        }
+        setDeleteProgress({ done: i + 1, total: targets.length })
       }
-      setSelectedIndices(new Set())
-      loadIndices()
-    } catch (err) {
-      console.error('Failed to delete indices:', err)
+    } finally {
+      setDeleteProgress(null)
+    }
+    setSelectedIndices(new Set())
+    loadIndices()
+    if (failures.length > 0) {
+      messageDialog(failures.join('\n'), { kind: 'error' })
     }
   }, [connectionId, selectedIndices, loadIndices, t])
 
@@ -256,7 +270,7 @@ export function ElasticsearchIndices({ connectionId, styles }: ElasticsearchIndi
       setEditContent('')
     } catch (err) {
       console.error(`Failed to save ${modalType}:`, err)
-      alert(String(err))
+      messageDialog(String(err), { kind: 'error' })
     } finally {
       setIsSaving(false)
     }
@@ -424,7 +438,7 @@ export function ElasticsearchIndices({ connectionId, styles }: ElasticsearchIndi
         <span className={styles.textSecondary}>
           {selectedIndices.size > 0 && (
             <span className="mr-4">
-              {t('elasticsearch.selectedCount', `${selectedIndices.size} selected`)}
+              {t('elasticsearch.selectedCount', { count: selectedIndices.size, defaultValue: `${selectedIndices.size} selected` })}
             </span>
           )}
         </span>
@@ -439,10 +453,31 @@ export function ElasticsearchIndices({ connectionId, styles }: ElasticsearchIndi
             </button>
           )}
           <span className={styles.textSecondary}>
-            {t('elasticsearch.totalIndices', `${filteredIndices.length} indices`)}
+            {t('elasticsearch.totalIndices', { count: filteredIndices.length, defaultValue: `${filteredIndices.length} indices` })}
           </span>
         </div>
       </div>
+
+      {/* Batch Delete Progress */}
+      {deleteProgress && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className={cn('w-full max-w-sm rounded-lg shadow-xl border p-6', styles.bgSecondary, styles.borderColor)}>
+            <div className="flex items-center gap-2 mb-3">
+              <Trash2 className="w-4 h-4 text-red-500" />
+              <span className="font-medium">{t('elasticsearch.deleting', 'Deleting indices...')}</span>
+            </div>
+            <div className={cn('h-2 rounded-full overflow-hidden mb-2', styles.borderColor, 'bg-black/10')}>
+              <div
+                className="h-full bg-accent-primary transition-all duration-200"
+                style={{ width: `${Math.round((deleteProgress.done / deleteProgress.total) * 100)}%` }}
+              />
+            </div>
+            <div className={cn('text-sm text-right', styles.textSecondary)}>
+              {deleteProgress.done} / {deleteProgress.total}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Index Modal */}
       {modalType === 'create' && (

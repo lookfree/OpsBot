@@ -884,7 +884,8 @@
       "usernameRequired": "基本認証にはユーザー名が必要です",
       "passwordRequired": "基本認証にはパスワードが必要です",
       "apiKeyRequired": "API Key は必須です"
-    }
+    },
+    "deleting": "インデックスを削除中..."
   },
   "docker": {
     "newConnection": "新規 Docker 接続",

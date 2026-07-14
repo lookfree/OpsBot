@@ -7,6 +7,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 import {
   Search,
   RefreshCw,
@@ -149,7 +150,7 @@ export function RedisKeys({
   const handleDeleteSelected = useCallback(async () => {
     if (selectedKeys.size === 0) return
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       t('redis.confirmDeleteKeys', 'Are you sure you want to delete {{count}} key(s)?').replace(
         '{{count}}',
         String(selectedKeys.size)

@@ -884,7 +884,8 @@
       "usernameRequired": "基礎認證需要使用者名稱",
       "passwordRequired": "基礎認證需要密碼",
       "apiKeyRequired": "API Key 不能為空"
-    }
+    },
+    "deleting": "正在刪除索引..."
   },
   "docker": {
     "newConnection": "新增 Docker 連線",

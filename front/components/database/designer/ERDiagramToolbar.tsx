@@ -11,6 +11,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import { DatabaseDialect } from './types'
 import { generateSQL } from '@/utils/sql-generator'
 import { Undo2, Redo2 } from 'lucide-react'
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 
 interface ERDiagramToolbarProps {
   onClose?: () => void
@@ -136,8 +137,8 @@ export function ERDiagramToolbar({ onClose }: ERDiagramToolbarProps) {
   }, [diagram])
 
   // 清空图表
-  const handleClear = useCallback(() => {
-    if (window.confirm(t('database.erDesigner.confirmClearDiagram'))) {
+  const handleClear = useCallback(async () => {
+    if (await confirmDialog(t('database.erDesigner.confirmClearDiagram'))) {
       reset()
     }
   }, [reset, t])

@@ -32,6 +32,7 @@ import {
 } from '@/services/docker'
 import { ComposeDetail } from './ComposeDetail'
 import { CreateComposeDialog } from './CreateComposeDialog'
+import { confirm as confirmDialog, message as messageDialog } from '@tauri-apps/plugin-dialog'
 
 interface ComposeListProps {
   connectionId: string
@@ -152,7 +153,7 @@ export function ComposeList({ connectionId }: ComposeListProps) {
 
   const handleRemove = useCallback(
     async (projectName: string, removeVolumes: boolean = false) => {
-      if (!confirm(t('docker.confirmRemoveCompose'))) return
+      if (!(await confirmDialog(t('docker.confirmRemoveCompose')))) return
 
       setActionLoading((prev) => ({ ...prev, [projectName]: true }))
       try {
@@ -180,7 +181,7 @@ export function ComposeList({ connectionId }: ComposeListProps) {
         const path = await dockerGetComposePath(connectionId, projectName)
         // In a real app, this would open the file explorer
         // For now, just show the path
-        alert(`${t('docker.composePath')}: ${path}`)
+        messageDialog(`${t('docker.composePath')}: ${path}`)
       } catch (err) {
         setError(String(err))
       }

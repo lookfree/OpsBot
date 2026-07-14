@@ -32,6 +32,7 @@ import {
   type EsCreateDocRequest,
   type EsUpdateDocRequest,
 } from '@/services/middleware'
+import { confirm as confirmDialog, message as messageDialog } from '@tauri-apps/plugin-dialog'
 
 interface ThemeStyles {
   bgSecondary: string
@@ -219,7 +220,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
       loadDocuments()
     } catch (err) {
       console.error('Failed to create document:', err)
-      alert(String(err))
+      messageDialog(String(err), { kind: 'error' })
     } finally {
       setIsSaving(false)
     }
@@ -242,7 +243,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
       loadDocuments()
     } catch (err) {
       console.error('Failed to update document:', err)
-      alert(String(err))
+      messageDialog(String(err), { kind: 'error' })
     } finally {
       setIsSaving(false)
     }
@@ -251,13 +252,14 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
   // Delete document
   const handleDeleteDocument = useCallback(async (docId: string) => {
     if (!selectedIndex) return
-    if (!confirm(t('elasticsearch.doc.confirmDelete', 'Delete this document?'))) return
+    if (!(await confirmDialog(t('elasticsearch.doc.confirmDelete', 'Delete this document?')))) return
 
     try {
       await mwEsDeleteDocument(connectionId, selectedIndex, docId)
       loadDocuments()
     } catch (err) {
       console.error('Failed to delete document:', err)
+      messageDialog(String(err), { kind: 'error' })
     }
     setContextMenuDocId(null)
   }, [connectionId, selectedIndex, loadDocuments, t])
@@ -265,7 +267,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
   // Delete selected documents
   const handleDeleteSelected = useCallback(async () => {
     if (!selectedIndex || selectedDocs.size === 0) return
-    if (!confirm(t('elasticsearch.doc.confirmDeleteMultiple', { count: selectedDocs.size }))) return
+    if (!(await confirmDialog(t('elasticsearch.doc.confirmDeleteMultiple', { count: selectedDocs.size })))) return
 
     try {
       for (const docId of selectedDocs) {
@@ -275,6 +277,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
       loadDocuments()
     } catch (err) {
       console.error('Failed to delete documents:', err)
+      messageDialog(String(err), { kind: 'error' })
     }
   }, [connectionId, selectedIndex, selectedDocs, loadDocuments, t])
 

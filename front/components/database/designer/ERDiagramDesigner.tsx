@@ -15,6 +15,7 @@ import { IndexEditPanel } from './IndexEditPanel'
 import { RelationshipEditPanel } from './RelationshipEditPanel'
 import { TableField, TableIndex, Relationship, TABLE_COLORS } from './types'
 import type { DatabaseType } from '@/config/datatypes/types'
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 
 interface ERDiagramDesignerProps {
   onClose?: () => void
@@ -155,8 +156,8 @@ export function ERDiagramDesigner({ onClose, className = '' }: ERDiagramDesigner
   )
 
   // 删除表
-  const handleDeleteTable = useCallback(() => {
-    if (selectedTableId && window.confirm(t('database.erDesigner.confirmDeleteTable'))) {
+  const handleDeleteTable = useCallback(async () => {
+    if (selectedTableId && (await confirmDialog(t('database.erDesigner.confirmDeleteTable')))) {
       deleteTable(selectedTableId)
     }
   }, [selectedTableId, deleteTable, t])
