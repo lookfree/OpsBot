@@ -396,7 +396,7 @@ export function RedisExportDialog({
           styles.borderColor
         )}>
           <span className={cn('text-sm', styles.textSecondary)}>
-            {t('redis.totalCommands', { count: commandCount })}
+            {t('redis.totalCommands_export', { count: commandCount })}
           </span>
           <div className="flex gap-2">
             <button

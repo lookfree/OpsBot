@@ -262,8 +262,10 @@ pub struct RedisSetRequest {
     pub key: String,
     pub value: RedisValue,
     pub ttl: Option<i64>, // seconds, None means permanent
-    pub nx: bool,         // only set if key doesn't exist
-    pub xx: bool,         // only set if key exists
+    #[serde(default)]
+    pub nx: bool, // only set if key doesn't exist
+    #[serde(default)]
+    pub xx: bool, // only set if key exists
 }
 
 // ============ Command Models ============

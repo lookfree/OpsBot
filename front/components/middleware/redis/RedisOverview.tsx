@@ -146,7 +146,7 @@ export function RedisOverview({
         <StatCard
           icon={<TrendingUp className="w-5 h-5" />}
           label={t('redis.hitRate', 'Hit Rate')}
-          value={`${(redisInfo.stats.hitRate * 100).toFixed(1)}%`}
+          value={`${redisInfo.stats.hitRate.toFixed(1)}%`}
           styles={styles}
         />
         <StatCard

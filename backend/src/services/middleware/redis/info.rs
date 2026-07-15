@@ -19,7 +19,7 @@ pub async fn get_info(driver: &RedisDriver, section: Option<&str>) -> Result<Red
     let info_str = driver.execute_info(section).await?;
 
     log::info!("Redis INFO: got {} bytes response", info_str.len());
-    log::debug!("Redis INFO raw (first 500 chars): {}", &info_str[..info_str.len().min(500)]);
+    log::debug!("Redis INFO raw (first 500 chars): {}", info_str.chars().take(500).collect::<String>());
 
     parse_info(&info_str)
 }

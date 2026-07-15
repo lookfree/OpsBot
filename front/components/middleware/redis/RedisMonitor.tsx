@@ -253,10 +253,10 @@ export function RedisMonitor({ connectionId, styles }: RedisMonitorProps) {
             <MonitorCard
               icon={<TrendingUp className="w-5 h-5" />}
               label={t('redis.hitRate', '命中率')}
-              value={`${(redisInfo.stats.hitRate * 100).toFixed(1)}%`}
+              value={`${redisInfo.stats.hitRate.toFixed(1)}%`}
               trend={getTrend('hitRate')}
               stats={getStats('hitRate')}
-              formatValue={(v) => `${(v * 100).toFixed(1)}%`}
+              formatValue={(v) => `${v.toFixed(1)}%`}
               styles={styles}
             />
           </div>
