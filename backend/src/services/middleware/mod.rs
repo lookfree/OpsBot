@@ -97,6 +97,10 @@ impl MiddlewareService {
         )
         .await?;
 
+        // Verify the brokers are actually reachable before reporting success.
+        // (Client creation alone is lazy and never touches the network.)
+        driver.test_connection().await?;
+
         let cluster_id = driver.get_cluster_info().await.ok().map(|c| c.cluster_id);
 
         let session = Arc::new(MiddlewareSession::new(

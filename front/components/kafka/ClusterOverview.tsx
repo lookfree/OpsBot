@@ -62,7 +62,7 @@ export function ClusterOverview({ clusterInfo, onRefresh, styles }: ClusterOverv
         <StatCard
           icon={<Crown className="w-5 h-5" />}
           label={t('kafka.controllerId')}
-          value={clusterInfo.controllerId}
+          value={clusterInfo.controllerId < 0 ? t('common.unknown', 'N/A') : clusterInfo.controllerId}
           styles={styles}
         />
       </div>

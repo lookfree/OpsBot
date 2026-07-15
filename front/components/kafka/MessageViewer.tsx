@@ -109,6 +109,16 @@ export function MessageViewer({ connectionId, topicName, onClose, styles }: Mess
     }
   }
 
+  // Badge shown when a key/value was not valid UTF-8 and is base64-encoded.
+  const BinaryBadge = () => (
+    <span
+      title={t('kafka.binaryHint', 'Not valid UTF-8; shown base64-encoded')}
+      className="px-1 rounded text-[10px] font-mono bg-accent-primary/20 text-accent-primary"
+    >
+      BASE64
+    </span>
+  )
+
   const inputStyles = cn(
     'px-3 py-1.5 rounded text-sm',
     'border bg-transparent',
@@ -199,6 +209,7 @@ export function MessageViewer({ connectionId, topicName, onClose, styles }: Mess
                         <div className="flex items-center gap-1 text-xs mb-1">
                           <Key className="w-3 h-3" />
                           <span className="font-mono truncate">{msg.key}</span>
+                          {msg.keyBinary && <BinaryBadge />}
                         </div>
                       )}
                       <div className={cn('text-sm truncate', styles.textSecondary)}>
@@ -249,6 +260,7 @@ export function MessageViewer({ connectionId, topicName, onClose, styles }: Mess
                         <div className={cn('flex items-center gap-2 text-sm font-medium mb-2', styles.textSecondary)}>
                           <Key className="w-4 h-4" />
                           {t('kafka.key')}
+                          {selectedMessage.keyBinary && <BinaryBadge />}
                         </div>
                         <pre className={cn('p-3 rounded text-sm font-mono overflow-auto', styles.bgSecondary)}>
                           {selectedMessage.key}
@@ -261,9 +273,12 @@ export function MessageViewer({ connectionId, topicName, onClose, styles }: Mess
                       <div className={cn('flex items-center gap-2 text-sm font-medium mb-2', styles.textSecondary)}>
                         <FileText className="w-4 h-4" />
                         {t('kafka.value')}
+                        {selectedMessage.valueBinary && <BinaryBadge />}
                       </div>
                       <pre className={cn('p-3 rounded text-sm font-mono overflow-auto max-h-64', styles.bgSecondary)}>
-                        {formatValue(selectedMessage.value) || t('kafka.emptyValue')}
+                        {selectedMessage.valueBinary
+                          ? selectedMessage.value
+                          : formatValue(selectedMessage.value) || t('kafka.emptyValue')}
                       </pre>
                     </div>
 

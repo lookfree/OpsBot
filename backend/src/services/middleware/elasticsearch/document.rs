@@ -2,6 +2,7 @@
 //!
 //! Handles document CRUD and bulk operations.
 
+use elasticsearch::params::OpType;
 use elasticsearch::{BulkOperation, BulkParts, DeleteParts, GetParts, IndexParts, UpdateParts};
 
 use crate::models::{
@@ -47,10 +48,14 @@ pub async fn create_document(
     driver: &ElasticsearchDriver,
     request: EsCreateDocRequest,
 ) -> Result<EsDocResponse, String> {
+    // With an explicit id, use op_type=create so an existing document is NOT
+    // silently overwritten (ES returns 409 instead). Without an id, ES
+    // auto-generates one and always creates.
     let index_request = if let Some(id) = &request.id {
         driver
             .client()
             .index(IndexParts::IndexId(&request.index, id))
+            .op_type(OpType::Create)
     } else {
         driver.client().index(IndexParts::Index(&request.index))
     };
@@ -175,6 +180,18 @@ pub async fn bulk_operation(
         .send()
         .await
         .map_err(|e| format!("Failed to execute bulk operation: {}", e))?;
+
+    // A whole-request failure (auth, payload too large, 5xx) won't contain an
+    // `items` array, so check the HTTP status before treating it as success.
+    let status = response.status_code();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Bulk operation failed ({}): {}",
+            status.as_u16(),
+            if body.is_empty() { "empty response" } else { &body }
+        ));
+    }
 
     let json: serde_json::Value = response
         .json()

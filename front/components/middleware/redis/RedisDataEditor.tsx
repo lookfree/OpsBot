@@ -89,9 +89,13 @@ export function RedisDataEditor({
     loadValue()
   }, [loadValue])
 
+  // Read-only value types cannot be written back to Redis.
+  const isReadOnly =
+    !value || value.type === 'Binary' || value.type === 'Stream' || value.type === 'None'
+
   // Save value
   const handleSave = useCallback(async () => {
-    if (!value) return
+    if (!value || isReadOnly) return
 
     setSaving(true)
     try {
@@ -106,7 +110,7 @@ export function RedisDataEditor({
     } finally {
       setSaving(false)
     }
-  }, [connectionId, keyName, value, ttl])
+  }, [connectionId, keyName, value, ttl, isReadOnly])
 
   // Update TTL
   const handleUpdateTtl = useCallback(async () => {
@@ -336,7 +340,8 @@ export function RedisDataEditor({
         </button>
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || isReadOnly}
+          title={isReadOnly ? t('redis.readOnlyValue', 'This value type is read-only') : undefined}
           className="px-4 py-1.5 rounded bg-accent-primary text-white text-sm hover:bg-accent-hover disabled:opacity-50 flex items-center gap-2"
         >
           <Save className="w-4 h-4" />
@@ -400,6 +405,8 @@ function ValueEditor({ value, onChange, styles }: ValueEditorProps) {
       )
     case 'Stream':
       return <StreamViewer value={value.data} styles={styles} />
+    case 'Binary':
+      return <BinaryViewer value={value.data} styles={styles} />
     case 'None':
       return (
         <div className={cn('text-center py-8', styles.textSecondary)}>
@@ -409,6 +416,28 @@ function ValueEditor({ value, onChange, styles }: ValueEditorProps) {
     default:
       return null
   }
+}
+
+// Binary Viewer (read-only, base64-encoded raw bytes)
+function BinaryViewer({ value, styles }: { value: string; styles: ThemeStyles }) {
+  const { t } = useTranslation()
+  return (
+    <div className="space-y-3">
+      <p className={cn('text-sm', styles.textSecondary)}>
+        {t('redis.binaryReadOnly', 'Value is not valid UTF-8; showing base64-encoded raw bytes (read-only)')}
+      </p>
+      <textarea
+        value={value}
+        readOnly
+        className={cn(
+          'w-full h-full min-h-[200px] p-3 rounded border font-mono text-sm resize-none',
+          'focus:outline-none',
+          styles.borderColor,
+          styles.isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-primary'
+        )}
+      />
+    </div>
+  )
 }
 
 // String Editor

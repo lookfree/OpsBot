@@ -176,10 +176,13 @@ pub async fn get_key_ttl(driver: &RedisDriver, key: &str) -> Result<i64, String>
 
 /// Set key TTL
 /// ttl > 0: set expire in seconds
-/// ttl < 0: remove expire (persist)
+/// ttl <= 0: remove expire (persist)
+///
+/// Note: `ttl == 0` is treated as "persist" rather than `EXPIRE key 0`, which
+/// would immediately delete the key.
 pub async fn set_key_ttl(driver: &RedisDriver, key: &str, ttl: i64) -> Result<(), String> {
-    if ttl < 0 {
-        // Remove expiration
+    if ttl <= 0 {
+        // Remove expiration (never delete via EXPIRE 0)
         let _: i64 = driver.execute_raw("PERSIST", &[key]).await?;
     } else {
         // Set expiration
@@ -195,23 +198,33 @@ pub async fn delete_keys(driver: &RedisDriver, keys: Vec<String>) -> Result<i64,
         return Ok(0);
     }
 
-    let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-
     let mut conn = driver.get_connection_clone();
-    let mut cmd = redis::cmd("DEL");
-    for key in &key_refs {
-        cmd.arg(*key);
-    }
 
     match &mut conn {
-        RedisConnection::Standalone(c) => cmd
-            .query_async(c)
-            .await
-            .map_err(|e| format!("DEL failed: {}", e)),
-        RedisConnection::Cluster(c) => cmd
-            .query_async(c)
-            .await
-            .map_err(|e| format!("DEL failed: {}", e)),
+        RedisConnection::Standalone(c) => {
+            // Single multi-key DEL is fine on a standalone server.
+            let mut cmd = redis::cmd("DEL");
+            for key in &keys {
+                cmd.arg(key);
+            }
+            cmd.query_async(c)
+                .await
+                .map_err(|e| format!("DEL failed: {}", e))
+        }
+        RedisConnection::Cluster(c) => {
+            // A single multi-key DEL fails with CROSSSLOT when keys hash to
+            // different slots, so delete one key at a time and sum the results.
+            let mut deleted: i64 = 0;
+            for key in &keys {
+                let n: i64 = redis::cmd("DEL")
+                    .arg(key)
+                    .query_async(c)
+                    .await
+                    .map_err(|e| format!("DEL failed for '{}': {}", key, e))?;
+                deleted += n;
+            }
+            Ok(deleted)
+        }
     }
 }
 

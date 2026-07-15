@@ -250,6 +250,8 @@ pub enum RedisValue {
     Hash(Vec<(String, String)>),
     ZSet(Vec<(String, f64)>), // (member, score)
     Stream(Vec<RedisStreamEntry>),
+    /// Base64-encoded raw bytes for values that are not valid UTF-8 (read-only).
+    Binary(String),
     None,
 }
 

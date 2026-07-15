@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use redis::aio::MultiplexedConnection;
 use redis::Client;
 use tokio::sync::Mutex;
@@ -28,7 +29,9 @@ pub enum RedisConnection {
 
 /// Redis driver implementation
 pub struct RedisDriver {
-    connection: Arc<RedisConnection>,
+    /// Guarded by an RwLock so `select_database` can atomically swap in a fresh
+    /// connection bound to the selected DB (which also survives reconnects).
+    connection: RwLock<RedisConnection>,
     config: RedisConnectRequest,
     current_db: Arc<Mutex<u8>>,
 }
@@ -45,7 +48,7 @@ impl RedisDriver {
         let db = config.db.unwrap_or(0);
 
         Ok(Self {
-            connection: Arc::new(connection),
+            connection: RwLock::new(connection),
             config,
             current_db: Arc::new(Mutex::new(db)),
         })
@@ -154,7 +157,8 @@ impl RedisDriver {
         password: &Option<String>,
     ) -> Result<(String, u16), String> {
         let url = if let Some(pwd) = password {
-            format!("redis://:{}@{}", pwd, sentinel_addr)
+            // URL-encode the password so special characters (@ : / %) don't break parsing.
+            format!("redis://:{}@{}", urlencoding::encode(pwd), sentinel_addr)
         } else {
             format!("redis://{}", sentinel_addr)
         };
@@ -182,11 +186,18 @@ impl RedisDriver {
         }
     }
 
-    /// Build Redis connection URL
+    /// Build Redis connection URL (using the configured DB index)
     fn build_connection_url(config: &RedisConnectRequest) -> Result<String, String> {
+        Self::build_connection_url_with_db(config, config.db.unwrap_or(0))
+    }
+
+    /// Build Redis connection URL bound to a specific DB index
+    fn build_connection_url_with_db(
+        config: &RedisConnectRequest,
+        db: u8,
+    ) -> Result<String, String> {
         let host = config.host.as_deref().unwrap_or("127.0.0.1");
         let port = config.port.unwrap_or(6379);
-        let db = config.db.unwrap_or(0);
 
         let scheme = if config
             .tls
@@ -210,9 +221,9 @@ impl RedisDriver {
 
     /// Get a cloned connection for operations.
     /// Both MultiplexedConnection and ClusterConnection are cheaply cloneable,
-    /// so this avoids Mutex contention for concurrent operations.
+    /// so this avoids lock contention for concurrent operations.
     pub(crate) fn get_connection_clone(&self) -> RedisConnection {
-        (*self.connection).clone()
+        self.connection.read().clone()
     }
 
     /// Execute a raw Redis command
@@ -316,46 +327,45 @@ impl RedisDriver {
         }
     }
 
-    /// Execute DBSIZE command - for cluster mode, sums up all nodes
+    /// Execute DBSIZE command - for cluster mode, sums DBSIZE across all masters
     pub(crate) async fn execute_dbsize(&self) -> Result<i64, String> {
         log::debug!("Redis execute_dbsize");
 
-        let mut conn = self.get_connection_clone();
-        let redis_cmd = redis::cmd("DBSIZE");
+        // Cluster: query each master directly and sum. A single aggregated i64
+        // reply from the cluster client can silently reflect just one shard, so
+        // we never trust it for the total key count.
+        if self.is_cluster_mode() {
+            let masters = self.get_cluster_masters().await?;
+            if masters.is_empty() {
+                return Err("No master nodes found in cluster".to_string());
+            }
+            let mut total: i64 = 0;
+            for master in &masters {
+                let mut node_conn = self.connect_to_node(&master.address).await?;
+                let count: i64 = redis::cmd("DBSIZE")
+                    .query_async(&mut node_conn)
+                    .await
+                    .map_err(|e| format!("DBSIZE failed on {}: {}", master.address, e))?;
+                total += count;
+            }
+            log::debug!(
+                "Redis cluster DBSIZE: total {} from {} masters",
+                total,
+                masters.len()
+            );
+            return Ok(total);
+        }
 
+        let mut conn = self.get_connection_clone();
         match &mut conn {
-            RedisConnection::Standalone(c) => redis_cmd
-                .clone()
+            RedisConnection::Standalone(c) => redis::cmd("DBSIZE")
                 .query_async::<i64>(c)
                 .await
                 .map_err(|e| {
                     log::error!("Redis standalone DBSIZE failed: {}", e);
                     format!("DBSIZE failed: {}", e)
                 }),
-            RedisConnection::Cluster(c) => {
-                // Try as i64 first (redis-rs may already aggregate)
-                match redis_cmd.clone().query_async::<i64>(c).await {
-                    Ok(total) => {
-                        log::debug!("Redis cluster DBSIZE: got aggregated total {}", total);
-                        Ok(total)
-                    }
-                    Err(_) => {
-                        // Fallback: try as HashMap<String, i64>
-                        let result: HashMap<String, i64> = redis_cmd
-                            .clone()
-                            .query_async(c)
-                            .await
-                            .map_err(|e| {
-                                log::error!("Redis cluster DBSIZE failed: {}", e);
-                                format!("DBSIZE failed: {}", e)
-                            })?;
-
-                        let total: i64 = result.values().sum();
-                        log::debug!("Redis cluster DBSIZE: total {} from {} nodes", total, result.len());
-                        Ok(total)
-                    }
-                }
-            }
+            RedisConnection::Cluster(_) => unreachable!("handled by is_cluster_mode above"),
         }
     }
 
@@ -426,22 +436,39 @@ impl CacheDriver for RedisDriver {
     }
 
     async fn select_database(&self, db: u8) -> Result<(), String> {
-        // Only works for standalone mode
-        let mut conn = self.get_connection_clone();
-        match &mut conn {
-            RedisConnection::Standalone(c) => {
-                redis::cmd("SELECT")
-                    .arg(db)
-                    .query_async::<()>(c)
-                    .await
-                    .map_err(|e| format!("SELECT failed: {}", e))?;
-                *self.current_db.lock().await = db;
-                Ok(())
+        match self.config.mode {
+            RedisMode::Cluster => {
+                return Err("Database selection not supported in cluster mode".to_string());
             }
-            RedisConnection::Cluster(_) => {
-                Err("Database selection not supported in cluster mode".to_string())
+            RedisMode::Standalone => {
+                // Rebuild the connection bound to the target DB and swap it in.
+                // The DB index is encoded in the URL, so the selection also
+                // survives transparent reconnects of the multiplexed connection
+                // (a plain SELECT would silently revert to db 0 on reconnect).
+                let url = Self::build_connection_url_with_db(&self.config, db)?;
+                let client =
+                    Client::open(url).map_err(|e| format!("Failed to open client: {}", e))?;
+                let conn = client
+                    .get_multiplexed_async_connection()
+                    .await
+                    .map_err(|e| format!("Failed to select database {}: {}", db, e))?;
+                *self.connection.write() = RedisConnection::Standalone(conn);
+            }
+            RedisMode::Sentinel => {
+                // The resolved master address isn't persisted, so fall back to a
+                // live SELECT on the current connection.
+                let mut conn = self.get_connection_clone();
+                if let RedisConnection::Standalone(c) = &mut conn {
+                    redis::cmd("SELECT")
+                        .arg(db)
+                        .query_async::<()>(c)
+                        .await
+                        .map_err(|e| format!("SELECT failed: {}", e))?;
+                }
             }
         }
+        *self.current_db.lock().await = db;
+        Ok(())
     }
 
     async fn scan_keys(&self, request: RedisScanRequest) -> Result<RedisScanResponse, String> {
@@ -576,6 +603,11 @@ impl RedisDriver {
                 });
             }
         }
+
+        // CLUSTER NODES ordering is not stable across calls; sort by the stable
+        // node_id so the composite SCAN cursor's node_index maps to the same node
+        // on every page.
+        masters.sort_by(|a, b| a.node_id.cmp(&b.node_id));
 
         log::debug!("Cluster masters found: {:?}", masters.iter().map(|n| &n.address).collect::<Vec<_>>());
         Ok(masters)

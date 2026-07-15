@@ -6,9 +6,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use elasticsearch::auth::Credentials;
 use elasticsearch::cert::CertificateValidation;
-use elasticsearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
+use elasticsearch::http::transport::{
+    CloudConnectionPool, SingleNodeConnectionPool, TransportBuilder,
+};
 use elasticsearch::Elasticsearch;
 use url::Url;
 
@@ -52,20 +56,32 @@ impl ElasticsearchDriver {
     fn build_transport(
         request: &EsConnectRequest,
     ) -> Result<elasticsearch::http::transport::Transport, String> {
-        let url = Url::parse(&request.nodes[0])
-            .map_err(|e| format!("Invalid node URL '{}': {}", request.nodes[0], e))?;
-
-        // Check if URL uses HTTPS
-        let is_https = url.scheme() == "https";
-
-        let conn_pool = SingleNodeConnectionPool::new(url);
-        let mut builder = TransportBuilder::new(conn_pool);
+        // For Elastic Cloud, derive the endpoint from the Cloud ID; otherwise use
+        // the first configured node URL.
+        let mut builder = if matches!(request.auth_type, EsAuthType::Cloud) {
+            let cloud_id = request
+                .cloud_id
+                .as_ref()
+                .ok_or("Cloud ID required for cloud auth")?;
+            let pool = CloudConnectionPool::new(cloud_id)
+                .map_err(|e| format!("Invalid Cloud ID: {}", e))?;
+            TransportBuilder::new(pool)
+        } else {
+            // Guard against an empty node list (indexing nodes[0] would panic).
+            let first_node = request
+                .nodes
+                .first()
+                .ok_or("At least one node URL is required")?;
+            let url = Url::parse(first_node)
+                .map_err(|e| format!("Invalid node URL '{}': {}", first_node, e))?;
+            TransportBuilder::new(SingleNodeConnectionPool::new(url))
+        };
 
         // Configure authentication
         builder = Self::configure_auth(builder, request)?;
 
-        // Configure TLS - auto-handle HTTPS URLs
-        builder = Self::configure_tls(builder, request.tls.as_ref(), is_https)?;
+        // Configure TLS (validation is only relaxed when explicitly requested)
+        builder = Self::configure_tls(builder, request.tls.as_ref())?;
 
         // Configure proxy - default to direct connection unless explicitly requested
         if !request.use_proxy {
@@ -105,21 +121,16 @@ impl ElasticsearchDriver {
                     .api_key
                     .as_ref()
                     .ok_or("API key required for API key auth")?;
-                // API key format can be base64 encoded "id:key"
-                builder = builder.auth(Credentials::ApiKey(
-                    api_key.clone(),
-                    String::new(), // API key already contains both id and key
-                ));
+                // Credentials::ApiKey(id, key) base64-encodes "id:key" itself, so we
+                // must supply the raw id/key pair. Accept either the raw "id:api_key"
+                // form or its base64 encoding (the value Elasticsearch returns).
+                let (id, key) = parse_api_key(api_key)?;
+                builder = builder.auth(Credentials::ApiKey(id, key));
             }
             EsAuthType::Cloud => {
-                let cloud_id = request
-                    .cloud_id
-                    .as_ref()
-                    .ok_or("Cloud ID required for cloud auth")?;
-                let username = request.username.as_ref();
-                let password = request.password.as_ref();
-
-                match (username, password) {
+                // The endpoint is derived from the Cloud ID in build_transport;
+                // here we only attach the Basic credentials it authenticates with.
+                match (request.username.as_ref(), request.password.as_ref()) {
                     (Some(u), Some(p)) => {
                         builder = builder.auth(Credentials::Basic(u.clone(), p.clone()));
                     }
@@ -129,9 +140,6 @@ impl ElasticsearchDriver {
                         );
                     }
                 }
-                // Note: cloud_id would typically be parsed to extract the ES endpoint
-                // For now, we expect the nodes array to contain the actual endpoint
-                let _ = cloud_id; // Suppress unused warning
             }
         }
         Ok(builder)
@@ -139,27 +147,22 @@ impl ElasticsearchDriver {
 
     /// Configure TLS settings
     ///
-    /// When `is_https` is true (URL starts with https://), TLS is required.
-    /// If no explicit TLS config is provided, we default to skipping certificate
-    /// validation for HTTPS URLs to ensure connectivity (common for dev/test).
+    /// Certificate validation is only disabled when the user explicitly asks for
+    /// it (`tls.enabled && !tls.reject_unauthorized`). HTTPS URLs without an
+    /// explicit TLS config keep the secure default validation — silently skipping
+    /// validation would expose the connection to MITM attacks.
     fn configure_tls(
         mut builder: TransportBuilder,
         tls_config: Option<&EsTlsConfig>,
-        is_https: bool,
     ) -> Result<TransportBuilder, String> {
         if let Some(tls) = tls_config {
-            // Explicit TLS config provided
             if tls.enabled && !tls.reject_unauthorized {
-                // User explicitly disabled certificate validation
+                // User explicitly opted out of certificate validation.
                 builder = builder.cert_validation(CertificateValidation::None);
             }
-            // When tls.enabled && tls.reject_unauthorized, use default validation
-        } else if is_https {
-            // HTTPS URL but no explicit TLS config - default to skip validation
-            // This handles common cases like self-signed certs in dev environments
-            builder = builder.cert_validation(CertificateValidation::None);
+            // Otherwise (including tls.enabled && reject_unauthorized) use the
+            // default validation.
         }
-        // For HTTP URLs without TLS config, no special handling needed
         Ok(builder)
     }
 
@@ -291,6 +294,27 @@ impl SearchEngineDriver for ElasticsearchDriver {
     async fn sql_query(&self, sql: &str) -> Result<EsSqlResponse, String> {
         query::sql_query(self, sql).await
     }
+}
+
+/// Parse an Elasticsearch API key into its `(id, api_key)` parts.
+///
+/// Accepts either the raw `"id:api_key"` form or its base64 encoding (the
+/// `encoded` value returned by the create-API-key endpoint).
+fn parse_api_key(api_key: &str) -> Result<(String, String), String> {
+    let trimmed = api_key.trim();
+    if let Some((id, key)) = trimmed.split_once(':') {
+        return Ok((id.to_string(), key.to_string()));
+    }
+    // No colon: assume base64("id:api_key").
+    let decoded = BASE64
+        .decode(trimmed)
+        .map_err(|_| "Invalid API key: expected 'id:api_key' or its base64 encoding".to_string())?;
+    let decoded = String::from_utf8(decoded)
+        .map_err(|_| "Invalid API key: base64 did not decode to valid UTF-8".to_string())?;
+    let (id, key) = decoded
+        .split_once(':')
+        .ok_or("Invalid API key: decoded value must be 'id:api_key'")?;
+    Ok((id.to_string(), key.to_string()))
 }
 
 /// Elasticsearch session wrapper

@@ -149,17 +149,39 @@ pub async fn get_index_stats(
 
     let store_size_bytes = primaries["store"]["size_in_bytes"].as_i64().unwrap_or(0);
 
+    // The stats response doesn't carry the configured shard counts (`_shards`
+    // there only reflects the stats request), so read them from index settings.
+    let (primary_shards, replica_shards) = get_shard_counts(driver, index_name).await;
+
     Ok(EsIndexStats {
         name: index_name.to_string(),
         docs_count: primaries["docs"]["count"].as_i64().unwrap_or(0),
         docs_deleted: primaries["docs"]["deleted"].as_i64().unwrap_or(0),
         store_size_bytes,
         store_size: format_bytes(store_size_bytes),
-        primary_shards: json["_shards"]["successful"].as_i64().unwrap_or(0) as i32,
-        replica_shards: 0, // Would need separate calculation
+        primary_shards,
+        replica_shards,
         indexing_total: total["indexing"]["index_total"].as_i64().unwrap_or(0),
         search_query_total: total["search"]["query_total"].as_i64().unwrap_or(0),
     })
+}
+
+/// Read the configured (primary, replica) shard counts from index settings.
+/// Best-effort: returns (0, 0) if settings can't be fetched or parsed.
+async fn get_shard_counts(driver: &ElasticsearchDriver, index_name: &str) -> (i32, i32) {
+    let Ok(settings) = get_index_settings(driver, index_name).await else {
+        return (0, 0);
+    };
+    // Settings values are strings, e.g. { "index": { "number_of_shards": "1", ... } }
+    let index_settings = &settings["index"];
+    let parse = |key: &str| -> i32 {
+        index_settings[key]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .or_else(|| index_settings[key].as_i64().map(|v| v as i32))
+            .unwrap_or(0)
+    };
+    (parse("number_of_shards"), parse("number_of_replicas"))
 }
 
 /// Create a new index

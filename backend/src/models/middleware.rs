@@ -218,6 +218,10 @@ pub struct KafkaMessage {
     pub timestamp: Option<i64>,
     pub key: Option<String>,
     pub value: Option<String>,
+    /// True when `key` could not be decoded as UTF-8 and is base64-encoded instead.
+    pub key_binary: bool,
+    /// True when `value` could not be decoded as UTF-8 and is base64-encoded instead.
+    pub value_binary: bool,
     pub headers: Vec<MessageHeader>,
 }
 

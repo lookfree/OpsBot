@@ -26,6 +26,17 @@ pub async fn get_info(driver: &RedisDriver, section: Option<&str>) -> Result<Red
 
 /// Get database list with key counts
 pub async fn get_databases(driver: &RedisDriver) -> Result<Vec<RedisDatabaseInfo>, String> {
+    // Redis Cluster only has db0; report its aggregated key count across all
+    // masters instead of a single node's keyspace section (which undercounts).
+    if driver.is_cluster_mode() {
+        let keys = driver.execute_dbsize().await.unwrap_or(0);
+        return Ok(vec![RedisDatabaseInfo {
+            db: 0,
+            keys,
+            expires: 0,
+        }]);
+    }
+
     // Use the cluster-aware execute_info method
     let info_str = driver.execute_info(Some("keyspace")).await?;
     let keyspace = parse_keyspace(&info_str);

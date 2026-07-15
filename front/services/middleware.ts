@@ -139,6 +139,10 @@ export interface KafkaMessage {
   timestamp?: number
   key?: string
   value?: string
+  /** True when `key` is not valid UTF-8 and is base64-encoded instead. */
+  keyBinary?: boolean
+  /** True when `value` is not valid UTF-8 and is base64-encoded instead. */
+  valueBinary?: boolean
   headers: MessageHeader[]
 }
 
@@ -443,6 +447,8 @@ export type RedisValue =
   | { type: 'Hash'; data: [string, string][] }
   | { type: 'ZSet'; data: [string, number][] }
   | { type: 'Stream'; data: RedisStreamEntry[] }
+  // Base64-encoded raw bytes for values that are not valid UTF-8 (read-only).
+  | { type: 'Binary'; data: string }
   | { type: 'None'; data: null }
 
 export interface RedisSetRequest {
