@@ -407,7 +407,10 @@ impl DatabaseDriver for PostgreSqlDriver {
             LEFT JOIN (
                 SELECT ku.column_name FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage ku
-                    ON tc.constraint_name = ku.constraint_name
+                    ON tc.constraint_schema = ku.constraint_schema
+                    AND tc.constraint_name = ku.constraint_name
+                    AND tc.table_schema = ku.table_schema
+                    AND tc.table_name = ku.table_name
                 WHERE tc.table_schema = $1 AND tc.table_name = $2
                     AND tc.constraint_type = 'PRIMARY KEY'
             ) pk ON c.column_name = pk.column_name
@@ -440,10 +443,16 @@ impl DatabaseDriver for PostgreSqlDriver {
                 let precision: Option<i32> = row.try_get("numeric_precision").ok();
                 let scale: Option<i32> = row.try_get("numeric_scale").ok();
 
+                // Only numeric/decimal take a (precision,scale) modifier;
+                // integers report precision/scale too but `integer(32,0)` is
+                // invalid SQL and breaks the generated DDL.
                 let column_type = if let Some(len) = max_length {
                     format!("{}({})", data_type, len)
-                } else if let (Some(p), Some(s)) = (precision, scale) {
-                    format!("{}({},{})", data_type, p, s)
+                } else if matches!(data_type.as_str(), "numeric" | "decimal") {
+                    match (precision, scale) {
+                        (Some(p), Some(s)) => format!("{}({},{})", data_type, p, s),
+                        _ => data_type,
+                    }
                 } else {
                     data_type
                 };
@@ -700,23 +709,30 @@ impl DatabaseDriver for PostgreSqlDriver {
         schema: &str,
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>, String> {
+        // Pair each FK column with its referenced column by ordinal position
+        // (kcu.position_in_unique_constraint) via the referenced constraint's
+        // key_column_usage. Joining constraint_column_usage on name alone
+        // cartesian-products composite keys and mixes same-named constraints.
         let sql = r#"
             SELECT tc.constraint_name as name, kcu.column_name as col,
                    ccu.table_name as ref_table, ccu.column_name as ref_col,
                    rc.delete_rule as on_delete, rc.update_rule as on_update
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
-                ON tc.constraint_name = kcu.constraint_name
+                ON tc.constraint_schema = kcu.constraint_schema
+                AND tc.constraint_name = kcu.constraint_name
                 AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage ccu
-                ON ccu.constraint_name = tc.constraint_name
-                AND ccu.table_schema = tc.table_schema
+                AND tc.table_name = kcu.table_name
             JOIN information_schema.referential_constraints rc
-                ON rc.constraint_name = tc.constraint_name
-                AND rc.constraint_schema = tc.table_schema
+                ON rc.constraint_schema = tc.constraint_schema
+                AND rc.constraint_name = tc.constraint_name
+            JOIN information_schema.key_column_usage ccu
+                ON ccu.constraint_schema = rc.unique_constraint_schema
+                AND ccu.constraint_name = rc.unique_constraint_name
+                AND ccu.ordinal_position = kcu.position_in_unique_constraint
             WHERE tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_schema = $1 AND tc.table_name = $2
-            ORDER BY tc.constraint_name
+            ORDER BY tc.constraint_name, kcu.ordinal_position
         "#;
 
         let rows: Vec<PgRow> = sqlx::query(sql)

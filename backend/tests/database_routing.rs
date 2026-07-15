@@ -65,6 +65,45 @@ async fn current_database(
 
 #[tokio::test]
 #[ignore]
+async fn pg_table_structure_types_and_pk() {
+    let Some(env) = pg_env() else {
+        panic!("ZWD_TEST_PG_* env vars are required for this test");
+    };
+    let service = DatabaseService::new();
+    service
+        .connect(connect_request(&env, "test-structure"), None)
+        .await
+        .expect("connect failed");
+
+    // agent.rag_chunks lives in the alt db and has integer/bigint columns
+    let st = service
+        .get_table_structure("test-structure", &env.alt_db, Some("agent"), "rag_chunks")
+        .await
+        .expect("get_table_structure failed");
+
+    // Integer columns must not carry a bogus (precision,scale) modifier
+    for col in &st.columns {
+        assert!(
+            !col.column_type.contains("(32,0)") && !col.column_type.contains("(64,0)"),
+            "column {} has invalid type modifier: {}",
+            col.name,
+            col.column_type
+        );
+    }
+    // Exactly one primary-key column (id), not leaked/duplicated across schemas
+    let pk_cols: Vec<&str> = st
+        .columns
+        .iter()
+        .filter(|c| c.key.as_deref() == Some("PRI"))
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(pk_cols, vec!["id"], "unexpected primary key columns");
+
+    service.disconnect("test-structure").await.expect("disconnect failed");
+}
+
+#[tokio::test]
+#[ignore]
 async fn execute_sql_routes_to_requested_database() {
     let Some(env) = pg_env() else {
         panic!("ZWD_TEST_PG_* env vars are required for this test");

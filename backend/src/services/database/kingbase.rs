@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Row, TypeInfo, ValueRef};
 use urlencoding::encode;
 
 use crate::models::{
@@ -146,26 +146,80 @@ impl KingBaseDriver {
     }
 
     fn get_column_value(&self, row: &PgRow, index: usize, type_name: &str) -> serde_json::Value {
+        use serde_json::Value;
+        // sqlx-postgres matches integer/float widths strictly (KingBase speaks
+        // the PG wire protocol), so INT4 must be i32 etc. — a wrong width makes
+        // try_get fail and silently yields Null. Mirror the PostgreSQL driver.
         match type_name {
-            "INT8" | "INT4" | "INT2" | "SERIAL" | "BIGSERIAL" => row
-                .try_get::<i64, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
-            "FLOAT8" | "FLOAT4" | "NUMERIC" => row
-                .try_get::<f64, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
-            "BOOL" => row
-                .try_get::<bool, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
-            "JSON" | "JSONB" => row
-                .try_get::<serde_json::Value, _>(index)
-                .unwrap_or(serde_json::Value::Null),
+            "INT2" => row.try_get::<i16, _>(index).map(Value::from).unwrap_or(Value::Null),
+            "INT4" => row.try_get::<i32, _>(index).map(Value::from).unwrap_or(Value::Null),
+            "INT8" => row.try_get::<i64, _>(index).map(Value::from).unwrap_or(Value::Null),
+            "FLOAT4" => row
+                .try_get::<f32, _>(index)
+                .map(|v| Value::from(v as f64))
+                .unwrap_or(Value::Null),
+            "FLOAT8" => row.try_get::<f64, _>(index).map(Value::from).unwrap_or(Value::Null),
+            "NUMERIC" => row
+                .try_get::<sqlx::types::BigDecimal, _>(index)
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null),
+            "BOOL" => row.try_get::<bool, _>(index).map(Value::from).unwrap_or(Value::Null),
+            "JSON" | "JSONB" => row.try_get::<serde_json::Value, _>(index).unwrap_or(Value::Null),
+            "UUID" => row
+                .try_get::<sqlx::types::Uuid, _>(index)
+                .map(|u| Value::String(u.to_string()))
+                .unwrap_or(Value::Null),
+            "TIMESTAMPTZ" => row
+                .try_get::<chrono::DateTime<chrono::Utc>, _>(index)
+                .map(|dt| Value::String(dt.to_rfc3339()))
+                .unwrap_or(Value::Null),
+            "TIMESTAMP" => row
+                .try_get::<chrono::NaiveDateTime, _>(index)
+                .map(|dt| Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()))
+                .unwrap_or(Value::Null),
+            "DATE" => row
+                .try_get::<chrono::NaiveDate, _>(index)
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null),
+            "TIME" => row
+                .try_get::<chrono::NaiveTime, _>(index)
+                .map(|t| Value::String(t.to_string()))
+                .unwrap_or(Value::Null),
+            "BYTEA" => row
+                .try_get::<Vec<u8>, _>(index)
+                .map(|b| {
+                    let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+                    Value::String(format!("\\x{}", hex))
+                })
+                .unwrap_or(Value::Null),
+            // Custom/unknown types: try UTF-8 text, else fall back to raw bytes
             _ => row
                 .try_get::<String, _>(index)
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null),
+                .or_else(|_| row.try_get_unchecked::<String, _>(index))
+                .map(Value::from)
+                .unwrap_or_else(|_| Self::decode_raw_value(row, index)),
+        }
+    }
+
+    /// Decode a value sqlx has no codec for from its raw wire bytes, so a cell
+    /// is never silently blank (UTF-8 text, otherwise a hex literal).
+    fn decode_raw_value(row: &PgRow, index: usize) -> serde_json::Value {
+        use serde_json::Value;
+        let Ok(raw) = row.try_get_raw(index) else {
+            return Value::Null;
+        };
+        if raw.is_null() {
+            return Value::Null;
+        }
+        let Ok(bytes) = raw.as_bytes() else {
+            return Value::Null;
+        };
+        match std::str::from_utf8(bytes) {
+            Ok(text) => Value::String(text.to_string()),
+            Err(_) => {
+                let hex: String = bytes.iter().map(|byte| format!("{:02x}", byte)).collect();
+                Value::String(format!("\\x{}", hex))
+            }
         }
     }
 }
@@ -330,7 +384,10 @@ impl DatabaseDriver for KingBaseDriver {
             LEFT JOIN (
                 SELECT ku.column_name FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage ku
-                    ON tc.constraint_name = ku.constraint_name
+                    ON tc.constraint_schema = ku.constraint_schema
+                    AND tc.constraint_name = ku.constraint_name
+                    AND tc.table_schema = ku.table_schema
+                    AND tc.table_name = ku.table_name
                 WHERE tc.table_schema = $1 AND tc.table_name = $2
                     AND tc.constraint_type = 'PRIMARY KEY'
             ) pk ON c.column_name = pk.column_name
@@ -365,8 +422,11 @@ impl DatabaseDriver for KingBaseDriver {
 
                 let column_type = if let Some(len) = max_length {
                     format!("{}({})", data_type, len)
-                } else if let (Some(p), Some(s)) = (precision, scale) {
-                    format!("{}({},{})", data_type, p, s)
+                } else if matches!(data_type.as_str(), "numeric" | "decimal") {
+                    match (precision, scale) {
+                        (Some(p), Some(s)) => format!("{}({},{})", data_type, p, s),
+                        _ => data_type,
+                    }
                 } else {
                     data_type
                 };
@@ -652,17 +712,20 @@ impl DatabaseDriver for KingBaseDriver {
                    rc.delete_rule as on_delete, rc.update_rule as on_update
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
-                ON tc.constraint_name = kcu.constraint_name
+                ON tc.constraint_schema = kcu.constraint_schema
+                AND tc.constraint_name = kcu.constraint_name
                 AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage ccu
-                ON ccu.constraint_name = tc.constraint_name
-                AND ccu.table_schema = tc.table_schema
+                AND tc.table_name = kcu.table_name
             JOIN information_schema.referential_constraints rc
-                ON rc.constraint_name = tc.constraint_name
-                AND rc.constraint_schema = tc.table_schema
+                ON rc.constraint_schema = tc.constraint_schema
+                AND rc.constraint_name = tc.constraint_name
+            JOIN information_schema.key_column_usage ccu
+                ON ccu.constraint_schema = rc.unique_constraint_schema
+                AND ccu.constraint_name = rc.unique_constraint_name
+                AND ccu.ordinal_position = kcu.position_in_unique_constraint
             WHERE tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_schema = $1 AND tc.table_name = $2
-            ORDER BY tc.constraint_name
+            ORDER BY tc.constraint_name, kcu.ordinal_position
         "#;
 
         let rows: Vec<PgRow> = sqlx::query(sql)
