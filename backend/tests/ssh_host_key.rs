@@ -34,35 +34,40 @@ async fn known_hosts_detects_changed_key() {
     let store = KnownHostsStore::new(path.clone());
 
     let host = "203.0.113.10:22";
+    let kt = "ssh-ed25519";
     let key_a = "AAAAAAAA_original_key";
     let key_b = "BBBBBBBB_attacker_key";
 
     // Nothing stored yet.
     assert!(matches!(
-        store.lookup(host, key_a).await,
+        store.lookup(host, kt, key_a).await,
         HostKeyLookup::Unknown
     ));
 
-    store
-        .add(host, "ssh-ed25519", key_a)
-        .await
-        .expect("add host key");
+    store.add(host, kt, key_a).await.expect("add host key");
 
-    // Same key -> Match.
+    // Same key + type -> Match.
     assert!(matches!(
-        store.lookup(host, key_a).await,
+        store.lookup(host, kt, key_a).await,
         HostKeyLookup::Match
     ));
 
-    // Different key for a known host -> Mismatch (the changed-key / MITM signal).
-    match store.lookup(host, key_b).await {
+    // Different key, SAME type -> Mismatch (the changed-key / MITM signal).
+    match store.lookup(host, kt, key_b).await {
         HostKeyLookup::Mismatch { old_key } => assert_eq!(old_key, key_a),
         other => panic!("expected Mismatch, got {:?}", lookup_name(&other)),
     }
 
+    // Different KEY TYPE for the same host -> Unknown, not Mismatch: a host-key
+    // algorithm change must not raise a false "host key changed" alarm (#11).
+    assert!(matches!(
+        store.lookup(host, "rsa-sha2-512", key_a).await,
+        HostKeyLookup::Unknown
+    ));
+
     // A different host is still Unknown.
     assert!(matches!(
-        store.lookup("198.51.100.5:22", key_a).await,
+        store.lookup("198.51.100.5:22", kt, key_a).await,
         HostKeyLookup::Unknown
     ));
 
@@ -109,8 +114,9 @@ async fn test_connection_against_mbp_verifies_host_key() {
     let host_port = format!("{}:{}", host, port);
 
     // Host is unseen before the first test.
-    assert!(
-        matches!(store.lookup(&host_port, "x").await, HostKeyLookup::Unknown),
+    assert_eq!(
+        store.host_key_count(&host_port).await,
+        0,
         "store should start empty for {host_port}"
     );
 
@@ -120,13 +126,9 @@ async fn test_connection_against_mbp_verifies_host_key() {
         .await
         .expect("first test_connection should succeed");
 
-    // The server's real key was persisted (a bogus key now reads as Mismatch,
-    // proving the host is known rather than Unknown).
+    // The server's real key was persisted.
     assert!(
-        matches!(
-            store.lookup(&host_port, "bogus").await,
-            HostKeyLookup::Mismatch { .. }
-        ),
+        store.host_key_count(&host_port).await >= 1,
         "host key should have been persisted after first connect"
     );
 
@@ -551,10 +553,7 @@ async fn jump_host_verifies_target_key_and_opens_shell() {
     // The app verified & persisted the TARGET's key (127.0.0.1:22). Pre-fix this
     // entry never existed — the bastion's `ssh` handled the target key itself.
     assert!(
-        matches!(
-            store.lookup("127.0.0.1:22", "bogus").await,
-            HostKeyLookup::Mismatch { .. }
-        ),
+        store.host_key_count("127.0.0.1:22").await >= 1,
         "target host key should have been verified and persisted by the app"
     );
 

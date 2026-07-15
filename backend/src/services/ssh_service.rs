@@ -304,12 +304,12 @@ impl client::Handler for SshClientHandler {
         let key_type = server_public_key.name().to_string();
         let fingerprint = server_public_key.fingerprint();
 
-        match known_hosts.lookup(&self.host_port, &key_base64).await {
+        match known_hosts.lookup(&self.host_port, &key_type, &key_base64).await {
             HostKeyLookup::Match => Ok(true),
             HostKeyLookup::Unknown => {
                 let accepted = self.ask_user_verify("", &key_type, &fingerprint).await;
                 if accepted {
-                    let _ = known_hosts.add(&self.host_port, &key_type, &key_base64).await;
+                    self.persist_host_key(&known_hosts, &key_type, &key_base64).await;
                 }
                 Ok(accepted)
             }
@@ -319,7 +319,7 @@ impl client::Handler for SshClientHandler {
                     .ask_user_key_changed(&key_type, &fingerprint, &old_fingerprint)
                     .await;
                 if accepted {
-                    let _ = known_hosts.add(&self.host_port, &key_type, &key_base64).await;
+                    self.persist_host_key(&known_hosts, &key_type, &key_base64).await;
                 }
                 Ok(accepted)
             }
@@ -366,6 +366,14 @@ impl SshClientHandler {
     /// Ask the user to verify a new (unknown) host key via Tauri event
     async fn ask_user_verify(&self, _old_fp: &str, key_type: &str, fingerprint: &str) -> bool {
         self.emit_and_await("ssh-host-key-verify", key_type, fingerprint, "").await
+    }
+
+    /// Persist an accepted host key, logging (not swallowing) a write failure so
+    /// the user isn't silently re-prompted for the same host on every restart.
+    async fn persist_host_key(&self, store: &KnownHostsStore, key_type: &str, key_base64: &str) {
+        if let Err(e) = store.add(&self.host_port, key_type, key_base64).await {
+            log::warn!("Failed to persist host key for {}: {}", self.host_port, e);
+        }
     }
 
     /// Ask the user about a changed host key via Tauri event
