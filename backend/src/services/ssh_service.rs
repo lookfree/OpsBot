@@ -265,6 +265,9 @@ pub struct SshClientHandler {
     pub app_handle: Option<tauri::AppHandle>,
     /// Shared map for receiving user verification responses
     pub pending_verifications: PendingKeyVerifications,
+    /// The owning session's activity clock, bumped on inbound data so an
+    /// actively-streaming but keyboard-idle session isn't reaped as stale.
+    pub last_activity_secs: Arc<AtomicU64>,
 }
 
 #[async_trait]
@@ -312,6 +315,9 @@ impl client::Handler for SshClientHandler {
         data: &[u8],
         _session: &mut client::Session,
     ) -> std::result::Result<(), Self::Error> {
+        // Inbound data means the session is alive; keep it off the stale reaper
+        // even when the user isn't typing (e.g. tail -f / top).
+        self.last_activity_secs.store(now_secs(), Ordering::Relaxed);
         // Only forward data from terminal channel to avoid SFTP binary data in terminal
         if let Some(term_ch) = *self.terminal_channel_id.read().await {
             if channel == term_ch {
@@ -328,6 +334,7 @@ impl client::Handler for SshClientHandler {
         data: &[u8],
         _session: &mut client::Session,
     ) -> std::result::Result<(), Self::Error> {
+        self.last_activity_secs.store(now_secs(), Ordering::Relaxed);
         // Only forward data from terminal channel
         if let Some(term_ch) = *self.terminal_channel_id.read().await {
             if channel == term_ch {
@@ -465,6 +472,7 @@ impl SshService {
             host_port,
             app_handle,
             pending_verifications: self.pending_verifications.clone(),
+            last_activity_secs: Arc::new(AtomicU64::new(0)),
         };
 
         let addr = format!("{}:{}", tunnel.host, tunnel.port);
@@ -610,6 +618,7 @@ impl SshService {
             host_port,
             app_handle: app_handle.clone(),
             pending_verifications: self.pending_verifications.clone(),
+            last_activity_secs: session.last_activity_secs.clone(),
         };
 
         // Connect to server
@@ -711,6 +720,7 @@ impl SshService {
             host_port,
             app_handle: app_handle.clone(),
             pending_verifications: self.pending_verifications.clone(),
+            last_activity_secs: session.last_activity_secs.clone(),
         };
 
         // Connect to server
@@ -794,6 +804,7 @@ impl SshService {
             host_port: jump_host_port,
             app_handle: app_handle.clone(),
             pending_verifications: self.pending_verifications.clone(),
+            last_activity_secs: session.last_activity_secs.clone(),
         };
 
         let jump_addr = format!("{}:{}", jump.host, jump.port);
@@ -827,6 +838,7 @@ impl SshService {
             host_port: format!("{}:{}", request.host, request.port),
             app_handle: app_handle.clone(),
             pending_verifications: self.pending_verifications.clone(),
+            last_activity_secs: session.last_activity_secs.clone(),
         };
         let mut target_handle =
             client::connect_stream(target_config, stream, target_handler).await?;
@@ -1008,6 +1020,16 @@ impl SshService {
         self.sessions.read().await.values().map(|s| s.info()).collect()
     }
 
+    /// Last-activity timestamp (epoch seconds) for a session, if it exists.
+    /// Advances on both user input and inbound server data.
+    pub async fn session_last_activity(&self, session_id: &str) -> Option<u64> {
+        self.sessions
+            .read()
+            .await
+            .get(session_id)
+            .map(|s| s.last_activity_secs.load(Ordering::Relaxed))
+    }
+
     /// Check if session exists and is connected
     pub async fn is_connected(&self, session_id: &str) -> bool {
         self.sessions
@@ -1137,6 +1159,7 @@ impl SshService {
             host_port: format!("{}:{}", request.host, request.port),
             app_handle,
             pending_verifications: self.pending_verifications.clone(),
+            last_activity_secs: Arc::new(AtomicU64::new(0)),
         };
 
         // Connect to server

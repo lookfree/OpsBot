@@ -192,6 +192,59 @@ fn mbp_key_request() -> Option<SshConnectRequest> {
     })
 }
 
+/// Live test that inbound server data keeps a session active even with no user
+/// input, so the 30-minute stale reaper won't kill a streaming session. Pre-fix,
+/// only send_data/resize bumped the activity clock; data() did not.
+#[tokio::test]
+#[ignore]
+async fn inbound_data_keeps_session_active() {
+    let request = match mbp_key_request() {
+        Some(r) => r,
+        None => return,
+    };
+
+    let path = temp_known_hosts_path("activity");
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(KnownHostsStore::new(path.clone()));
+    let service = SshService::new_with_known_hosts(store);
+
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let id = service
+        .connect_with_key(request, tx, None)
+        .await
+        .expect("connect");
+
+    // send_data bumps the activity clock now (t0). The command's output is
+    // delayed ~2s and `6*7` evaluates to 42 only in the OUTPUT (the input echo
+    // shows the literal "$((6*7))"), so matching "VAL_42_END" waits for genuine
+    // inbound data rather than the echo of what we typed.
+    service
+        .send_data(&id, b"sleep 2; echo VAL_$((6*7))_END\n")
+        .await
+        .expect("send");
+    let t0 = service
+        .session_last_activity(&id)
+        .await
+        .expect("activity t0");
+
+    assert!(
+        read_until(&mut rx, "VAL_42_END", 8).await,
+        "should receive the delayed inbound output"
+    );
+
+    let t1 = service
+        .session_last_activity(&id)
+        .await
+        .expect("activity t1");
+    assert!(
+        t1 >= t0 + 1,
+        "inbound data should advance last_activity (t0={t0}, t1={t1})"
+    );
+
+    service.disconnect(&id).await.expect("disconnect");
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Live test that exec_command does NOT hold the sessions lock across its
 /// output drain: a slow command on session A must not block a concurrent
 /// connect + exec on session B. Pre-fix, A held sessions.read() for the whole
