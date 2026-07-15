@@ -159,6 +159,10 @@ impl MssqlDriver {
         if let Some(val) = row.try_get::<&str, _>(index).ok().flatten() {
             return serde_json::Value::String(val.to_string());
         }
+        // TINYINT is unsigned (0-255) in SQL Server; tiberius decodes it as u8
+        if let Some(val) = row.try_get::<u8, _>(index).ok().flatten() {
+            return serde_json::Value::Number(val.into());
+        }
         if let Some(val) = row.try_get::<i64, _>(index).ok().flatten() {
             return serde_json::Value::Number(val.into());
         }
@@ -167,6 +171,10 @@ impl MssqlDriver {
         }
         if let Some(val) = row.try_get::<i16, _>(index).ok().flatten() {
             return serde_json::Value::Number(val.into());
+        }
+        // DECIMAL/NUMERIC/MONEY: keep as string to preserve precision
+        if let Some(val) = row.try_get::<tiberius::numeric::Numeric, _>(index).ok().flatten() {
+            return serde_json::Value::String(val.to_string());
         }
         if let Some(val) = row.try_get::<f64, _>(index).ok().flatten() {
             return serde_json::json!(val);
@@ -183,6 +191,10 @@ impl MssqlDriver {
         if let Some(val) = row.try_get::<chrono::NaiveDateTime, _>(index).ok().flatten() {
             return serde_json::Value::String(val.to_string());
         }
+        // NOTE: plain DATE/TIME/DATETIMEOFFSET columns aren't decoded here —
+        // tiberius 0.12's chrono FromSql impls for NaiveDate/NaiveTime/
+        // DateTime are not available against this project's chrono, so those
+        // still fall through to Null (DATETIME/DATETIME2 work via NaiveDateTime).
         if let Some(val) = row.try_get::<&[u8], _>(index).ok().flatten() {
             return serde_json::Value::String(format!(
                 "0x{}",

@@ -484,13 +484,24 @@ impl DatabaseDriver for MySqlLegacyDriver {
                    FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?";
         let mut rows = self.query_rows_bind(sql, (database, table)).await?;
         let row = rows.first_mut().ok_or("Table not found")?;
-        let collation: String = row.take("TABLE_COLLATION").unwrap_or_default();
+        // Use Option<String> — a bare take::<String> panics (from_value) when
+        // ENGINE/TABLE_COLLATION are NULL, which they are for views.
+        let collation: String = row
+            .take::<Option<String>, _>("TABLE_COLLATION")
+            .flatten()
+            .unwrap_or_default();
         let charset = collation.split('_').next().unwrap_or("utf8").to_string();
         Ok(TableOptions {
-            engine: row.take("ENGINE").unwrap_or_else(|| "InnoDB".to_string()),
+            engine: row
+                .take::<Option<String>, _>("ENGINE")
+                .flatten()
+                .unwrap_or_else(|| "InnoDB".to_string()),
             charset,
             collation,
-            comment: row.take("TABLE_COMMENT").unwrap_or_default(),
+            comment: row
+                .take::<Option<String>, _>("TABLE_COMMENT")
+                .flatten()
+                .unwrap_or_default(),
             auto_increment: row.take::<Option<i64>, _>("AUTO_INCREMENT").flatten(),
             row_format: row.take::<Option<String>, _>("ROW_FORMAT").flatten(),
         })
