@@ -83,7 +83,8 @@ export function ElasticsearchQuery({ connectionId, styles }: ElasticsearchQueryP
   }, [connectionId, selectedIndex])
 
   // Execute DSL query
-  const executeDslQuery = useCallback(async () => {
+  // Execute the DSL query for an explicit page (avoids stale-closure paging).
+  const executeDslQuery = useCallback(async (page: number) => {
     if (!selectedIndex) {
       setError(t('elasticsearch.selectIndex', 'Please select an index'))
       return
@@ -98,7 +99,7 @@ export function ElasticsearchQuery({ connectionId, styles }: ElasticsearchQueryP
       const request: EsSearchRequest = {
         index: selectedIndex,
         query: queryObj,
-        from: currentPage * pageSize,
+        from: page * pageSize,
         size: pageSize,
       }
       const result = await mwEsSearch(connectionId, request)
@@ -108,7 +109,13 @@ export function ElasticsearchQuery({ connectionId, styles }: ElasticsearchQueryP
     } finally {
       setIsExecuting(false)
     }
-  }, [connectionId, selectedIndex, dslQuery, currentPage, pageSize, t])
+  }, [connectionId, selectedIndex, dslQuery, pageSize, t])
+
+  // A fresh Execute always starts at page 0
+  const runDslQuery = useCallback(() => {
+    setCurrentPage(0)
+    executeDslQuery(0)
+  }, [executeDslQuery])
 
   // Execute SQL query
   const executeSqlQuery = useCallback(async () => {
@@ -136,18 +143,11 @@ export function ElasticsearchQuery({ connectionId, styles }: ElasticsearchQueryP
     }
   }, [dslQuery])
 
-  // Handle page change for DSL results
+  // Handle page change for DSL results — fetch the requested page directly
   const handlePageChange = useCallback((newPage: number) => {
     setCurrentPage(newPage)
-  }, [])
-
-  // Re-execute when page changes
-  useEffect(() => {
-    if (dslResult && currentPage > 0) {
-      executeDslQuery()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage])
+    executeDslQuery(newPage)
+  }, [executeDslQuery])
 
   return (
     <div className={cn('h-full flex flex-col', styles.textPrimary)}>
@@ -205,7 +205,7 @@ export function ElasticsearchQuery({ connectionId, styles }: ElasticsearchQueryP
         )}
 
         <button
-          onClick={queryMode === 'dsl' ? executeDslQuery : executeSqlQuery}
+          onClick={queryMode === 'dsl' ? runDslQuery : executeSqlQuery}
           disabled={isExecuting}
           className="ml-auto px-4 py-1.5 text-sm rounded bg-accent-primary text-white hover:bg-accent-hover transition-colors flex items-center gap-1 disabled:opacity-50"
         >

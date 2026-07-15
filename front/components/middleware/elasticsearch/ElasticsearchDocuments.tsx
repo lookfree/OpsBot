@@ -4,7 +4,7 @@
  * Displays and manages Elasticsearch documents with CRUD operations.
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import {
@@ -82,60 +82,73 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
     }
   }, [connectionId])
 
-  // Load documents from selected index
-  const loadDocuments = useCallback(async () => {
+  // Read the current page/search term without making loadDocuments refire on
+  // every keystroke; a request id lets the latest response win a race.
+  const pageRef = useRef(page)
+  pageRef.current = page
+  const searchTermRef = useRef(searchTerm)
+  searchTermRef.current = searchTerm
+  const reqIdRef = useRef(0)
+
+  // Load documents for a specific page (defaults to the current page).
+  const loadDocuments = useCallback(async (pageArg?: number) => {
+    const targetPage = pageArg ?? pageRef.current
     if (!selectedIndex) {
       setDocuments([])
       setTotalDocs(0)
       return
     }
 
+    const reqId = ++reqIdRef.current
     setIsLoading(true)
     try {
-      const query = searchTerm.trim()
-        ? { query: { query_string: { query: `*${searchTerm.trim()}*` } } }
-        : { query: { match_all: {} } }
+      const term = searchTermRef.current.trim()
+      const query = term
+        ? { query_string: { query: `*${term}*` } }
+        : { match_all: {} }
 
       const result = await mwEsSearch(connectionId, {
         index: selectedIndex,
-        query: query.query,
-        from: page * PAGE_SIZE,
+        query,
+        from: targetPage * PAGE_SIZE,
         size: PAGE_SIZE,
       })
+      if (reqId !== reqIdRef.current) return // superseded by a newer request
       setDocuments(result.hits)
       setTotalDocs(result.total)
     } catch (err) {
+      if (reqId !== reqIdRef.current) return
       console.error('Failed to load documents:', err)
       setDocuments([])
       setTotalDocs(0)
     } finally {
-      setIsLoading(false)
+      if (reqId === reqIdRef.current) setIsLoading(false)
     }
-  }, [connectionId, selectedIndex, searchTerm, page])
+  }, [connectionId, selectedIndex])
 
   // Initial load
   useEffect(() => {
     loadIndices()
   }, [loadIndices])
 
-  // Load documents when index changes
+  // Reset and load page 0 when the selected index changes
   useEffect(() => {
     setPage(0)
     setSelectedDocs(new Set())
-    loadDocuments()
+    loadDocuments(0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex])
 
-  // Load documents when page or search changes
-  useEffect(() => {
-    if (selectedIndex) {
-      loadDocuments()
-    }
-  }, [page, loadDocuments])
-
-  // Handle search
+  // Handle search — run on Enter/button, from page 0
   const handleSearch = useCallback(() => {
     setPage(0)
-    loadDocuments()
+    loadDocuments(0)
+  }, [loadDocuments])
+
+  // Change page and load it directly (no reliance on effect timing)
+  const goToPage = useCallback((newPage: number) => {
+    setPage(newPage)
+    loadDocuments(newPage)
   }, [loadDocuments])
 
   // Get document by ID
@@ -357,7 +370,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
           {t('elasticsearch.doc.new', 'New')}
         </button>
         <button
-          onClick={loadDocuments}
+          onClick={() => loadDocuments()}
           disabled={!selectedIndex}
           className={cn('p-1.5 rounded', styles.hoverBg, 'disabled:opacity-50')}
           title={t('common.refresh')}
@@ -459,7 +472,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
           {totalPages > 1 && (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                onClick={() => goToPage(Math.max(0, page - 1))}
                 disabled={page === 0}
                 className={cn('p-1 rounded', styles.hoverBg, 'disabled:opacity-50')}
               >
@@ -469,7 +482,7 @@ export function ElasticsearchDocuments({ connectionId, styles }: ElasticsearchDo
                 {page + 1} / {totalPages}
               </span>
               <button
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                onClick={() => goToPage(Math.min(totalPages - 1, page + 1))}
                 disabled={page >= totalPages - 1}
                 className={cn('p-1 rounded', styles.hoverBg, 'disabled:opacity-50')}
               >
