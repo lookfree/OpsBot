@@ -150,7 +150,7 @@ fn lookup_name(l: &HostKeyLookup) -> &'static str {
 
 /// Read from a terminal-output channel until `needle` appears (or timeout).
 async fn read_until(
-    rx: &mut futures::channel::mpsc::UnboundedReceiver<Vec<u8>>,
+    rx: &mut futures::channel::mpsc::Receiver<Vec<u8>>,
     needle: &str,
     secs: u64,
 ) -> bool {
@@ -208,7 +208,7 @@ async fn inbound_data_keeps_session_active() {
     let store = Arc::new(KnownHostsStore::new(path.clone()));
     let service = SshService::new_with_known_hosts(store);
 
-    let (tx, mut rx) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let (tx, mut rx) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
     let id = service
         .connect_with_key(request, tx, None)
         .await
@@ -245,6 +245,43 @@ async fn inbound_data_keeps_session_active() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// Live test that the bounded terminal-data channel delivers a large
+/// multi-packet burst end-to-end without deadlocking. Backpressure blocks the
+/// producer when full (it never drops), so seeing the final marker proves the
+/// whole burst flowed through the bounded channel.
+#[tokio::test]
+#[ignore]
+async fn bounded_channel_delivers_burst_without_loss() {
+    let request = match mbp_key_request() {
+        Some(r) => r,
+        None => return,
+    };
+
+    let path = temp_known_hosts_path("burst");
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(KnownHostsStore::new(path.clone()));
+    let service = SshService::new_with_known_hosts(store);
+
+    let (tx, mut rx) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
+    let id = service
+        .connect_with_key(request, tx, None)
+        .await
+        .expect("connect");
+
+    // 5000 lines then a marker; `6*7` => 42 appears only in the final output.
+    service
+        .send_data(&id, b"seq 1 5000; echo END_$((6*7))\n")
+        .await
+        .expect("send burst");
+    assert!(
+        read_until(&mut rx, "END_42", 15).await,
+        "the full 5000-line burst should arrive through the bounded channel"
+    );
+
+    service.disconnect(&id).await.expect("disconnect");
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Live test that exec_command does NOT hold the sessions lock across its
 /// output drain: a slow command on session A must not block a concurrent
 /// connect + exec on session B. Pre-fix, A held sessions.read() for the whole
@@ -263,7 +300,7 @@ async fn exec_does_not_hold_sessions_lock() {
     let store = Arc::new(KnownHostsStore::new(path.clone()));
     let service = Arc::new(SshService::new_with_known_hosts(store));
 
-    let (txa, _rxa) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let (txa, _rxa) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
     let id_a = service
         .connect_with_key(req_a, txa, None)
         .await
@@ -278,7 +315,7 @@ async fn exec_does_not_hold_sessions_lock() {
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
     // Concurrently connect B (needs sessions.write()) and run a quick command.
-    let (txb, _rxb) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let (txb, _rxb) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
     let start = std::time::Instant::now();
     let id_b = service
         .connect_with_key(req_b, txb, None)
@@ -320,7 +357,7 @@ async fn reconnect_reuses_session_id_and_stays_live() {
     let store = Arc::new(KnownHostsStore::new(path.clone()));
     let service = SshService::new_with_known_hosts(store);
 
-    let (tx1, mut rx1) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let (tx1, mut rx1) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
     let session_id = service
         .connect_with_key(request, tx1, None)
         .await
@@ -337,7 +374,7 @@ async fn reconnect_reuses_session_id_and_stays_live() {
     );
 
     // Reconnect on a fresh output channel.
-    let (tx2, mut rx2) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let (tx2, mut rx2) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
     let reconnected_id = service
         .reconnect(&session_id, tx2, None)
         .await
@@ -418,7 +455,7 @@ async fn jump_host_verifies_target_key_and_opens_shell() {
         terminal_size: Default::default(),
     };
 
-    let (tx, mut rx) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let (tx, mut rx) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
     let session_id = service
         .connect_with_key(request, tx, None)
         .await

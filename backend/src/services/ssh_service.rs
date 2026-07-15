@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use futures::channel::mpsc;
+use futures::SinkExt;
 use russh::*;
 use russh_keys::*;
 use tokio::net::{TcpListener, TcpStream};
@@ -144,7 +145,7 @@ pub struct SshSession {
     /// channel carrying the target session stays open. None for direct sessions.
     jump_handle: Option<Arc<client::Handle<SshClientHandler>>>,
     channel: Option<Channel<client::Msg>>,
-    tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    tx: Option<mpsc::Sender<Vec<u8>>>,
     // Store connection parameters for reconnection
     connect_request: Option<SshConnectRequest>,
     /// Last activity timestamp (epoch seconds) for auto-cleanup
@@ -254,7 +255,7 @@ pub type PendingKeyVerifications =
 /// SSH client handler for russh callbacks
 pub struct SshClientHandler {
     pub session_id: String,
-    pub data_tx: mpsc::UnboundedSender<Vec<u8>>,
+    pub data_tx: mpsc::Sender<Vec<u8>>,
     /// Terminal channel ID - only data from this channel will be forwarded to terminal
     pub terminal_channel_id: Arc<RwLock<Option<ChannelId>>>,
     /// Known hosts store for TOFU verification
@@ -321,7 +322,7 @@ impl client::Handler for SshClientHandler {
         // Only forward data from terminal channel to avoid SFTP binary data in terminal
         if let Some(term_ch) = *self.terminal_channel_id.read().await {
             if channel == term_ch {
-                let _ = self.data_tx.unbounded_send(data.to_vec());
+                let _ = self.data_tx.send(data.to_vec()).await;
             }
         }
         Ok(())
@@ -338,7 +339,7 @@ impl client::Handler for SshClientHandler {
         // Only forward data from terminal channel
         if let Some(term_ch) = *self.terminal_channel_id.read().await {
             if channel == term_ch {
-                let _ = self.data_tx.unbounded_send(data.to_vec());
+                let _ = self.data_tx.send(data.to_vec()).await;
             }
         }
         Ok(())
@@ -461,7 +462,7 @@ impl SshService {
         };
         let config = Arc::new(config);
 
-        let (dummy_tx, _dummy_rx) = mpsc::unbounded::<Vec<u8>>();
+        let (dummy_tx, _dummy_rx) = mpsc::channel::<Vec<u8>>(1);
         let session_id = Uuid::new_v4().to_string();
         let host_port = format!("{}:{}", tunnel.host, tunnel.port);
         let handler = SshClientHandler {
@@ -580,7 +581,7 @@ impl SshService {
     pub async fn connect_with_password(
         &self,
         request: SshConnectRequest,
-        data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        data_tx: mpsc::Sender<Vec<u8>>,
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         let password = request
@@ -675,7 +676,7 @@ impl SshService {
     pub async fn connect_with_key(
         &self,
         request: SshConnectRequest,
-        data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        data_tx: mpsc::Sender<Vec<u8>>,
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         let private_key_str = request
@@ -778,7 +779,7 @@ impl SshService {
         &self,
         request: &SshConnectRequest,
         jump: &JumpHostConfig,
-        data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        data_tx: mpsc::Sender<Vec<u8>>,
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         let mut session = SshSession::new(request);
@@ -794,7 +795,7 @@ impl SshService {
         let jump_config = Arc::new(jump_config);
 
         // Create handler for jump host with TOFU
-        let (dummy_tx, _dummy_rx) = mpsc::unbounded::<Vec<u8>>();
+        let (dummy_tx, _dummy_rx) = mpsc::channel::<Vec<u8>>(1);
         let jump_host_port = format!("{}:{}", jump.host, jump.port);
         let jump_handler = SshClientHandler {
             session_id: format!("{}-jump", session_id),
@@ -867,7 +868,7 @@ impl SshService {
     pub async fn reconnect(
         &self,
         session_id: &str,
-        data_tx: mpsc::UnboundedSender<Vec<u8>>,
+        data_tx: mpsc::Sender<Vec<u8>>,
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
         // Get the stored connection request.
@@ -1150,7 +1151,7 @@ impl SshService {
         // Verify the host key against the real known-hosts store (same TOFU path
         // as a real connection). A spoofed host must not silently pass the test
         // and harvest the credentials we are about to send.
-        let (dummy_tx, _dummy_rx) = mpsc::unbounded::<Vec<u8>>();
+        let (dummy_tx, _dummy_rx) = mpsc::channel::<Vec<u8>>(1);
         let handler = SshClientHandler {
             session_id: format!("test-{}", Uuid::new_v4()),
             data_tx: dummy_tx,

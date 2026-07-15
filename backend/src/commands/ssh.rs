@@ -13,6 +13,12 @@ use crate::services::SshService;
 /// SSH service state wrapper
 pub struct SshServiceState(pub Arc<SshService>);
 
+/// Bounded buffer (in SSH packets) for terminal output waiting to be forwarded
+/// to the frontend. A bounded channel applies backpressure to russh (and thus
+/// the server) when the frontend can't keep up, instead of letting a flood
+/// (`yes`, `cat huge_file`) grow an unbounded queue until the app is OOM-killed.
+const TERMINAL_DATA_BUFFER: usize = 512;
+
 /// Connect to SSH server
 #[tauri::command]
 pub async fn ssh_connect(
@@ -23,7 +29,7 @@ pub async fn ssh_connect(
     let service = &state.0;
 
     // Create channel for data streaming
-    let (tx, mut rx) = mpsc::unbounded::<Vec<u8>>();
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(TERMINAL_DATA_BUFFER);
 
     // Connect based on auth type
     let session_id = match request.auth_type.as_str() {
@@ -156,7 +162,7 @@ pub async fn ssh_reconnect(
     let service = &state.0;
 
     // Create channel for data streaming
-    let (tx, mut rx) = mpsc::unbounded::<Vec<u8>>();
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(TERMINAL_DATA_BUFFER);
 
     // Reconnect
     let new_session_id = service
