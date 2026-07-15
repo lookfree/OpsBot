@@ -83,10 +83,7 @@ pub async fn get_index_mapping(
         .await
         .map_err(|e| format!("Failed to get index mapping: {}", e))?;
 
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let json: serde_json::Value = super::es_json(response, "Failed to get index mapping").await?;
 
     // Return the mappings for the specific index
     Ok(json.get(index_name)
@@ -108,10 +105,7 @@ pub async fn get_index_settings(
         .await
         .map_err(|e| format!("Failed to get index settings: {}", e))?;
 
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let json: serde_json::Value = super::es_json(response, "Failed to get index settings").await?;
 
     // Return the settings for the specific index
     Ok(json.get(index_name)

@@ -86,10 +86,7 @@ pub async fn get_cluster_health(
         .await
         .map_err(|e| format!("Failed to get cluster health: {}", e))?;
 
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let json: serde_json::Value = super::es_json(response, "Failed to get cluster health").await?;
 
     Ok(EsClusterHealth {
         cluster_name: json["cluster_name"].as_str().unwrap_or("").to_string(),
@@ -123,10 +120,7 @@ pub async fn get_cluster_stats(driver: &ElasticsearchDriver) -> Result<EsCluster
         .await
         .map_err(|e| format!("Failed to get cluster stats: {}", e))?;
 
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let json: serde_json::Value = super::es_json(response, "Failed to get cluster stats").await?;
 
     let store_size_bytes = json["indices"]["store"]["size_in_bytes"].as_i64().unwrap_or(0);
     let store_size = format_bytes(store_size_bytes);
@@ -158,10 +152,7 @@ pub async fn get_nodes(driver: &ElasticsearchDriver) -> Result<Vec<EsNodeInfo>, 
         .await
         .map_err(|e| format!("Failed to get nodes: {}", e))?;
 
-    let nodes: Vec<serde_json::Value> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let nodes: Vec<serde_json::Value> = super::es_json(response, "Failed to get nodes").await?;
 
     Ok(nodes
         .iter()
@@ -201,10 +192,7 @@ pub async fn get_shards(driver: &ElasticsearchDriver) -> Result<Vec<EsShardInfo>
         .await
         .map_err(|e| format!("Failed to get shards: {}", e))?;
 
-    let shards: Vec<serde_json::Value> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let shards: Vec<serde_json::Value> = super::es_json(response, "Failed to get shards").await?;
 
     Ok(shards
         .iter()

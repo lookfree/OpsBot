@@ -2,7 +2,7 @@
 //!
 //! Handles document CRUD and bulk operations.
 
-use elasticsearch::params::OpType;
+use elasticsearch::params::{OpType, Refresh};
 use elasticsearch::{BulkOperation, BulkParts, DeleteParts, GetParts, IndexParts, UpdateParts};
 
 use crate::models::{
@@ -61,6 +61,8 @@ pub async fn create_document(
     };
 
     let response = index_request
+        // Wait for the change to be searchable so an immediate list reload sees it
+        .refresh(Refresh::WaitFor)
         .body(request.source)
         .send()
         .await
@@ -103,6 +105,7 @@ pub async fn update_document(
     let response = driver
         .client()
         .update(UpdateParts::IndexId(&request.index, &request.id))
+        .refresh(Refresh::WaitFor)
         .body(body)
         .send()
         .await
@@ -143,6 +146,7 @@ pub async fn delete_document(
     let response = driver
         .client()
         .delete(DeleteParts::IndexId(index, id))
+        .refresh(Refresh::WaitFor)
         .send()
         .await
         .map_err(|e| format!("Failed to delete document: {}", e))?;
