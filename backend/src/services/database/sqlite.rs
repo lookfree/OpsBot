@@ -259,8 +259,10 @@ impl DatabaseDriver for SqliteDriver {
         _database: &str,
         table: &str,
     ) -> Result<TableStructure, String> {
-        // Use PRAGMA table_info to get column information
-        let sql = format!("PRAGMA table_info(\"{}\")", table);
+        // Use PRAGMA table_info to get column information.
+        // Escape the identifier so a name containing a quote can't break out
+        // of the quoted context and inject additional statements.
+        let sql = format!("PRAGMA table_info(\"{}\")", escape_double_quote_identifier(table));
         let column_rows: Vec<SqliteRow> = sqlx::query(&sql)
             .fetch_all(&self.pool)
             .await
@@ -295,7 +297,7 @@ impl DatabaseDriver for SqliteDriver {
             .collect();
 
         // Get indexes using PRAGMA index_list
-        let idx_sql = format!("PRAGMA index_list(\"{}\")", table);
+        let idx_sql = format!("PRAGMA index_list(\"{}\")", escape_double_quote_identifier(table));
         let idx_rows: Vec<SqliteRow> = sqlx::query(&idx_sql)
             .fetch_all(&self.pool)
             .await
@@ -307,7 +309,7 @@ impl DatabaseDriver for SqliteDriver {
             let unique: i32 = idx_row.try_get("unique").unwrap_or(0);
 
             // Get columns for this index
-            let col_sql = format!("PRAGMA index_info(\"{}\")", idx_name);
+            let col_sql = format!("PRAGMA index_info(\"{}\")", escape_double_quote_identifier(&idx_name));
             let col_rows: Vec<SqliteRow> = sqlx::query(&col_sql)
                 .fetch_all(&self.pool)
                 .await
@@ -458,7 +460,7 @@ impl DatabaseDriver for SqliteDriver {
         _database: &str,
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>, String> {
-        let sql = format!("PRAGMA foreign_key_list(\"{}\")", table);
+        let sql = format!("PRAGMA foreign_key_list(\"{}\")", escape_double_quote_identifier(table));
         let rows: Vec<SqliteRow> = sqlx::query(&sql)
             .fetch_all(&self.pool)
             .await

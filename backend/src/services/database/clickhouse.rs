@@ -16,7 +16,9 @@ use crate::models::{
 };
 
 use super::traits::DatabaseDriver;
-use super::utils::{escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
+use super::utils::{
+    escape_backtick_identifier, escape_string_literal, validate_sql_identifier, MAX_QUERY_ROWS,
+};
 
 /// ClickHouse database driver
 pub struct ClickHouseDriver {
@@ -150,7 +152,7 @@ impl ClickHouseDriver {
         log::info!(
             "Executing ClickHouse query on database '{}': {}",
             self.current_database,
-            &query_with_format[..query_with_format.len().min(200)]
+            query_with_format.chars().take(200).collect::<String>()
         );
 
         let mut request = self
@@ -372,7 +374,7 @@ impl DatabaseDriver for ClickHouseDriver {
               AND engine NOT IN ('View', 'MaterializedView')
             ORDER BY name
         "#,
-            database
+            escape_string_literal(database)
         );
 
         let rows = self
@@ -412,7 +414,7 @@ impl DatabaseDriver for ClickHouseDriver {
             WHERE database = '{}' AND table = '{}'
             ORDER BY position
         "#,
-            database, table
+            escape_string_literal(database), escape_string_literal(table)
         );
 
         let rows = self
@@ -496,7 +498,7 @@ impl DatabaseDriver for ClickHouseDriver {
               AND engine IN ('View', 'MaterializedView')
             ORDER BY name
         "#,
-            database
+            escape_string_literal(database)
         );
 
         let rows = self
@@ -540,7 +542,7 @@ impl DatabaseDriver for ClickHouseDriver {
             FROM system.tables
             WHERE database = '{}'
         "#,
-            database
+            escape_string_literal(database)
         );
 
         let row = self
@@ -655,7 +657,7 @@ impl DatabaseDriver for ClickHouseDriver {
             FROM system.tables
             WHERE database = '{}' AND name = '{}'
         "#,
-            database, table
+            escape_string_literal(database), escape_string_literal(table)
         );
 
         let row = self

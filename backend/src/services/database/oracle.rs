@@ -528,9 +528,11 @@ impl DatabaseDriver for OracleDriver {
         validate_sql_identifier(schema)?;
         validate_sql_identifier(old_name)?;
         validate_sql_identifier(new_name)?;
-        let schema = schema.to_uppercase();
-        let old_name = old_name.to_uppercase();
-        let new_name = new_name.to_uppercase();
+        // Preserve the real stored case (see drop_table): quoting is
+        // case-sensitive, so uppercasing would rename the wrong object.
+        let schema = schema.to_string();
+        let old_name = old_name.to_string();
+        let new_name = new_name.to_string();
 
         self.execute_blocking(move |conn| {
             let sql = format!(
@@ -550,8 +552,12 @@ impl DatabaseDriver for OracleDriver {
     async fn drop_table(&self, schema: &str, table: &str) -> Result<(), String> {
         validate_sql_identifier(schema)?;
         validate_sql_identifier(table)?;
-        let schema = schema.to_uppercase();
-        let table = table.to_uppercase();
+        // Do NOT uppercase: names come from ALL_TABLES with their real stored
+        // case, and quoting is case-sensitive in Oracle. Uppercasing a
+        // quoted-lowercase table (CREATE TABLE "events") would target a
+        // different object ("EVENTS") and could drop the wrong table.
+        let schema = schema.to_string();
+        let table = table.to_string();
 
         self.execute_blocking(move |conn| {
             let sql = format!(

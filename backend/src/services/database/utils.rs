@@ -42,6 +42,13 @@ pub fn escape_bracket_identifier(name: &str) -> String {
     name.replace(']', "]]")
 }
 
+/// Escape a value destined for a single-quoted SQL string literal by doubling
+/// embedded single quotes. Use for values interpolated into `'...'` (metadata
+/// filters, names compared as strings) that cannot be sent as bind parameters.
+pub fn escape_string_literal(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
 /// Maximum number of rows returned by a single query
 pub const MAX_QUERY_ROWS: usize = 10_000;
 
@@ -83,7 +90,15 @@ pub fn is_row_returning_sql(sql: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_row_returning_sql;
+    use super::{escape_string_literal, is_row_returning_sql};
+
+    #[test]
+    fn escapes_single_quotes_in_literals() {
+        assert_eq!(escape_string_literal("O'Brien"), "O''Brien");
+        assert_eq!(escape_string_literal("x' OR '1'='1"), "x'' OR ''1''=''1");
+        assert_eq!(escape_string_literal("plain"), "plain");
+        assert_eq!(escape_string_literal("''"), "''''");
+    }
 
     #[test]
     fn classifies_plain_statements() {
