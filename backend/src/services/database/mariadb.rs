@@ -17,7 +17,9 @@ use crate::models::{
 };
 
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
-use super::utils::{escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
+use super::utils::{
+    bytes_to_json_value, escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS,
+};
 
 fn build_mariadb_url(
     host: &str,
@@ -198,7 +200,17 @@ impl MariaDBDriver {
                 .try_get::<chrono::NaiveTime, _>(index)
                 .map(|t| Value::String(t.to_string()))
                 .unwrap_or(Value::Null),
-            // Text/ENUM/SET/BLOB/BINARY/BIT: prefer UTF-8 string, fall back to lossy bytes
+            // YEAR and BIT are unsigned-integer compatible; read as u64.
+            "YEAR" => row
+                .try_get::<u64, _>(index)
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "BIT" => row
+                .try_get::<u64, _>(index)
+                .map(Value::from)
+                .or_else(|_| row.try_get::<Vec<u8>, _>(index).map(|b| bytes_to_json_value(&b)))
+                .unwrap_or(Value::Null),
+            // Text/ENUM/SET/BLOB/BINARY/GEOMETRY: UTF-8 string, else hex (binary-safe).
             _ => row
                 .try_get::<String, _>(index)
                 .ok()
@@ -206,7 +218,7 @@ impl MariaDBDriver {
                 .or_else(|| {
                     row.try_get::<Vec<u8>, _>(index)
                         .ok()
-                        .map(|b| Value::String(String::from_utf8_lossy(&b).to_string()))
+                        .map(|b| bytes_to_json_value(&b))
                 })
                 .unwrap_or(Value::Null),
         }
@@ -321,7 +333,7 @@ impl DatabaseDriver for MariaDBDriver {
 
         if databases.is_empty() {
             let fallback_rows: Vec<MySqlRow> = sqlx::query(
-                "SELECT SCHEMA_NAME AS Database FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
+                "SELECT SCHEMA_NAME AS `Database` FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
             )
             .fetch_all(&self.pool)
             .await
@@ -355,16 +367,58 @@ impl DatabaseDriver for MariaDBDriver {
             .await
             .map_err(|e| format!("Failed to get tables: {}", e))?;
 
-        Ok(rows
+        // Some servers/collations return TABLE_NAME as binary; read either form.
+        let extract = |row: &MySqlRow, idx: usize| -> Option<String> {
+            row.try_get::<String, _>(idx).ok().or_else(|| {
+                row.try_get::<Vec<u8>, _>(idx)
+                    .ok()
+                    .and_then(|b| String::from_utf8(b).ok())
+            })
+        };
+
+        let mut tables: Vec<TableInfo> = rows
             .iter()
             .filter_map(|row| {
+                let name = row
+                    .try_get::<String, _>("TABLE_NAME")
+                    .ok()
+                    .or_else(|| {
+                        row.try_get::<Vec<u8>, _>("TABLE_NAME")
+                            .ok()
+                            .and_then(|b| String::from_utf8(b).ok())
+                    })?;
                 Some(TableInfo {
-                    name: row.try_get("TABLE_NAME").ok()?,
+                    name,
                     table_type: "BASE TABLE".to_string(),
                     row_count: None,
                 })
             })
-            .collect())
+            .collect();
+
+        // information_schema.TABLES can return empty under some connection
+        // configs/permissions; fall back to SHOW FULL TABLES (same as MySQL).
+        if tables.is_empty() {
+            let show_sql = format!("SHOW FULL TABLES FROM `{}`", escape_backtick_identifier(database));
+            let show_rows: Vec<MySqlRow> = sqlx::query(&show_sql)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| format!("Failed to show tables: {}", e))?;
+            tables = show_rows
+                .iter()
+                .filter_map(|row| {
+                    let name = extract(row, 0)?;
+                    let table_type =
+                        extract(row, 1).unwrap_or_else(|| "BASE TABLE".to_string());
+                    if table_type.eq_ignore_ascii_case("BASE TABLE") {
+                        Some(TableInfo { name, table_type, row_count: None })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+
+        Ok(tables)
     }
 
     async fn get_table_structure(
@@ -757,7 +811,7 @@ impl DatabaseDriver for MariaDBDriver {
             charset,
             collation,
             comment: row.try_get("TABLE_COMMENT").unwrap_or_default(),
-            auto_increment: row.try_get("AUTO_INCREMENT").ok(),
+            auto_increment: row.try_get::<u64, _>("AUTO_INCREMENT").ok().map(|v| v as i64),
             row_format: row.try_get("ROW_FORMAT").ok(),
         })
     }

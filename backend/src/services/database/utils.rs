@@ -49,6 +49,19 @@ pub fn escape_string_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+/// Render raw column bytes as a JSON value: the UTF-8 text when valid,
+/// otherwise a `0x…` hex literal so binary data (BLOB/BINARY/BIT/GEOMETRY)
+/// is shown faithfully instead of being mangled by a lossy UTF-8 conversion.
+pub fn bytes_to_json_value(bytes: &[u8]) -> serde_json::Value {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => serde_json::Value::String(text.to_string()),
+        Err(_) => serde_json::Value::String(format!(
+            "0x{}",
+            bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        )),
+    }
+}
+
 /// Maximum number of rows returned by a single query
 pub const MAX_QUERY_ROWS: usize = 10_000;
 

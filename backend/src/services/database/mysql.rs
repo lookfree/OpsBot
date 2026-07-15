@@ -14,7 +14,9 @@ use crate::models::{
 };
 
 use super::traits::{build_column_detail, build_index_map, DatabaseDriver};
-use super::utils::{escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS};
+use super::utils::{
+    bytes_to_json_value, escape_backtick_identifier, validate_sql_identifier, MAX_QUERY_ROWS,
+};
 
 fn build_mysql_url(
     host: &str,
@@ -190,7 +192,19 @@ impl MySqlDriver {
                 .try_get::<chrono::NaiveTime, _>(index)
                 .map(|t| Value::String(t.to_string()))
                 .unwrap_or(Value::Null),
-            // Text/ENUM/SET/BLOB/BINARY/BIT: prefer UTF-8 string, fall back to lossy bytes
+            // YEAR and BIT are unsigned-integer compatible; String/bytes decode
+            // rejects them, so read them as u64 (BIT falls back to raw bytes).
+            "YEAR" => row
+                .try_get::<u64, _>(index)
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+            "BIT" => row
+                .try_get::<u64, _>(index)
+                .map(Value::from)
+                .or_else(|_| row.try_get::<Vec<u8>, _>(index).map(|b| bytes_to_json_value(&b)))
+                .unwrap_or(Value::Null),
+            // Text/ENUM/SET/BLOB/BINARY/GEOMETRY: prefer UTF-8 string, else show
+            // raw bytes as a hex literal (binary-safe, not lossy).
             _ => row
                 .try_get::<String, _>(index)
                 .ok()
@@ -198,7 +212,7 @@ impl MySqlDriver {
                 .or_else(|| {
                     row.try_get::<Vec<u8>, _>(index)
                         .ok()
-                        .map(|b| Value::String(String::from_utf8_lossy(&b).to_string()))
+                        .map(|b| bytes_to_json_value(&b))
                 })
                 .unwrap_or(Value::Null),
         }
@@ -330,7 +344,7 @@ impl DatabaseDriver for MySqlDriver {
 
         if databases.is_empty() {
             let fallback_rows: Vec<MySqlRow> = sqlx::query(
-                "SELECT SCHEMA_NAME AS Database FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
+                "SELECT SCHEMA_NAME AS `Database` FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
             )
             .fetch_all(&self.pool)
             .await
@@ -756,10 +770,15 @@ impl DatabaseDriver for MySqlDriver {
         database: &str,
         table: &str,
     ) -> Result<Vec<CheckConstraintInfo>, String> {
+        // MySQL 8.0.16+ information_schema.CHECK_CONSTRAINTS has no TABLE_NAME
+        // column (unlike MariaDB), so scope by table via TABLE_CONSTRAINTS.
         let sql = r#"
-            SELECT CONSTRAINT_NAME as name, CHECK_CLAUSE as expression
-            FROM information_schema.CHECK_CONSTRAINTS
-            WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ?
+            SELECT cc.CONSTRAINT_NAME as name, cc.CHECK_CLAUSE as expression
+            FROM information_schema.CHECK_CONSTRAINTS cc
+            JOIN information_schema.TABLE_CONSTRAINTS tc
+              ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+             AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+            WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? AND tc.CONSTRAINT_TYPE = 'CHECK'
         "#;
 
         let rows: Vec<MySqlRow> = sqlx::query(sql)
@@ -834,7 +853,8 @@ impl DatabaseDriver for MySqlDriver {
             charset,
             collation,
             comment: row.try_get("TABLE_COMMENT").unwrap_or_default(),
-            auto_increment: row.try_get("AUTO_INCREMENT").ok(),
+            // AUTO_INCREMENT is BIGINT UNSIGNED; decode as u64 (i64 try_get fails)
+            auto_increment: row.try_get::<u64, _>("AUTO_INCREMENT").ok().map(|v| v as i64),
             row_format: row.try_get("ROW_FORMAT").ok(),
         })
     }
