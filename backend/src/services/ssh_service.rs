@@ -32,6 +32,103 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Compute the OpenSSH SHA256 fingerprint (base64, no padding) from a stored
+/// host key. `key_base64` is the standard-base64 SSH public-key blob as saved
+/// in known_hosts; the result matches russh's `PublicKey::fingerprint()` so the
+/// changed-key dialog can show the old and new fingerprints side by side.
+fn fingerprint_from_stored_key(key_base64: &str) -> String {
+    match BASE64.decode(key_base64) {
+        Ok(blob) => {
+            let digest = ring::digest::digest(&ring::digest::SHA256, &blob);
+            base64::engine::general_purpose::STANDARD_NO_PAD.encode(digest.as_ref())
+        }
+        Err(_) => String::new(),
+    }
+}
+
+/// Authenticate a freshly-connected handle using the target credentials carried
+/// in the connect request (password or private key). Returns Err on failure.
+async fn authenticate_target(
+    handle: &mut client::Handle<SshClientHandler>,
+    request: &SshConnectRequest,
+) -> Result<()> {
+    let ok = match request.auth_type.as_str() {
+        "password" => {
+            let password = request
+                .password
+                .as_ref()
+                .ok_or_else(|| anyhow!("Password is required"))?;
+            handle.authenticate_password(&request.username, password).await?
+        }
+        "key" => {
+            let private_key_str = request
+                .private_key
+                .as_ref()
+                .ok_or_else(|| anyhow!("Private key is required"))?;
+            let key_pair = decode_secret_key(private_key_str, request.passphrase.as_deref())?;
+            handle
+                .authenticate_publickey(&request.username, Arc::new(key_pair))
+                .await?
+        }
+        _ => return Err(anyhow!("Unsupported authentication type")),
+    };
+    if !ok {
+        return Err(anyhow!("Authentication failed"));
+    }
+    Ok(())
+}
+
+/// Authenticate to a jump host (bastion) using its own credentials.
+async fn authenticate_jump(
+    handle: &mut client::Handle<SshClientHandler>,
+    jump: &JumpHostConfig,
+) -> Result<()> {
+    let ok = match jump.auth_type {
+        SshAuthType::Password => {
+            let password = jump
+                .password
+                .as_ref()
+                .ok_or_else(|| anyhow!("Jump host password is required"))?;
+            handle.authenticate_password(&jump.username, password).await?
+        }
+        SshAuthType::Key => {
+            let private_key_str = jump
+                .private_key
+                .as_ref()
+                .ok_or_else(|| anyhow!("Jump host private key is required"))?;
+            let key_pair = decode_secret_key(private_key_str, jump.passphrase.as_deref())?;
+            handle
+                .authenticate_publickey(&jump.username, Arc::new(key_pair))
+                .await?
+        }
+        SshAuthType::Interactive => {
+            return Err(anyhow!("Interactive auth not supported for jump host"))
+        }
+    };
+    if !ok {
+        return Err(anyhow!("Jump host authentication failed"));
+    }
+    Ok(())
+}
+
+/// Open a shell channel with a PTY and UTF-8 locale, recording the channel id
+/// so only its output is forwarded to the terminal.
+async fn open_terminal_shell(
+    handle: &client::Handle<SshClientHandler>,
+    size: TerminalSize,
+    terminal_channel_id: &Arc<RwLock<Option<ChannelId>>>,
+) -> Result<Channel<client::Msg>> {
+    let channel = handle.channel_open_session().await?;
+    *terminal_channel_id.write().await = Some(channel.id());
+    channel
+        .request_pty(false, "xterm-256color", size.cols, size.rows, 0, 0, &[])
+        .await?;
+    let _ = channel.set_env(false, "LANG", "en_US.UTF-8").await;
+    let _ = channel.set_env(false, "LC_ALL", "en_US.UTF-8").await;
+    channel.request_shell(false).await?;
+    Ok(channel)
+}
+
 /// SSH session handle for managing a single SSH connection
 pub struct SshSession {
     pub session_id: String,
@@ -41,6 +138,9 @@ pub struct SshSession {
     pub username: String,
     pub port: u16,
     handle: Option<client::Handle<SshClientHandler>>,
+    /// Bastion connection kept alive for jump-host sessions so the direct-tcpip
+    /// channel carrying the target session stays open. None for direct sessions.
+    jump_handle: Option<client::Handle<SshClientHandler>>,
     channel: Option<Channel<client::Msg>>,
     tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     // Store connection parameters for reconnection
@@ -97,10 +197,28 @@ impl SshSession {
             username: request.username.clone(),
             port: request.port,
             handle: None,
+            jump_handle: None,
             channel: None,
             tx: None,
             connect_request: Some(request.clone()),
             last_activity_secs: Arc::new(AtomicU64::new(now_secs())),
+        }
+    }
+
+    /// Close the terminal channel and both the target and bastion connections.
+    async fn close(&mut self, reason: &str) {
+        if let Some(channel) = self.channel.take() {
+            let _ = channel.close().await;
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle
+                .disconnect(Disconnect::ByApplication, reason, "")
+                .await;
+        }
+        if let Some(jump) = self.jump_handle.take() {
+            let _ = jump
+                .disconnect(Disconnect::ByApplication, reason, "")
+                .await;
         }
     }
 
@@ -173,8 +291,11 @@ impl client::Handler for SshClientHandler {
                 }
                 Ok(accepted)
             }
-            HostKeyLookup::Mismatch { old_key: _ } => {
-                let accepted = self.ask_user_key_changed(&key_type, &fingerprint).await;
+            HostKeyLookup::Mismatch { old_key } => {
+                let old_fingerprint = fingerprint_from_stored_key(&old_key);
+                let accepted = self
+                    .ask_user_key_changed(&key_type, &fingerprint, &old_fingerprint)
+                    .await;
                 if accepted {
                     let _ = known_hosts.add(&self.host_port, &key_type, &key_base64).await;
                 }
@@ -222,8 +343,14 @@ impl SshClientHandler {
     }
 
     /// Ask the user about a changed host key via Tauri event
-    async fn ask_user_key_changed(&self, key_type: &str, fingerprint: &str) -> bool {
-        self.emit_and_await("ssh-host-key-changed", key_type, fingerprint, "").await
+    async fn ask_user_key_changed(
+        &self,
+        key_type: &str,
+        fingerprint: &str,
+        old_fingerprint: &str,
+    ) -> bool {
+        self.emit_and_await("ssh-host-key-changed", key_type, fingerprint, old_fingerprint)
+            .await
     }
 
     /// Emit a host key event and wait for user response
@@ -438,16 +565,6 @@ impl SshService {
         Ok(())
     }
 
-    /// Validate SSH identifier (username, hostname) to prevent command injection
-    fn validate_ssh_identifier(value: &str, field_name: &str) -> Result<()> {
-        if value.is_empty() {
-            return Err(anyhow!("Invalid {}: cannot be empty", field_name));
-        }
-        if !value.chars().all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '@' | '-')) {
-            return Err(anyhow!("Invalid {}: contains forbidden characters", field_name));
-        }
-        Ok(())
-    }
 
     /// Connect to SSH server with password authentication
     pub async fn connect_with_password(
@@ -680,103 +797,49 @@ impl SshService {
         let jump_addr = format!("{}:{}", jump.host, jump.port);
         let mut jump_handle = client::connect(jump_config, jump_addr, jump_handler).await?;
 
-        // Authenticate to jump host
-        match jump.auth_type {
-            SshAuthType::Password => {
-                let password = jump
-                    .password
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("Jump host password is required"))?;
-                let auth_result = jump_handle
-                    .authenticate_password(&jump.username, password)
-                    .await?;
-                if !auth_result {
-                    return Err(anyhow!("Jump host password authentication failed"));
-                }
-            }
-            SshAuthType::Key => {
-                let private_key_str = jump
-                    .private_key
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("Jump host private key is required"))?;
-                let key_pair = if let Some(passphrase) = &jump.passphrase {
-                    decode_secret_key(private_key_str, Some(passphrase))?
-                } else {
-                    decode_secret_key(private_key_str, None)?
-                };
-                let auth_result = jump_handle
-                    .authenticate_publickey(&jump.username, Arc::new(key_pair))
-                    .await?;
-                if !auth_result {
-                    return Err(anyhow!("Jump host key authentication failed"));
-                }
-            }
-            SshAuthType::Interactive => {
-                return Err(anyhow!("Interactive auth not supported for jump host"));
-            }
-        }
+        // Authenticate to the jump host with its own credentials.
+        authenticate_jump(&mut jump_handle, jump).await?;
 
-        // Open a direct-tcpip channel to the target host through the jump host
+        // Open a direct-tcpip channel through the bastion to the target, then run
+        // a full second SSH session over it. The target handler verifies the
+        // TARGET's host key against the app's known_hosts store (real TOFU) — the
+        // bastion is never asked to trust the target on our behalf, and no shell
+        // `ssh` command (with its accept-new bypass) is ever executed.
         let channel = jump_handle
-            .channel_open_direct_tcpip(
-                &request.host,
-                request.port as u32,
-                "127.0.0.1",
-                0,
-            )
+            .channel_open_direct_tcpip(&request.host, request.port as u32, "127.0.0.1", 0)
             .await?;
+        let stream = channel.into_stream();
 
-        // Note: target_handler was for a more complex tunnel approach
-        // Currently using simpler ssh-through-jump-host method
-        let _target_handler = SshClientHandler {
+        let target_config = Arc::new(client::Config {
+            inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            keepalive_interval: Some(std::time::Duration::from_secs(15)),
+            keepalive_max: 3,
+            ..Default::default()
+        });
+        let terminal_channel_id = Arc::new(RwLock::new(None));
+        let target_handler = SshClientHandler {
             session_id: session_id.clone(),
             data_tx: data_tx.clone(),
-            terminal_channel_id: Arc::new(RwLock::new(None)),
+            terminal_channel_id: terminal_channel_id.clone(),
             known_hosts: self.known_hosts.clone(),
             host_port: format!("{}:{}", request.host, request.port),
             app_handle: app_handle.clone(),
             pending_verifications: self.pending_verifications.clone(),
         };
+        let mut target_handle =
+            client::connect_stream(target_config, stream, target_handler).await?;
 
-        // Create a stream from the channel for the second SSH connection
-        // Note: This is a simplified implementation. In production, you'd need
-        // to properly bridge the channel I/O with the SSH client.
+        // Authenticate to the target with the target's own credentials.
+        authenticate_target(&mut target_handle, request).await?;
 
-        // For now, we'll use a simpler approach: execute ssh command on jump host
-        // This is more compatible and works in most cases
+        // Open the interactive shell on the target.
+        let channel =
+            open_terminal_shell(&target_handle, request.terminal_size, &terminal_channel_id)
+                .await?;
 
-        // Close the direct-tcpip channel as we'll use a different approach
-        let _ = channel.close().await;
-
-        // Open a session channel on jump host and execute ssh command
-        let jump_session = jump_handle.channel_open_session().await?;
-
-        // Request PTY on jump host
-        jump_session
-            .request_pty(
-                false,
-                "xterm-256color",
-                request.terminal_size.cols,
-                request.terminal_size.rows,
-                0,
-                0,
-                &[],
-            )
-            .await?;
-
-        // Validate SSH identifiers to prevent command injection
-        Self::validate_ssh_identifier(&request.username, "username")?;
-        Self::validate_ssh_identifier(&request.host, "host")?;
-
-        // Execute ssh command to target (TOFU: accept-new keys on first connect)
-        let ssh_cmd = format!(
-            "ssh -o StrictHostKeyChecking=accept-new -p {} {}@{}",
-            request.port, request.username, request.host
-        );
-        jump_session.exec(false, ssh_cmd).await?;
-
-        session.handle = Some(jump_handle);
-        session.channel = Some(jump_session);
+        session.handle = Some(target_handle);
+        session.jump_handle = Some(jump_handle);
+        session.channel = Some(channel);
         session.tx = Some(data_tx);
         session.status = SessionStatus::Connected;
 
@@ -890,14 +953,7 @@ impl SshService {
                 for id in &stale_ids {
                     if let Some(mut session) = sessions.remove(id) {
                         session.status = SessionStatus::Disconnected;
-                        if let Some(channel) = session.channel.take() {
-                            let _ = channel.close().await;
-                        }
-                        if let Some(handle) = session.handle.take() {
-                            let _ = handle
-                                .disconnect(Disconnect::ByApplication, "Session timed out", "")
-                                .await;
-                        }
+                        session.close("Session timed out").await;
                     }
                 }
                 drop(sessions);
@@ -914,18 +970,7 @@ impl SshService {
         let mut sessions = self.sessions.write().await;
         if let Some(mut session) = sessions.remove(session_id) {
             session.status = SessionStatus::Disconnected;
-
-            // Close channel
-            if let Some(channel) = session.channel.take() {
-                let _ = channel.close().await;
-            }
-
-            // Close handle
-            if let Some(handle) = session.handle.take() {
-                let _ = handle
-                    .disconnect(Disconnect::ByApplication, "User disconnected", "")
-                    .await;
-            }
+            session.close("User disconnected").await;
         }
         Ok(())
     }
@@ -1046,7 +1091,11 @@ impl SshService {
     }
 
     /// Test SSH connection without creating a session
-    pub async fn test_connection(&self, request: &SshConnectRequest) -> Result<()> {
+    pub async fn test_connection(
+        &self,
+        request: &SshConnectRequest,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Result<()> {
         // Configure SSH client with shorter timeout for testing
         let config = client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(10)),
@@ -1054,16 +1103,18 @@ impl SshService {
         };
         let config = Arc::new(config);
 
-        // Create a dummy handler for testing (no TOFU - accept all for test)
+        // Verify the host key against the real known-hosts store (same TOFU path
+        // as a real connection). A spoofed host must not silently pass the test
+        // and harvest the credentials we are about to send.
         let (dummy_tx, _dummy_rx) = mpsc::unbounded::<Vec<u8>>();
         let handler = SshClientHandler {
-            session_id: "test".to_string(),
+            session_id: format!("test-{}", Uuid::new_v4()),
             data_tx: dummy_tx,
             terminal_channel_id: Arc::new(RwLock::new(None)),
-            known_hosts: None,
+            known_hosts: self.known_hosts.clone(),
             host_port: format!("{}:{}", request.host, request.port),
-            app_handle: None,
-            pending_verifications: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            app_handle,
+            pending_verifications: self.pending_verifications.clone(),
         };
 
         // Connect to server
@@ -1261,5 +1312,27 @@ impl SshService {
             let _ = exec_session.command_tx.send(ExecCommand::Close);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fingerprint computed from a stored key must match OpenSSH /
+    /// russh output (`SHA256:<base64-nopad>`) so the changed-key dialog shows a
+    /// real, comparable fingerprint. Vector from `ssh-keygen -t ed25519`.
+    #[test]
+    fn fingerprint_matches_openssh() {
+        let blob = "AAAAC3NzaC1lZDI1NTE5AAAAIL9FPZ1VL8PpD8ZMQGYmr9AhQA2ff72aoIwapTuG2iop";
+        let expected = "fZPJbgZc8Eq+RJLq6xjhBBCKLkXgTSaE36ikExiz7Gw";
+        assert_eq!(fingerprint_from_stored_key(blob), expected);
+    }
+
+    /// A corrupt / non-base64 stored key yields an empty fingerprint instead of
+    /// panicking.
+    #[test]
+    fn fingerprint_of_garbage_is_empty() {
+        assert_eq!(fingerprint_from_stored_key("!!!not-base64!!!"), "");
     }
 }

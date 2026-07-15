@@ -209,6 +209,8 @@
       "hostLabel": "主机",
       "keyTypeLabel": "密钥类型",
       "fingerprint": "指纹",
+      "oldFingerprint": "旧指纹（先前信任）",
+      "newFingerprint": "新指纹",
       "trustPrompt": "是否信任此主机并继续连接？",
       "accept": "接受并连接",
       "reject": "拒绝"

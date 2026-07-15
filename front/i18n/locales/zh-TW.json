@@ -202,6 +202,8 @@
       "hostLabel": "主機",
       "keyTypeLabel": "金鑰類型",
       "fingerprint": "指紋",
+      "oldFingerprint": "舊指紋（先前信任）",
+      "newFingerprint": "新指紋",
       "trustPrompt": "是否信任此主機並繼續連線？",
       "accept": "接受並連線",
       "reject": "拒絕"

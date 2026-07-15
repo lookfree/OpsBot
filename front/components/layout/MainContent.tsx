@@ -177,9 +177,6 @@ export function MainContent({ className }: MainContentProps) {
       terminalSize: { cols: 80, rows: 24 },
     }
 
-    // Debug: log request data
-    console.error('SSH Connect Request:', request)
-
     if (!request.host) {
       updateTab(tab.id, {
         status: 'error',

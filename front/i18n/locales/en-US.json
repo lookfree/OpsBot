@@ -209,6 +209,8 @@
       "hostLabel": "Host",
       "keyTypeLabel": "Key Type",
       "fingerprint": "Fingerprint",
+      "oldFingerprint": "Old fingerprint (previously trusted)",
+      "newFingerprint": "New fingerprint",
       "trustPrompt": "Do you want to trust this host and continue connecting?",
       "accept": "Accept & Connect",
       "reject": "Reject"

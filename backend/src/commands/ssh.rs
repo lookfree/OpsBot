@@ -135,12 +135,13 @@ pub async fn ssh_is_connected(state: State<'_, SshServiceState>, session_id: Str
 /// Test SSH connection without creating a session
 #[tauri::command]
 pub async fn ssh_test_connection(
+    app: AppHandle,
     state: State<'_, SshServiceState>,
     request: SshConnectRequest,
 ) -> Result<(), String> {
     let service = &state.0;
     service
-        .test_connection(&request)
+        .test_connection(&request, Some(app))
         .await
         .map_err(|e| e.to_string())
 }

@@ -116,8 +116,24 @@ export function HostKeyVerifyDialog() {
             <p className={cn('text-sm', textSecondary)}>
               {t('ssh.hostKey.keyTypeLabel')}: <span className={cn('font-mono', textPrimary)}>{pending?.payload.key_type}</span>
             </p>
+            {pending?.isKeyChanged && pending.payload.old_fingerprint && (
+              <div>
+                <p className={cn('text-sm mb-1', textSecondary)}>{t('ssh.hostKey.oldFingerprint')}:</p>
+                <code className={cn(
+                  'block text-xs font-mono p-2 rounded break-all line-through opacity-70',
+                  isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-hover',
+                  textSecondary
+                )}>
+                  {pending.payload.old_fingerprint}
+                </code>
+              </div>
+            )}
             <div>
-              <p className={cn('text-sm mb-1', textSecondary)}>{t('ssh.hostKey.fingerprint')}:</p>
+              <p className={cn('text-sm mb-1', textSecondary)}>
+                {pending?.isKeyChanged
+                  ? t('ssh.hostKey.newFingerprint')
+                  : t('ssh.hostKey.fingerprint')}:
+              </p>
               <code className={cn(
                 'block text-xs font-mono p-2 rounded break-all',
                 isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-hover',

@@ -202,6 +202,8 @@
       "hostLabel": "ホスト",
       "keyTypeLabel": "鍵タイプ",
       "fingerprint": "フィンガープリント",
+      "oldFingerprint": "以前のフィンガープリント（信頼済み）",
+      "newFingerprint": "新しいフィンガープリント",
       "trustPrompt": "このホストを信頼して接続を続行しますか？",
       "accept": "承認して接続",
       "reject": "拒否"
