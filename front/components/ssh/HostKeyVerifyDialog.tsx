@@ -31,7 +31,13 @@ export function HostKeyVerifyDialog() {
   const { t } = useTranslation()
   const { theme } = useThemeStore()
   const isDark = theme === 'dark'
-  const [pending, setPending] = useState<PendingVerification | null>(null)
+  // Queue of pending verifications. Multiple prompts can arrive concurrently
+  // (e.g. two terminals, or a terminal + a DB-over-SSH tunnel, connecting to
+  // unknown hosts at once); each backend request blocks up to 120s waiting for
+  // a response, so a single slot that gets overwritten would hang whichever
+  // prompt was replaced. We show them one at a time, oldest first.
+  const [queue, setQueue] = useState<PendingVerification[]>([])
+  const current = queue[0] ?? null
 
   useEffect(() => {
     const unlisteners: UnlistenFn[] = []
@@ -39,13 +45,13 @@ export function HostKeyVerifyDialog() {
     const setup = async () => {
       // Listen for new host key verification events (wildcard via prefix match)
       const unVerify = await listen<HostKeyPayload>('ssh-host-key-verify', (event) => {
-        setPending({ payload: event.payload, isKeyChanged: false })
+        setQueue((q) => [...q, { payload: event.payload, isKeyChanged: false }])
       })
       unlisteners.push(unVerify)
 
       // Listen for host key changed events
       const unChanged = await listen<HostKeyPayload>('ssh-host-key-changed', (event) => {
-        setPending({ payload: event.payload, isKeyChanged: true })
+        setQueue((q) => [...q, { payload: event.payload, isKeyChanged: true }])
       })
       unlisteners.push(unChanged)
     }
@@ -56,18 +62,21 @@ export function HostKeyVerifyDialog() {
 
   const respond = useCallback(
     async (accept: boolean) => {
-      if (!pending) return
+      const head = current
+      if (!head) return
       try {
         await invoke('ssh_host_key_response', {
-          sessionId: pending.payload.session_id,
+          sessionId: head.payload.session_id,
           accept,
         })
       } catch (err) {
         console.error('Failed to respond to host key verification:', err)
       }
-      setPending(null)
+      // Only drop the item we actually answered (guards against a double-fire
+      // dequeuing the next, still-unanswered prompt).
+      setQueue((q) => (q[0] === head ? q.slice(1) : q))
     },
-    [pending]
+    [current]
   )
 
   const dialogBg = isDark ? 'bg-dark-bg-primary' : 'bg-light-bg-primary'
@@ -76,7 +85,7 @@ export function HostKeyVerifyDialog() {
   const textSecondary = isDark ? 'text-dark-text-secondary' : 'text-light-text-secondary'
 
   return (
-    <Dialog.Root open={!!pending} onOpenChange={(open) => { if (!open) respond(false) }}>
+    <Dialog.Root open={!!current} onOpenChange={(open) => { if (!open) respond(false) }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
         <Dialog.Content
@@ -90,13 +99,13 @@ export function HostKeyVerifyDialog() {
         >
           {/* Header */}
           <div className={cn('flex items-center gap-3 px-6 py-4 border-b', borderColor)}>
-            {pending?.isKeyChanged ? (
+            {current?.isKeyChanged ? (
               <ShieldAlert className="w-6 h-6 text-status-error flex-shrink-0" />
             ) : (
               <ShieldCheck className="w-6 h-6 text-status-warning flex-shrink-0" />
             )}
             <Dialog.Title className={cn('text-lg font-semibold', textPrimary)}>
-              {pending?.isKeyChanged
+              {current?.isKeyChanged
                 ? t('ssh.hostKey.keyChanged')
                 : t('ssh.hostKey.newHost')}
             </Dialog.Title>
@@ -104,19 +113,19 @@ export function HostKeyVerifyDialog() {
 
           {/* Content */}
           <div className="px-6 py-4 space-y-3">
-            {pending?.isKeyChanged && (
+            {current?.isKeyChanged && (
               <p className="text-sm text-status-error font-medium">
                 {t('ssh.hostKey.keyChangedWarning')}
               </p>
             )}
 
             <p className={cn('text-sm', textSecondary)}>
-              {t('ssh.hostKey.hostLabel')}: <span className={cn('font-mono font-medium', textPrimary)}>{pending?.payload.host_port}</span>
+              {t('ssh.hostKey.hostLabel')}: <span className={cn('font-mono font-medium', textPrimary)}>{current?.payload.host_port}</span>
             </p>
             <p className={cn('text-sm', textSecondary)}>
-              {t('ssh.hostKey.keyTypeLabel')}: <span className={cn('font-mono', textPrimary)}>{pending?.payload.key_type}</span>
+              {t('ssh.hostKey.keyTypeLabel')}: <span className={cn('font-mono', textPrimary)}>{current?.payload.key_type}</span>
             </p>
-            {pending?.isKeyChanged && pending.payload.old_fingerprint && (
+            {current?.isKeyChanged && current.payload.old_fingerprint && (
               <div>
                 <p className={cn('text-sm mb-1', textSecondary)}>{t('ssh.hostKey.oldFingerprint')}:</p>
                 <code className={cn(
@@ -124,13 +133,13 @@ export function HostKeyVerifyDialog() {
                   isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-hover',
                   textSecondary
                 )}>
-                  {pending.payload.old_fingerprint}
+                  {current.payload.old_fingerprint}
                 </code>
               </div>
             )}
             <div>
               <p className={cn('text-sm mb-1', textSecondary)}>
-                {pending?.isKeyChanged
+                {current?.isKeyChanged
                   ? t('ssh.hostKey.newFingerprint')
                   : t('ssh.hostKey.fingerprint')}:
               </p>
@@ -139,7 +148,7 @@ export function HostKeyVerifyDialog() {
                 isDark ? 'bg-dark-bg-hover' : 'bg-light-bg-hover',
                 textPrimary
               )}>
-                {pending?.payload.fingerprint}
+                {current?.payload.fingerprint}
               </code>
             </div>
 
@@ -165,7 +174,7 @@ export function HostKeyVerifyDialog() {
               onClick={() => respond(true)}
               className={cn(
                 'px-4 py-2 rounded text-sm transition-colors text-white',
-                pending?.isKeyChanged
+                current?.isKeyChanged
                   ? 'bg-status-error hover:bg-status-error/80'
                   : 'bg-accent-primary hover:bg-accent-hover'
               )}
