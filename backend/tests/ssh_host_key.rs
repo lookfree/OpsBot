@@ -245,6 +245,45 @@ async fn inbound_data_keeps_session_active() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// Connecting to a black-holed host must fail fast via the connect timeout,
+/// not hang for the OS TCP timeout (~1-2 min). Gated on the SSH env only so it
+/// runs alongside the other live tests; it targets a non-routable address.
+#[tokio::test]
+#[ignore]
+async fn connect_to_dead_host_times_out() {
+    if std::env::var("ZWD_TEST_SSH_HOST").is_err() {
+        return;
+    }
+    let path = temp_known_hosts_path("timeout");
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(KnownHostsStore::new(path.clone()));
+    let service = SshService::new_with_known_hosts(store);
+
+    let request = SshConnectRequest {
+        connection_id: "dead".to_string(),
+        host: "10.255.255.1".to_string(), // black-hole: SYN silently dropped
+        port: 22,
+        username: "x".to_string(),
+        auth_type: "password".to_string(),
+        password: Some("x".to_string()),
+        private_key: None,
+        passphrase: None,
+        jump_host: None,
+        terminal_size: Default::default(),
+    };
+
+    let start = std::time::Instant::now();
+    let result = service.test_connection(&request, None).await;
+    let elapsed = start.elapsed();
+
+    assert!(result.is_err(), "connecting to a dead host must fail");
+    assert!(
+        elapsed < std::time::Duration::from_secs(30),
+        "connect should time out (~20s), not hang; took {elapsed:?}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Live test that the bounded terminal-data channel delivers a large
 /// multi-packet burst end-to-end without deadlocking. Backpressure blocks the
 /// producer when full (it never drops), so seeing the final marker proves the

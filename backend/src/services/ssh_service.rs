@@ -33,6 +33,22 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Timeout for the TCP connect + SSH handshake. russh's `inactivity_timeout`
+/// only bounds post-handshake idle, so without this a firewalled or black-holed
+/// host would hang the task for the OS TCP timeout (~1-2 min).
+const CONNECT_TIMEOUT_SECS: u64 = 20;
+
+/// Bound a connect/handshake future so a dead host fails fast with a clear
+/// error instead of hanging.
+async fn with_connect_timeout<T>(
+    fut: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    match tokio::time::timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS), fut).await {
+        Ok(res) => res,
+        Err(_) => Err(anyhow!("Connection timed out after {}s", CONNECT_TIMEOUT_SECS)),
+    }
+}
+
 /// Compute the OpenSSH SHA256 fingerprint (base64, no padding) from a stored
 /// host key. `key_base64` is the standard-base64 SSH public-key blob as saved
 /// in known_hosts; the result matches russh's `PublicKey::fingerprint()` so the
@@ -477,7 +493,7 @@ impl SshService {
         };
 
         let addr = format!("{}:{}", tunnel.host, tunnel.port);
-        let mut handle = client::connect(config, addr, handler).await?;
+        let mut handle = with_connect_timeout(client::connect(config, addr, handler)).await?;
 
         match tunnel.auth_type {
             SshAuthType::Password => {
@@ -624,7 +640,7 @@ impl SshService {
 
         // Connect to server
         let addr = format!("{}:{}", request.host, request.port);
-        let mut handle = client::connect(config, addr, handler).await?;
+        let mut handle = with_connect_timeout(client::connect(config, addr, handler)).await?;
 
         // Authenticate with password
         let auth_result = handle
@@ -726,7 +742,7 @@ impl SshService {
 
         // Connect to server
         let addr = format!("{}:{}", request.host, request.port);
-        let mut handle = client::connect(config, addr, handler).await?;
+        let mut handle = with_connect_timeout(client::connect(config, addr, handler)).await?;
 
         // Authenticate with public key
         let auth_result = handle
@@ -809,7 +825,8 @@ impl SshService {
         };
 
         let jump_addr = format!("{}:{}", jump.host, jump.port);
-        let mut jump_handle = client::connect(jump_config, jump_addr, jump_handler).await?;
+        let mut jump_handle =
+            with_connect_timeout(client::connect(jump_config, jump_addr, jump_handler)).await?;
 
         // Authenticate to the jump host with its own credentials.
         authenticate_jump(&mut jump_handle, jump).await?;
@@ -842,7 +859,8 @@ impl SshService {
             last_activity_secs: session.last_activity_secs.clone(),
         };
         let mut target_handle =
-            client::connect_stream(target_config, stream, target_handler).await?;
+            with_connect_timeout(client::connect_stream(target_config, stream, target_handler))
+                .await?;
 
         // Authenticate to the target with the target's own credentials.
         authenticate_target(&mut target_handle, request).await?;
@@ -1165,7 +1183,7 @@ impl SshService {
 
         // Connect to server
         let addr = format!("{}:{}", request.host, request.port);
-        let mut handle = client::connect(config, addr, handler).await?;
+        let mut handle = with_connect_timeout(client::connect(config, addr, handler)).await?;
 
         // Authenticate based on auth type
         let auth_result = match request.auth_type.as_str() {
