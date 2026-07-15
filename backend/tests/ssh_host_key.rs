@@ -192,6 +192,65 @@ fn mbp_key_request() -> Option<SshConnectRequest> {
     })
 }
 
+/// Live test that exec_command does NOT hold the sessions lock across its
+/// output drain: a slow command on session A must not block a concurrent
+/// connect + exec on session B. Pre-fix, A held sessions.read() for the whole
+/// drain and B's sessions.write() (session insert) stalled behind it.
+#[tokio::test]
+#[ignore]
+async fn exec_does_not_hold_sessions_lock() {
+    let req_a = match mbp_key_request() {
+        Some(r) => r,
+        None => return,
+    };
+    let req_b = mbp_key_request().expect("env present");
+
+    let path = temp_known_hosts_path("execlock");
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(KnownHostsStore::new(path.clone()));
+    let service = Arc::new(SshService::new_with_known_hosts(store));
+
+    let (txa, _rxa) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let id_a = service
+        .connect_with_key(req_a, txa, None)
+        .await
+        .expect("connect A");
+
+    // Slow command on A holds a channel + drains for ~3s.
+    let svc = service.clone();
+    let id_a2 = id_a.clone();
+    let slow = tokio::spawn(async move { svc.exec_command(&id_a2, "sleep 3; echo SLOW_DONE").await });
+
+    // Let the slow exec get going (and, in the buggy code, take the read lock).
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    // Concurrently connect B (needs sessions.write()) and run a quick command.
+    let (txb, _rxb) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let start = std::time::Instant::now();
+    let id_b = service
+        .connect_with_key(req_b, txb, None)
+        .await
+        .expect("connect B");
+    let fast_out = service
+        .exec_command(&id_b, "echo FAST_DONE")
+        .await
+        .expect("exec B");
+    let elapsed = start.elapsed();
+
+    assert!(fast_out.contains("FAST_DONE"), "B command should run");
+    assert!(
+        elapsed < std::time::Duration::from_millis(1500),
+        "connect+exec on B took {elapsed:?}; exec on A appears to hold the sessions lock"
+    );
+
+    let slow_out = slow.await.unwrap().expect("slow exec A");
+    assert!(slow_out.contains("SLOW_DONE"));
+
+    service.disconnect(&id_a).await.expect("disconnect A");
+    service.disconnect(&id_b).await.expect("disconnect B");
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Live regression test for the reconnect contract: reconnect must REUSE the
 /// same session id (so the frontend's existing listeners stay valid) and the
 /// terminal must be live again afterward — not a silently-dead session.

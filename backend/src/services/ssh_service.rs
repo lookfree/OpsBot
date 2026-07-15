@@ -137,10 +137,12 @@ pub struct SshSession {
     pub host: String,
     pub username: String,
     pub port: u16,
-    handle: Option<client::Handle<SshClientHandler>>,
+    /// Shared so exec/SFTP paths can clone it out and release the sessions lock
+    /// before doing network I/O (russh's Handle is not Clone; Arc is).
+    handle: Option<Arc<client::Handle<SshClientHandler>>>,
     /// Bastion connection kept alive for jump-host sessions so the direct-tcpip
     /// channel carrying the target session stays open. None for direct sessions.
-    jump_handle: Option<client::Handle<SshClientHandler>>,
+    jump_handle: Option<Arc<client::Handle<SshClientHandler>>>,
     channel: Option<Channel<client::Msg>>,
     tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     // Store connection parameters for reconnection
@@ -649,7 +651,7 @@ impl SshService {
         // Request shell
         channel.request_shell(false).await?;
 
-        session.handle = Some(handle);
+        session.handle = Some(Arc::new(handle));
         session.channel = Some(channel);
         session.tx = Some(data_tx);
         session.status = SessionStatus::Connected;
@@ -750,7 +752,7 @@ impl SshService {
         // Request shell
         channel.request_shell(false).await?;
 
-        session.handle = Some(handle);
+        session.handle = Some(Arc::new(handle));
         session.channel = Some(channel);
         session.tx = Some(data_tx);
         session.status = SessionStatus::Connected;
@@ -837,8 +839,8 @@ impl SshService {
             open_terminal_shell(&target_handle, request.terminal_size, &terminal_channel_id)
                 .await?;
 
-        session.handle = Some(target_handle);
-        session.jump_handle = Some(jump_handle);
+        session.handle = Some(Arc::new(target_handle));
+        session.jump_handle = Some(Arc::new(jump_handle));
         session.channel = Some(channel);
         session.tx = Some(data_tx);
         session.status = SessionStatus::Connected;
@@ -1036,41 +1038,40 @@ impl SshService {
     }
 
     /// Open a new channel for SFTP on an existing SSH connection
-    /// Returns the channel ready for SFTP subsystem request
-    pub async fn open_sftp_channel(&self, session_id: &str) -> Result<Channel<client::Msg>> {
+    /// Clone out a connected session's SSH handle under a short read lock, so
+    /// callers can perform network I/O (channel open, exec, output drain)
+    /// without holding the sessions lock across an await. Holding it would let a
+    /// slow/hung command block every writer (connect/disconnect/reconnect) and,
+    /// via the write-fair RwLock, freeze the whole SSH service.
+    async fn connected_handle(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<client::Handle<SshClientHandler>>> {
         let sessions = self.sessions.read().await;
         let session = sessions
             .get(session_id)
             .ok_or_else(|| anyhow!("Session not found"))?;
-
         if session.status != SessionStatus::Connected {
             return Err(anyhow!("Session not connected"));
         }
-
         let handle = session
             .handle
             .as_ref()
-            .ok_or_else(|| anyhow!("No handle available"))?;
+            .ok_or_else(|| anyhow!("No handle available"))?
+            .clone();
+        Ok(handle)
+    }
 
+    /// Returns the channel ready for SFTP subsystem request
+    pub async fn open_sftp_channel(&self, session_id: &str) -> Result<Channel<client::Msg>> {
+        let handle = self.connected_handle(session_id).await?;
         let channel = handle.channel_open_session().await?;
         Ok(channel)
     }
 
     /// Execute a command on the remote server and return output
     pub async fn exec_command(&self, session_id: &str, command: &str) -> Result<String> {
-        let sessions = self.sessions.read().await;
-        let session = sessions
-            .get(session_id)
-            .ok_or_else(|| anyhow!("Session not found"))?;
-
-        if session.status != SessionStatus::Connected {
-            return Err(anyhow!("Session not connected"));
-        }
-
-        let handle = session
-            .handle
-            .as_ref()
-            .ok_or_else(|| anyhow!("No handle available"))?;
+        let handle = self.connected_handle(session_id).await?;
 
         let mut channel = handle.channel_open_session().await?;
         channel.exec(true, command).await?;
@@ -1190,19 +1191,7 @@ impl SshService {
         rows: u16,
         output_tx: mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<String> {
-        let sessions = self.sessions.read().await;
-        let session = sessions
-            .get(session_id)
-            .ok_or_else(|| anyhow!("Session not found"))?;
-
-        if session.status != SessionStatus::Connected {
-            return Err(anyhow!("Session not connected"));
-        }
-
-        let handle = session
-            .handle
-            .as_ref()
-            .ok_or_else(|| anyhow!("No handle available"))?;
+        let handle = self.connected_handle(session_id).await?;
 
         // Open a new channel
         let mut channel = handle.channel_open_session().await?;
