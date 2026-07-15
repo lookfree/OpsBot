@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions, SqliteRow};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 use crate::models::{
     CheckConstraintInfo, DatabaseObjectsCount, ForeignKeyInfo, QueryColumn, QueryResult,
@@ -100,6 +100,12 @@ impl SqliteDriver {
     }
 
     fn get_column_value(&self, row: &SqliteRow, index: usize, type_name: &str) -> serde_json::Value {
+        // sqlx-sqlite coerces a SQL NULL to 0 / "" / empty blob rather than
+        // erroring, so an unchecked try_get would hide NULLs. Detect NULL first.
+        if row.try_get_raw(index).map(|v| v.is_null()).unwrap_or(true) {
+            return serde_json::Value::Null;
+        }
+
         // SQLite has dynamic typing, try different types
         let type_upper = type_name.to_uppercase();
 
@@ -274,7 +280,9 @@ impl DatabaseDriver for SqliteDriver {
                 let name: String = row.try_get("name").ok()?;
                 let col_type: String = row.try_get("type").ok().unwrap_or_default();
                 let notnull: i32 = row.try_get("notnull").ok().unwrap_or(0);
-                let dflt_value: Option<String> = row.try_get("dflt_value").ok();
+                // Decode as Option so a NULL default stays None (a plain String
+                // try_get would coerce NULL to Some("")).
+                let dflt_value: Option<String> = row.try_get("dflt_value").unwrap_or(None);
                 let pk: i32 = row.try_get("pk").ok().unwrap_or(0);
 
                 // Check if INTEGER PRIMARY KEY (auto-increment in SQLite)

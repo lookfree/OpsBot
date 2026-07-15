@@ -26,7 +26,10 @@ tauri-plugin-clipboard-manager = "2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# preserve_order keeps JSON object keys in insertion order; ClickHouse's
+# JSONEachRow parsing relies on columns staying in SELECT order (otherwise
+# they come back alphabetized and positional readers get the wrong fields).
+serde_json = { version = "1.0", features = ["preserve_order"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
