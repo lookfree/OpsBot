@@ -311,6 +311,8 @@ impl DatabaseDriver for MssqlDriver {
         schema: Option<&str>,
     ) -> Result<Vec<TableInfo>, String> {
         let schema_filter = schema.unwrap_or("dbo");
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(schema_filter)?;
 
         let sql = format!(
             "SELECT TABLE_NAME FROM [{database}].INFORMATION_SCHEMA.TABLES \
@@ -340,6 +342,8 @@ impl DatabaseDriver for MssqlDriver {
         database: &str,
         table: &str,
     ) -> Result<TableStructure, String> {
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
         let columns_sql = format!(
             "SELECT
                 c.COLUMN_NAME,
@@ -462,6 +466,8 @@ impl DatabaseDriver for MssqlDriver {
         schema: Option<&str>,
     ) -> Result<Vec<ViewInfo>, String> {
         let schema_filter = schema.unwrap_or("dbo");
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(schema_filter)?;
 
         let sql = format!(
             "SELECT TABLE_NAME FROM [{database}].INFORMATION_SCHEMA.VIEWS \
@@ -491,6 +497,8 @@ impl DatabaseDriver for MssqlDriver {
         schema: Option<&str>,
     ) -> Result<Vec<RoutineInfo>, String> {
         let schema_filter = schema.unwrap_or("dbo");
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(schema_filter)?;
 
         let sql = format!(
             "SELECT ROUTINE_NAME, ROUTINE_TYPE, CREATED \
@@ -524,6 +532,8 @@ impl DatabaseDriver for MssqlDriver {
         schema: Option<&str>,
     ) -> Result<DatabaseObjectsCount, String> {
         let schema_filter = schema.unwrap_or("dbo");
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(schema_filter)?;
 
         let sql = format!(
             "SELECT
@@ -567,14 +577,19 @@ impl DatabaseDriver for MssqlDriver {
 
     async fn rename_table(
         &self,
-        _database: &str,
+        database: &str,
         old_name: &str,
         new_name: &str,
     ) -> Result<(), String> {
+        validate_sql_identifier(database)?;
         validate_sql_identifier(old_name)?;
         validate_sql_identifier(new_name)?;
+        // Qualify sp_rename with the target database so it runs in the right
+        // database context (the base pool is pinned to the connect-time db);
+        // an unqualified sp_rename would rename in the wrong database.
         let sql = format!(
-            "EXEC sp_rename '{}', '{}'",
+            "EXEC [{}].sys.sp_rename 'dbo.{}', '{}'",
+            escape_bracket_identifier(database),
             old_name.replace('\'', "''"),
             new_name.replace('\'', "''")
         );
@@ -599,6 +614,8 @@ impl DatabaseDriver for MssqlDriver {
         database: &str,
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>, String> {
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
         let sql = format!(
             "SELECT
                 fk.name AS constraint_name,
@@ -643,6 +660,8 @@ impl DatabaseDriver for MssqlDriver {
         database: &str,
         table: &str,
     ) -> Result<Vec<CheckConstraintInfo>, String> {
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
         let sql = format!(
             "SELECT cc.name AS constraint_name, cc.definition AS expression \
              FROM [{database}].sys.check_constraints cc \
@@ -668,6 +687,8 @@ impl DatabaseDriver for MssqlDriver {
         database: &str,
         table: &str,
     ) -> Result<Vec<TriggerInfo>, String> {
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
         let sql = format!(
             "SELECT
                 t.name AS trigger_name,
@@ -706,6 +727,8 @@ impl DatabaseDriver for MssqlDriver {
         database: &str,
         table: &str,
     ) -> Result<TableOptions, String> {
+        validate_sql_identifier(database)?;
+        validate_sql_identifier(table)?;
         let sql = format!(
             "SELECT
                 ISNULL(fg.name, 'PRIMARY') AS filegroup_name,

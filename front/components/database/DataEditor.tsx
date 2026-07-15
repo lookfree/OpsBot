@@ -17,6 +17,7 @@ import { useConnectionStore } from '@/stores'
 import { dbExecuteSql, dbGetTableDdl } from '@/services/database'
 import type { QueryResult, QueryColumn } from '@/services/database'
 import type { DatabaseConnection } from '@/types'
+import { quoteIdentifier, quoteTableName, getDialect, type DatabaseType } from '@/config/dbDialects'
 
 interface DataEditorProps {
   connectionId: string
@@ -59,26 +60,23 @@ export function DataEditor({ connectionId, database, schema, tableName, onClose,
   const { t } = useTranslation()
   const { connections } = useConnectionStore()
   const connection = connections.find((c) => c.id === connectionId) as DatabaseConnection | undefined
-  const dbType = connection?.dbType || 'mysql'
+  const dbType = (connection?.dbType || 'mysql') as DatabaseType
 
-  // Quote identifier based on database type
-  const q = useCallback((identifier: string) => {
-    if (dbType === 'postgresql') {
-      return `"${identifier}"`
-    }
-    return `\`${identifier}\``
-  }, [dbType])
+  // Quote an identifier using the engine's dialect (brackets for MSSQL,
+  // double quotes for PG/Oracle/DM/KingBase/SQLite, backticks for MySQL/CH)
+  const q = useCallback((identifier: string) => quoteIdentifier(dbType, identifier), [dbType])
+
+  // Quote a value as a SQL string literal (escapes embedded single quotes)
+  const qStr = useCallback((value: string) => getDialect(dbType).quoteString(value), [dbType])
 
   // SQL qualifier: schema for engines that have one, database otherwise
   const tableScope = schema || database
 
-  // Quote table with schema/database prefix
-  const qTable = useCallback((db: string, table: string) => {
-    if (dbType === 'postgresql') {
-      return `"${db}"."${table}"`
-    }
-    return `\`${db}\`.\`${table}\``
-  }, [dbType])
+  // Quote table with schema/database prefix using the engine's dialect
+  const qTable = useCallback(
+    (db: string, table: string) => quoteTableName(dbType, db, table),
+    [dbType]
+  )
 
   const [columns, setColumns] = useState<QueryColumn[]>([])
   const [rows, setRows] = useState<RowData[]>([])
@@ -109,11 +107,11 @@ export function DataEditor({ connectionId, database, schema, tableName, onClose,
     const conditions = filters.map(f => {
       if (f.operator === 'IS NULL') return `${q(f.column)} IS NULL`
       if (f.operator === 'IS NOT NULL') return `${q(f.column)} IS NOT NULL`
-      if (f.operator === 'LIKE') return `${q(f.column)} LIKE '%${f.value}%'`
-      return `${q(f.column)} ${f.operator} '${f.value}'`
+      if (f.operator === 'LIKE') return `${q(f.column)} LIKE ${qStr(`%${f.value}%`)}`
+      return `${q(f.column)} ${f.operator} ${qStr(f.value)}`
     }).join(' AND ')
     return ` WHERE ${conditions}`
-  }, [filters, q])
+  }, [filters, q, qStr])
 
   // Build SQL query
   const buildQuery = useCallback(() => {
@@ -267,7 +265,7 @@ export function DataEditor({ connectionId, database, schema, tableName, onClose,
       // Delete statements
       rows.filter(r => r._isDeleted && !r._isNew).forEach(r => {
         const pkValue = r.values[0]
-        statements.push(`DELETE FROM ${qTable(tableScope, tableName)} WHERE ${q(pkCol)} = '${pkValue}';`)
+        statements.push(`DELETE FROM ${qTable(tableScope, tableName)} WHERE ${q(pkCol)} = ${qStr(String(pkValue))};`)
       })
 
       // Insert statements
@@ -289,7 +287,7 @@ export function DataEditor({ connectionId, database, schema, tableName, onClose,
         })
         if (updates.length > 0) {
           const pkValue = orig.values[0]
-          statements.push(`UPDATE ${qTable(tableScope, tableName)} SET ${updates.join(', ')} WHERE ${q(pkCol)} = '${pkValue}';`)
+          statements.push(`UPDATE ${qTable(tableScope, tableName)} SET ${updates.join(', ')} WHERE ${q(pkCol)} = ${qStr(String(pkValue))};`)
         }
       })
 
