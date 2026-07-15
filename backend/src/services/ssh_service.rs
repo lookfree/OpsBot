@@ -856,7 +856,7 @@ impl SshService {
         data_tx: mpsc::UnboundedSender<Vec<u8>>,
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<String> {
-        // Get the stored connection request
+        // Get the stored connection request.
         let connect_request = {
             let sessions = self.sessions.read().await;
             let session = sessions
@@ -868,15 +868,36 @@ impl SshService {
                 .ok_or_else(|| anyhow!("No connection info stored for reconnection"))?
         };
 
-        // Remove old session
-        self.sessions.write().await.remove(session_id);
-
-        // Create new connection with same parameters
-        match connect_request.auth_type.as_str() {
-            "password" => self.connect_with_password(connect_request, data_tx, app_handle).await,
-            "key" => self.connect_with_key(connect_request, data_tx, app_handle).await,
-            _ => Err(anyhow!("Unsupported auth type for reconnection")),
+        // Cleanly tear down the old session (channel + target + bastion) before
+        // reconnecting, rather than dropping it and leaking an unclean close.
+        if let Some(mut old) = self.sessions.write().await.remove(session_id) {
+            old.close("Reconnecting").await;
         }
+
+        // Reconnect with the same parameters. connect_* stores the fresh session
+        // under a brand-new id.
+        let temp_id = match connect_request.auth_type.as_str() {
+            "password" => {
+                self.connect_with_password(connect_request, data_tx, app_handle)
+                    .await?
+            }
+            "key" => self.connect_with_key(connect_request, data_tx, app_handle).await?,
+            _ => return Err(anyhow!("Unsupported auth type for reconnection")),
+        };
+
+        // Re-key the fresh session back to the ORIGINAL session id. The frontend
+        // keeps listening on ssh-data-<id> / ssh-status-<id> for the id it already
+        // holds; reusing it keeps the reconnected terminal live instead of leaving
+        // the UI bound to an orphaned id (a silently-dead terminal).
+        if temp_id != session_id {
+            let mut sessions = self.sessions.write().await;
+            if let Some(mut sess) = sessions.remove(&temp_id) {
+                sess.session_id = session_id.to_string();
+                sessions.insert(session_id.to_string(), sess);
+            }
+        }
+
+        Ok(session_id.to_string())
     }
 
     /// Send data to SSH session

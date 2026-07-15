@@ -148,6 +148,113 @@ fn lookup_name(l: &HostKeyLookup) -> &'static str {
     }
 }
 
+/// Read from a terminal-output channel until `needle` appears (or timeout).
+async fn read_until(
+    rx: &mut futures::channel::mpsc::UnboundedReceiver<Vec<u8>>,
+    needle: &str,
+    secs: u64,
+) -> bool {
+    use futures::StreamExt;
+    let mut buf = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(secs), async {
+        while let Some(chunk) = rx.next().await {
+            buf.extend_from_slice(&chunk);
+            if String::from_utf8_lossy(&buf).contains(needle) {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false)
+}
+
+fn mbp_key_request() -> Option<SshConnectRequest> {
+    let host = std::env::var("ZWD_TEST_SSH_HOST").ok()?;
+    let port: u16 = std::env::var("ZWD_TEST_SSH_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(22);
+    let username = std::env::var("ZWD_TEST_SSH_USER").expect("ZWD_TEST_SSH_USER");
+    let key_path = std::env::var("ZWD_TEST_SSH_KEY_PATH").expect("ZWD_TEST_SSH_KEY_PATH");
+    let private_key = std::fs::read_to_string(&key_path).expect("read private key");
+    Some(SshConnectRequest {
+        connection_id: "test-reconnect".to_string(),
+        host,
+        port,
+        username,
+        auth_type: "key".to_string(),
+        password: None,
+        private_key: Some(private_key),
+        passphrase: std::env::var("ZWD_TEST_SSH_PASSPHRASE").ok(),
+        jump_host: None,
+        terminal_size: Default::default(),
+    })
+}
+
+/// Live regression test for the reconnect contract: reconnect must REUSE the
+/// same session id (so the frontend's existing listeners stay valid) and the
+/// terminal must be live again afterward — not a silently-dead session.
+#[tokio::test]
+#[ignore]
+async fn reconnect_reuses_session_id_and_stays_live() {
+    let request = match mbp_key_request() {
+        Some(r) => r,
+        None => return,
+    };
+
+    let path = temp_known_hosts_path("reconnect");
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(KnownHostsStore::new(path.clone()));
+    let service = SshService::new_with_known_hosts(store);
+
+    let (tx1, mut rx1) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let session_id = service
+        .connect_with_key(request, tx1, None)
+        .await
+        .expect("initial connect should succeed");
+
+    // Live before reconnect (6*7 => 42 only in the evaluated output).
+    service
+        .send_data(&session_id, b"echo MARKA_$((6*7))_END\n")
+        .await
+        .expect("send before reconnect");
+    assert!(
+        read_until(&mut rx1, "MARKA_42_END", 8).await,
+        "terminal should be live before reconnect"
+    );
+
+    // Reconnect on a fresh output channel.
+    let (tx2, mut rx2) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let reconnected_id = service
+        .reconnect(&session_id, tx2, None)
+        .await
+        .expect("reconnect should succeed");
+
+    // THE contract: same id, so the frontend keeps working without rewiring.
+    assert_eq!(
+        reconnected_id, session_id,
+        "reconnect must reuse the original session id"
+    );
+    assert!(
+        service.is_connected(&session_id).await,
+        "session should be connected after reconnect"
+    );
+
+    // Live AFTER reconnect on the new channel — proves it is not a dead terminal.
+    service
+        .send_data(&session_id, b"echo MARKB_$((6*7))_END\n")
+        .await
+        .expect("send after reconnect");
+    assert!(
+        read_until(&mut rx2, "MARKB_42_END", 8).await,
+        "terminal should be live after reconnect (reused id)"
+    );
+
+    service.disconnect(&session_id).await.expect("disconnect");
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Live jump-host regression + security test. Uses the target itself as the
 /// bastion: SSH to the bastion, then a tunneled second SSH back to the bastion's
 /// own sshd over 127.0.0.1. Proves the tunneled second hop works AND that the
