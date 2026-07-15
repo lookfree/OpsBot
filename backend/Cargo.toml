@@ -42,7 +42,7 @@ russh-sftp = "2.0"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "postgres", "sqlite", "chrono", "json", "bigdecimal", "uuid", "tls-native-tls"] }
-tiberius = { version = "0.12", default-features = false, features = ["rustls", "chrono"], optional = true }
+tiberius = { version = "0.12", default-features = false, features = ["rustls", "chrono", "tds73"], optional = true }
 oracle = { version = "0.6", optional = true }
 odbc-api = { version = "5", optional = true }
 clickhouse = { version = "0.13", features = ["native-tls"], optional = true }

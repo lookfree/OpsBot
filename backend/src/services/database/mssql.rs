@@ -191,10 +191,16 @@ impl MssqlDriver {
         if let Some(val) = row.try_get::<chrono::NaiveDateTime, _>(index).ok().flatten() {
             return serde_json::Value::String(val.to_string());
         }
-        // NOTE: plain DATE/TIME/DATETIMEOFFSET columns aren't decoded here —
-        // tiberius 0.12's chrono FromSql impls for NaiveDate/NaiveTime/
-        // DateTime are not available against this project's chrono, so those
-        // still fall through to Null (DATETIME/DATETIME2 work via NaiveDateTime).
+        // DATETIMEOFFSET → timezone-aware DateTime (needs tiberius tds73 feature)
+        if let Some(val) = row.try_get::<chrono::DateTime<chrono::FixedOffset>, _>(index).ok().flatten() {
+            return serde_json::Value::String(val.to_rfc3339());
+        }
+        if let Some(val) = row.try_get::<chrono::NaiveDate, _>(index).ok().flatten() {
+            return serde_json::Value::String(val.to_string());
+        }
+        if let Some(val) = row.try_get::<chrono::NaiveTime, _>(index).ok().flatten() {
+            return serde_json::Value::String(val.to_string());
+        }
         if let Some(val) = row.try_get::<&[u8], _>(index).ok().flatten() {
             return serde_json::Value::String(format!(
                 "0x{}",
