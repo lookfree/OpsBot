@@ -7,7 +7,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
+import { confirm as confirmDialog, message as messageDialog } from '@tauri-apps/plugin-dialog'
 import {
   Search,
   RefreshCw,
@@ -111,11 +111,11 @@ export function RedisKeys({
     [connectionId, searchPattern, typeFilter, cursor]
   )
 
-  // Initial load
+  // Initial load, and reload when the selected database changes
   useEffect(() => {
     loadKeys(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId])
+  }, [connectionId, currentDb])
 
   // Search/filter change
   const handleSearch = useCallback(() => {
@@ -166,6 +166,7 @@ export function RedisKeys({
       setSelectedKeys(new Set())
     } catch (err) {
       console.error('Failed to delete keys:', err)
+      messageDialog(String(err), { kind: 'error' })
     } finally {
       setDeleting(false)
     }

@@ -98,12 +98,20 @@ export function RedisCommandInput({
     }
   }, [pendingCommand, onPendingCommandHandled])
 
-  // Parse input into command and args
+  // Parse input into command and args, honoring single/double quotes so a
+  // quoted argument containing spaces (e.g. SET k "a b") stays one token.
   const parseInput = useCallback((value: string): { cmd: string; args: string[] } => {
-    const parts = value.trim().split(/\s+/)
+    const tokens: string[] = []
+    const re = /"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(\S+)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(value)) !== null) {
+      if (m[1] !== undefined) tokens.push(m[1].replace(/\\(.)/g, '$1'))
+      else if (m[2] !== undefined) tokens.push(m[2].replace(/\\(.)/g, '$1'))
+      else tokens.push(m[3])
+    }
     return {
-      cmd: parts[0]?.toUpperCase() || '',
-      args: parts.slice(1),
+      cmd: tokens[0]?.toUpperCase() || '',
+      args: tokens.slice(1),
     }
   }, [])
 

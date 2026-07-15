@@ -54,9 +54,10 @@ export function RedisMonitor({ connectionId, styles }: RedisMonitorProps) {
   const [history, setHistory] = useState<MetricHistory[]>([])
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Fetch Redis info
-  const fetchInfo = useCallback(async () => {
-    if (isPaused) return
+  // Fetch Redis info. `force` lets the manual Refresh button fetch one
+  // snapshot even while auto-refresh is paused; the interval passes no arg.
+  const fetchInfo = useCallback(async (force = false) => {
+    if (isPaused && !force) return
 
     setLoading(true)
     try {
@@ -134,7 +135,7 @@ export function RedisMonitor({ connectionId, styles }: RedisMonitorProps) {
         <p className="text-status-error mb-2">{t('redis.monitor.error', '获取监控数据失败')}</p>
         <p className="text-sm">{error}</p>
         <button
-          onClick={fetchInfo}
+          onClick={() => fetchInfo(true)}
           className={cn(
             'mt-4 px-4 py-2 rounded',
             'bg-accent-primary text-white',
@@ -186,7 +187,7 @@ export function RedisMonitor({ connectionId, styles }: RedisMonitorProps) {
 
           {/* Manual Refresh Button */}
           <button
-            onClick={fetchInfo}
+            onClick={() => fetchInfo(true)}
             disabled={loading}
             className={cn('p-2 rounded', styles.hoverBg, 'transition-colors disabled:opacity-50')}
             title={t('common.refresh', '刷新')}
