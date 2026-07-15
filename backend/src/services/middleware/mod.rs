@@ -110,9 +110,15 @@ impl MiddlewareService {
             Arc::new(driver),
         ));
 
-        self.kafka_sessions
+        // Close any previous session for this connection_id so reconnecting
+        // doesn't leak the old consumer/producer.
+        let previous = self
+            .kafka_sessions
             .write()
             .insert(request.connection_id.clone(), session.clone());
+        if let Some(previous) = previous {
+            previous.driver.close().await;
+        }
 
         Ok(KafkaConnectionInfo {
             connection_id: request.connection_id,
@@ -371,9 +377,15 @@ impl MiddlewareService {
             Arc::new(driver),
         ));
 
-        self.es_sessions
+        // Close any previous session for this connection_id to avoid leaking
+        // the old client on reconnect.
+        let previous = self
+            .es_sessions
             .write()
             .insert(request.connection_id, session);
+        if let Some(previous) = previous {
+            previous.driver.close().await;
+        }
 
         Ok(info)
     }

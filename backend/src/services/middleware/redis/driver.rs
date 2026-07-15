@@ -316,8 +316,9 @@ impl RedisDriver {
 
                 log::debug!("Redis cluster INFO: got {} node responses", result.len());
 
-                // Return the first node's response (preferably a master)
-                if let Some((node, info)) = result.into_iter().next() {
+                // Pick a deterministic node (lowest address) so repeated
+                // refreshes don't flicker between different nodes' stats.
+                if let Some((node, info)) = result.into_iter().min_by(|a, b| a.0.cmp(&b.0)) {
                     log::debug!("Using INFO from node: {}", node);
                     Ok(info)
                 } else {

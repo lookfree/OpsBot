@@ -44,9 +44,15 @@ impl MiddlewareService {
             Arc::new(driver),
         ));
 
-        self.redis_sessions
+        // Close any previous session for this connection_id so reconnecting
+        // doesn't leak the old client/connections.
+        let previous = self
+            .redis_sessions
             .write()
             .insert(request.connection_id.clone(), session.clone());
+        if let Some(previous) = previous {
+            previous.driver.close().await;
+        }
 
         Ok(RedisConnectionInfo {
             connection_id: request.connection_id,

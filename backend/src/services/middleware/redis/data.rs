@@ -271,10 +271,12 @@ async fn set_zset(
 
 async fn get_stream(driver: &RedisDriver, key: &str) -> Result<RedisValue, String> {
     // Get last 100 entries from stream
+    // Propagate errors (WRONGTYPE, connection, decode) instead of swallowing
+    // them into an empty stream, which would hide a populated stream.
     let result: Vec<(String, Vec<Vec<u8>>)> = driver
         .execute_raw("XREVRANGE", &[key, "+", "-", "COUNT", "100"])
         .await
-        .unwrap_or_default();
+        .map_err(|e| format!("Failed to read stream: {}", e))?;
 
     let entries: Vec<RedisStreamEntry> = result
         .into_iter()
