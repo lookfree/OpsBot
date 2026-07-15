@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use elasticsearch::auth::Credentials;
-use elasticsearch::cert::CertificateValidation;
+use elasticsearch::cert::{Certificate, CertificateValidation};
 use elasticsearch::http::transport::{
     CloudConnectionPool, SingleNodeConnectionPool, TransportBuilder,
 };
@@ -159,9 +159,15 @@ impl ElasticsearchDriver {
             if tls.enabled && !tls.reject_unauthorized {
                 // User explicitly opted out of certificate validation.
                 builder = builder.cert_validation(CertificateValidation::None);
+            } else if let Some(ca) = tls.ca.as_ref().map(|c| c.trim()).filter(|c| !c.is_empty()) {
+                // Validate the server certificate against the user-supplied CA
+                // (PEM), so a private-CA/self-signed cluster works without
+                // disabling validation entirely.
+                let cert = Certificate::from_pem(ca.as_bytes())
+                    .map_err(|e| format!("Invalid CA certificate: {}", e))?;
+                builder = builder.cert_validation(CertificateValidation::Full(cert));
             }
-            // Otherwise (including tls.enabled && reject_unauthorized) use the
-            // default validation.
+            // Otherwise use the default (full) validation.
         }
         Ok(builder)
     }

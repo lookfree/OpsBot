@@ -13,11 +13,16 @@ pub async fn search(
     driver: &ElasticsearchDriver,
     request: EsSearchRequest,
 ) -> Result<EsSearchResponse, String> {
-    let mut body = serde_json::json!({
-        "query": request.query
-    });
+    // The DSL editor sends a full search body ({"query": ..., "size": ...})
+    // while other callers send just the query clause; only wrap the latter so
+    // we don't produce an invalid {"query": {"query": ...}}.
+    let mut body = if request.query.get("query").is_some() {
+        request.query.clone()
+    } else {
+        serde_json::json!({ "query": request.query })
+    };
 
-    // Add optional parameters
+    // Request-level paging parameters win (drive the pagination controls)
     if let Some(from) = request.from {
         body["from"] = serde_json::json!(from);
     }
@@ -115,9 +120,45 @@ pub async fn sql_query(
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let columns = parse_sql_columns(&json);
-    let rows = parse_sql_rows(&json);
+    let mut rows = parse_sql_rows(&json);
+
+    // Follow the cursor to gather all pages (the first response only carries
+    // one fetch_size page); cap total rows so a huge result can't OOM the app.
+    let mut next = json.get("cursor").and_then(|c| c.as_str()).map(String::from);
+    while let Some(cursor) = next.take() {
+        if rows.len() >= MAX_SQL_ROWS {
+            // Stop early — close the outstanding cursor to free server state
+            close_sql_cursor(driver, &cursor).await;
+            break;
+        }
+        let page_resp = driver
+            .client()
+            .sql()
+            .query()
+            .body(serde_json::json!({ "cursor": cursor }))
+            .send()
+            .await
+            .map_err(|e| format!("SQL query failed: {}", e))?;
+        let page: serde_json::Value = super::es_json(page_resp, "SQL query failed").await?;
+        rows.extend(parse_sql_rows(&page));
+        next = page.get("cursor").and_then(|c| c.as_str()).map(String::from);
+    }
 
     Ok(EsSqlResponse { columns, rows })
+}
+
+/// Cap on total SQL rows accumulated across cursor pages.
+const MAX_SQL_ROWS: usize = 10_000;
+
+/// Best-effort close of an ES SQL cursor to release server-side state.
+async fn close_sql_cursor(driver: &ElasticsearchDriver, cursor: &str) {
+    let _ = driver
+        .client()
+        .sql()
+        .clear_cursor()
+        .body(serde_json::json!({ "cursor": cursor }))
+        .send()
+        .await;
 }
 
 /// Parse search hits from response
