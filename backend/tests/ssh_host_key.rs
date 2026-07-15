@@ -245,6 +245,49 @@ async fn inbound_data_keeps_session_active() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// A normal disconnect must reap the session's interactive exec sessions
+/// instead of orphaning them (a memory leak over connect/exec/disconnect cycles).
+#[tokio::test]
+#[ignore]
+async fn disconnect_reaps_exec_sessions() {
+    let request = match mbp_key_request() {
+        Some(r) => r,
+        None => return,
+    };
+
+    let path = temp_known_hosts_path("execreap");
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(KnownHostsStore::new(path.clone()));
+    let service = SshService::new_with_known_hosts(store);
+
+    let (tx, _rx) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
+    let id = service
+        .connect_with_key(request, tx, None)
+        .await
+        .expect("connect");
+
+    // `cat` with no args blocks on stdin, so the exec session stays open.
+    let (otx, _orx) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+    let _exec_id = service
+        .exec_interactive_start(&id, "cat", 80, 24, otx)
+        .await
+        .expect("exec start");
+    assert_eq!(
+        service.exec_session_count().await,
+        1,
+        "exec session should be registered"
+    );
+
+    service.disconnect(&id).await.expect("disconnect");
+    assert_eq!(
+        service.exec_session_count().await,
+        0,
+        "disconnect must reap the session's exec sessions"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Connecting to a black-holed host must fail fast via the connect timeout,
 /// not hang for the OS TCP timeout (~1-2 min). Gated on the SSH env only so it
 /// runs alongside the other live tests; it targets a non-routable address.

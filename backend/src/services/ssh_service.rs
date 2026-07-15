@@ -1021,11 +1021,19 @@ impl SshService {
 
     /// Disconnect SSH session
     pub async fn disconnect(&self, session_id: &str) -> Result<()> {
-        let mut sessions = self.sessions.write().await;
-        if let Some(mut session) = sessions.remove(session_id) {
+        // Take the session out under a short lock, then close it (network I/O)
+        // without holding the sessions lock.
+        let session = self.sessions.write().await.remove(session_id);
+        if let Some(mut session) = session {
             session.status = SessionStatus::Disconnected;
             session.close("User disconnected").await;
         }
+        // Reap any interactive exec sessions bound to this session so a normal
+        // disconnect doesn't orphan them (their child tasks end when dropped).
+        self.exec_sessions
+            .write()
+            .await
+            .retain(|_, es| es.session_id != session_id);
         Ok(())
     }
 
@@ -1047,6 +1055,11 @@ impl SshService {
             .await
             .get(session_id)
             .map(|s| s.last_activity_secs.load(Ordering::Relaxed))
+    }
+
+    /// Number of live interactive exec sessions (for diagnostics/tests).
+    pub async fn exec_session_count(&self) -> usize {
+        self.exec_sessions.read().await.len()
     }
 
     /// Check if session exists and is connected
