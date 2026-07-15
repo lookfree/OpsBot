@@ -94,14 +94,13 @@ function utf8ToBase64(str: string): string {
   return btoa(binary)
 }
 
-function base64ToUtf8(base64: string): string {
+function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i)
   }
-  const decoder = new TextDecoder('utf-8')
-  return decoder.decode(bytes)
+  return bytes
 }
 
 interface TerminalContainerProps {
@@ -286,8 +285,10 @@ export function TerminalContainer({
       // 设置数据监听
       const dataListener = await listen<string>(`ssh-data-${sessionId}`, (event) => {
         if (terminalRef.current && isMounted) {
-          const data = base64ToUtf8(event.payload)
-          terminalRef.current.write(data)
+          // Write raw bytes: xterm's UTF-8 decoder is stateful across writes, so
+          // a multibyte char split across two SSH packets is decoded correctly
+          // (decoding each packet independently would emit U+FFFD at the seam).
+          terminalRef.current.write(base64ToBytes(event.payload))
         }
       })
 
@@ -479,6 +480,9 @@ export function TerminalContainer({
 
     let buffer = ''
     let writeTimer: ReturnType<typeof setTimeout> | null = null
+    // Streaming decoder so a multibyte char split across packets is preserved in
+    // the log instead of becoming U+FFFD at the packet seam.
+    const logDecoder = new TextDecoder('utf-8')
 
     // 批量写入，避免频繁 I/O
     const flushBuffer = async () => {
@@ -496,7 +500,7 @@ export function TerminalContainer({
     }
 
     const unsubscribe = listen<string>(`ssh-data-${sessionId}`, (event) => {
-      const data = base64ToUtf8(event.payload)
+      const data = logDecoder.decode(base64ToBytes(event.payload), { stream: true })
       buffer += data
 
       // 清除旧定时器，设置新定时器（500ms 后写入）
