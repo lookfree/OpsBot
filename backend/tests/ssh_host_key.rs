@@ -422,13 +422,15 @@ async fn exec_does_not_hold_sessions_lock() {
         .await
         .expect("connect A");
 
-    // Slow command on A holds a channel + drains for ~3s.
+    // Slow command on A holds a channel + drains for ~5s. Pre-fix, A's exec
+    // held sessions.read() for that whole window, so B's connect (sessions.write)
+    // would stall ~4.5s; post-fix B is bounded by its own connect+exec latency.
     let svc = service.clone();
     let id_a2 = id_a.clone();
-    let slow = tokio::spawn(async move { svc.exec_command(&id_a2, "sleep 3; echo SLOW_DONE").await });
+    let slow = tokio::spawn(async move { svc.exec_command(&id_a2, "sleep 5; echo SLOW_DONE").await });
 
     // Let the slow exec get going (and, in the buggy code, take the read lock).
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Concurrently connect B (needs sessions.write()) and run a quick command.
     let (txb, _rxb) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
@@ -444,8 +446,10 @@ async fn exec_does_not_hold_sessions_lock() {
     let elapsed = start.elapsed();
 
     assert!(fast_out.contains("FAST_DONE"), "B command should run");
+    // Baseline connect+exec to a real host is ~1.5s; a held lock would push this
+    // past ~4.5s. 3s cleanly separates the two with margin for network variance.
     assert!(
-        elapsed < std::time::Duration::from_millis(1500),
+        elapsed < std::time::Duration::from_secs(3),
         "connect+exec on B took {elapsed:?}; exec on A appears to hold the sessions lock"
     );
 
