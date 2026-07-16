@@ -226,7 +226,10 @@
     "connectionClosed": "連線已關閉",
     "reconnecting": "正在重新連線...",
     "reconnected": "已重新連線",
-    "reconnectFailed": "重新連線失敗：{{error}}"
+    "reconnectFailed": "重新連線失敗：{{error}}",
+    "disconnectedByUser": "使用者已中斷連線",
+    "loggingStarted": "已開始記錄日誌：{{path}}",
+    "loggingStopped": "已停止記錄日誌：{{path}}"
   },
   "sftp": {
     "title": "檔案管理",

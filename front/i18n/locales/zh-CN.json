@@ -233,7 +233,10 @@
     "connectionClosed": "连接已关闭",
     "reconnecting": "正在重新连接...",
     "reconnected": "已重新连接",
-    "reconnectFailed": "重新连接失败: {{error}}"
+    "reconnectFailed": "重新连接失败: {{error}}",
+    "disconnectedByUser": "用户已断开连接",
+    "loggingStarted": "已开始记录日志: {{path}}",
+    "loggingStopped": "已停止记录日志: {{path}}"
   },
   "sftp": {
     "title": "文件管理",

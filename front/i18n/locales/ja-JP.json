@@ -226,7 +226,10 @@
     "connectionClosed": "接続が切断されました",
     "reconnecting": "再接続中...",
     "reconnected": "再接続しました",
-    "reconnectFailed": "再接続に失敗しました: {{error}}"
+    "reconnectFailed": "再接続に失敗しました: {{error}}",
+    "disconnectedByUser": "ユーザーにより切断されました",
+    "loggingStarted": "ログ記録を開始しました: {{path}}",
+    "loggingStopped": "ログ記録を停止しました: {{path}}"
   },
   "sftp": {
     "title": "ファイル管理",

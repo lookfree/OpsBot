@@ -233,7 +233,10 @@
     "connectionClosed": "Connection closed",
     "reconnecting": "Reconnecting...",
     "reconnected": "Reconnected",
-    "reconnectFailed": "Reconnect failed: {{error}}"
+    "reconnectFailed": "Reconnect failed: {{error}}",
+    "disconnectedByUser": "Disconnected by user",
+    "loggingStarted": "Logging started: {{path}}",
+    "loggingStopped": "Logging stopped: {{path}}"
   },
   "sftp": {
     "title": "File Manager",

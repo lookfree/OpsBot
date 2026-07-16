@@ -6,7 +6,15 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, UnlistenFn } from '@tauri-apps/api/event'
+import { UnlistenFn } from '@tauri-apps/api/event'
+import {
+  sshSendData,
+  sshResize,
+  sshDisconnect,
+  sshReconnect,
+  listenSshData,
+  listenSshStatus,
+} from '@/services/ssh'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -106,7 +114,7 @@ async function sendTextChunked(sessionId: string, text: string): Promise<void> {
   const bytes = new TextEncoder().encode(text)
   for (let i = 0; i < bytes.length; i += PASTE_CHUNK_SIZE) {
     const chunk = bytes.subarray(i, i + PASTE_CHUNK_SIZE)
-    await invoke('ssh_send_data', { sessionId, data: bytesToBase64(chunk) })
+    await sshSendData(sessionId, bytesToBase64(chunk))
     if (i + PASTE_CHUNK_SIZE < bytes.length) {
       await new Promise((r) => setTimeout(r, 20))
     }
@@ -201,11 +209,9 @@ export function TerminalContainer({
       if (fitAddonRef.current) {
         fitAddonRef.current.fit()
         if (currentSessionId.current) {
-          invoke('ssh_resize', {
-            sessionId: currentSessionId.current,
-            cols: terminal.cols,
-            rows: terminal.rows,
-          }).catch(() => { /* ignore */ })
+          sshResize(currentSessionId.current, terminal.cols, terminal.rows).catch(() => {
+            /* ignore */
+          })
         }
       }
     }
@@ -216,11 +222,7 @@ export function TerminalContainer({
     // Handle user input
     terminal.onData((data) => {
       if (currentSessionId.current) {
-        const base64Data = utf8ToBase64(data)
-        invoke('ssh_send_data', {
-          sessionId: currentSessionId.current,
-          data: base64Data,
-        }).catch((err) => {
+        sshSendData(currentSessionId.current, utf8ToBase64(data)).catch((err) => {
           onError?.(`Failed to send data: ${err}`)
         })
       }
@@ -302,18 +304,18 @@ export function TerminalContainer({
 
     const setupListeners = async () => {
       // 设置数据监听
-      const dataListener = await listen<string>(`ssh-data-${sessionId}`, (event) => {
+      const dataListener = await listenSshData(sessionId, (payload) => {
         if (terminalRef.current && isMounted) {
           // Write raw bytes: xterm's UTF-8 decoder is stateful across writes, so
           // a multibyte char split across two SSH packets is decoded correctly
           // (decoding each packet independently would emit U+FFFD at the seam).
-          terminalRef.current.write(base64ToBytes(event.payload))
+          terminalRef.current.write(base64ToBytes(payload))
         }
       })
 
       // 设置状态监听
-      const statusListener = await listen<string>(`ssh-status-${sessionId}`, (event) => {
-        if (event.payload === 'disconnected' && isMounted) {
+      const statusListener = await listenSshStatus(sessionId, (status) => {
+        if (status === 'disconnected' && isMounted) {
           onDisconnectedRef.current?.()
           terminalRef.current?.write(
             `\r\n\x1b[31m[${tRef.current('terminal.connectionClosed')}]\x1b[0m\r\n`
@@ -359,11 +361,13 @@ export function TerminalContainer({
       requestAnimationFrame(() => {
         fitAddonRef.current?.fit()
         if (currentSessionId.current && terminalRef.current) {
-          invoke('ssh_resize', {
-            sessionId: currentSessionId.current,
-            cols: terminalRef.current.cols,
-            rows: terminalRef.current.rows,
-          }).catch(() => { /* ignore */ })
+          sshResize(
+            currentSessionId.current,
+            terminalRef.current.cols,
+            terminalRef.current.rows
+          ).catch(() => {
+            /* ignore */
+          })
         }
       })
     }
@@ -395,21 +399,23 @@ export function TerminalContainer({
   const handleDisconnect = useCallback(async () => {
     if (currentSessionId.current) {
       try {
-        await invoke('ssh_disconnect', { sessionId: currentSessionId.current })
-        terminalRef.current?.write('\r\n\x1b[33m[Disconnected by user]\x1b[0m\r\n')
+        await sshDisconnect(currentSessionId.current)
+        terminalRef.current?.write(
+          `\r\n\x1b[33m[${t('terminal.disconnectedByUser')}]\x1b[0m\r\n`
+        )
         onDisconnected?.()
       } catch (err) {
         onError?.(`Disconnect failed: ${err}`)
       }
     }
-  }, [onDisconnected, onError])
+  }, [onDisconnected, onError, t])
 
   // 重新连接
   const handleReconnect = useCallback(async () => {
     if (currentSessionId.current) {
       try {
         terminalRef.current?.write(`\r\n\x1b[36m[${t('terminal.reconnecting')}]\x1b[0m\r\n`)
-        await invoke('ssh_reconnect', { sessionId: currentSessionId.current })
+        await sshReconnect(currentSessionId.current)
         terminalRef.current?.write(`\x1b[32m[${t('terminal.reconnected')}]\x1b[0m\r\n`)
         onConnected?.()
       } catch (err) {
@@ -454,7 +460,9 @@ export function TerminalContainer({
     if (isLogging) {
       // 停止记录
       setIsLogging(false)
-      terminalRef.current?.write(`\r\n\x1b[32m[Logging stopped: ${logPath}]\x1b[0m\r\n`)
+      terminalRef.current?.write(
+        `\r\n\x1b[32m[${t('terminal.loggingStopped', { path: logPath })}]\x1b[0m\r\n`
+      )
       setLogPath(null)
     } else {
       // 选择保存路径并开始记录
@@ -471,7 +479,9 @@ export function TerminalContainer({
           await writeTextFile(filePath, header)
           setLogPath(filePath)
           setIsLogging(true)
-          terminalRef.current?.write(`\r\n\x1b[36m[Logging started: ${filePath}]\x1b[0m\r\n`)
+          terminalRef.current?.write(
+            `\r\n\x1b[36m[${t('terminal.loggingStarted', { path: filePath })}]\x1b[0m\r\n`
+          )
         }
       } catch (err) {
         onError?.(`Start logging failed: ${err}`)
@@ -504,8 +514,8 @@ export function TerminalContainer({
       }
     }
 
-    const unsubscribe = listen<string>(`ssh-data-${sessionId}`, (event) => {
-      const data = logDecoder.decode(base64ToBytes(event.payload), { stream: true })
+    const unsubscribe = listenSshData(sessionId, (payload) => {
+      const data = logDecoder.decode(base64ToBytes(payload), { stream: true })
       buffer += data
 
       // 清除旧定时器，设置新定时器（500ms 后写入）
