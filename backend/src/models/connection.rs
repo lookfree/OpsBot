@@ -32,7 +32,9 @@ pub enum ProxyType {
 }
 
 /// Jump host (bastion) configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// NOTE: Debug is hand-written (below) to redact secrets. Do NOT add `Debug` to
+// this derive.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JumpHostConfig {
     pub host: String,
@@ -45,6 +47,21 @@ pub struct JumpHostConfig {
     pub private_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub passphrase: Option<String>,
+}
+
+impl std::fmt::Debug for JumpHostConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redact = |v: &Option<String>| v.as_ref().map(|_| "<redacted>");
+        f.debug_struct("JumpHostConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth_type", &self.auth_type)
+            .field("password", &redact(&self.password))
+            .field("private_key", &redact(&self.private_key))
+            .field("passphrase", &redact(&self.passphrase))
+            .finish()
+    }
 }
 
 /// Proxy configuration

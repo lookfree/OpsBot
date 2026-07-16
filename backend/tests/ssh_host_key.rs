@@ -74,6 +74,38 @@ async fn known_hosts_detects_changed_key() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// The Debug output of a connect request must never contain the password,
+/// private key, or passphrase (a stray `log::debug!("{:?}", req)` would
+/// otherwise write them to disk). Pure test, always runs.
+#[test]
+fn debug_redacts_secrets() {
+    let req = SshConnectRequest {
+        connection_id: "c".to_string(),
+        host: "h".to_string(),
+        port: 22,
+        username: "u".to_string(),
+        auth_type: "password".to_string(),
+        password: Some("SUPERSECRET".to_string()),
+        private_key: Some("PRIVKEYDATA".to_string()),
+        passphrase: Some("PASSPHRASE".to_string()),
+        jump_host: Some(JumpHostConfig {
+            host: "j".to_string(),
+            port: 22,
+            username: "ju".to_string(),
+            auth_type: SshAuthType::Password,
+            password: Some("JUMPSECRET".to_string()),
+            private_key: None,
+            passphrase: None,
+        }),
+        terminal_size: Default::default(),
+    };
+    let dbg = format!("{req:?}");
+    for secret in ["SUPERSECRET", "PRIVKEYDATA", "PASSPHRASE", "JUMPSECRET"] {
+        assert!(!dbg.contains(secret), "Debug leaked secret {secret}: {dbg}");
+    }
+    assert!(dbg.contains("<redacted>"), "expected redaction markers: {dbg}");
+}
+
 /// Live regression test: with verification enabled, `test_connection` must
 /// still succeed against a real server, and it must persist the server's key
 /// on first sight (TOFU) so a later connection matches instead of re-prompting.

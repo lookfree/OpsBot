@@ -44,7 +44,9 @@ impl Default for TerminalSize {
 use super::connection::JumpHostConfig;
 
 /// SSH connect request from frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// NOTE: Debug is hand-written (below) to redact secrets. Do NOT add `Debug` to
+// this derive — it would print the password/private key/passphrase verbatim.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshConnectRequest {
     pub connection_id: String,
@@ -62,6 +64,28 @@ pub struct SshConnectRequest {
     pub jump_host: Option<JumpHostConfig>,
     #[serde(default)]
     pub terminal_size: TerminalSize,
+}
+
+/// Render `Some("secret")` as `Some("<redacted>")` for Debug output.
+fn redacted(value: &Option<String>) -> Option<&'static str> {
+    value.as_ref().map(|_| "<redacted>")
+}
+
+impl std::fmt::Debug for SshConnectRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshConnectRequest")
+            .field("connection_id", &self.connection_id)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth_type", &self.auth_type)
+            .field("password", &redacted(&self.password))
+            .field("private_key", &redacted(&self.private_key))
+            .field("passphrase", &redacted(&self.passphrase))
+            .field("jump_host", &self.jump_host)
+            .field("terminal_size", &self.terminal_size)
+            .finish()
+    }
 }
 
 /// SSH data event for streaming
