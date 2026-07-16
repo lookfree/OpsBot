@@ -284,9 +284,11 @@ export function TerminalContainer({
   // every render, dropping any output emitted during the async re-subscribe gap.
   const onConnectedRef = useRef(onConnected)
   const onDisconnectedRef = useRef(onDisconnected)
+  const tRef = useRef(t)
   useEffect(() => {
     onConnectedRef.current = onConnected
     onDisconnectedRef.current = onDisconnected
+    tRef.current = t
   })
 
   // Listen for SSH events
@@ -313,7 +315,9 @@ export function TerminalContainer({
       const statusListener = await listen<string>(`ssh-status-${sessionId}`, (event) => {
         if (event.payload === 'disconnected' && isMounted) {
           onDisconnectedRef.current?.()
-          terminalRef.current?.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n')
+          terminalRef.current?.write(
+            `\r\n\x1b[31m[${tRef.current('terminal.connectionClosed')}]\x1b[0m\r\n`
+          )
         }
       })
 
@@ -404,16 +408,17 @@ export function TerminalContainer({
   const handleReconnect = useCallback(async () => {
     if (currentSessionId.current) {
       try {
-        terminalRef.current?.write('\r\n\x1b[36m[Reconnecting...]\x1b[0m\r\n')
+        terminalRef.current?.write(`\r\n\x1b[36m[${t('terminal.reconnecting')}]\x1b[0m\r\n`)
         await invoke('ssh_reconnect', { sessionId: currentSessionId.current })
-        terminalRef.current?.write('\x1b[32m[Reconnected]\x1b[0m\r\n')
+        terminalRef.current?.write(`\x1b[32m[${t('terminal.reconnected')}]\x1b[0m\r\n`)
         onConnected?.()
       } catch (err) {
-        onError?.(`Reconnect failed: ${err}`)
-        terminalRef.current?.write(`\r\n\x1b[31m[Reconnect failed: ${err}]\x1b[0m\r\n`)
+        const msg = t('terminal.reconnectFailed', { error: String(err) })
+        onError?.(msg)
+        terminalRef.current?.write(`\r\n\x1b[31m[${msg}]\x1b[0m\r\n`)
       }
     }
-  }, [onConnected, onError])
+  }, [onConnected, onError, t])
 
   // 保存当前日志
   const handleSaveLog = useCallback(async () => {

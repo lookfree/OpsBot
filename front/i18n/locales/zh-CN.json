@@ -229,7 +229,11 @@
     "saveLog": "保存日志",
     "startLogging": "开始记录日志",
     "stopLogging": "停止记录日志",
-    "selectLogPath": "选择日志保存路径"
+    "selectLogPath": "选择日志保存路径",
+    "connectionClosed": "连接已关闭",
+    "reconnecting": "正在重新连接...",
+    "reconnected": "已重新连接",
+    "reconnectFailed": "重新连接失败: {{error}}"
   },
   "sftp": {
     "title": "文件管理",

@@ -229,7 +229,11 @@
     "saveLog": "Save Log",
     "startLogging": "Start Logging",
     "stopLogging": "Stop Logging",
-    "selectLogPath": "Select Log Path"
+    "selectLogPath": "Select Log Path",
+    "connectionClosed": "Connection closed",
+    "reconnecting": "Reconnecting...",
+    "reconnected": "Reconnected",
+    "reconnectFailed": "Reconnect failed: {{error}}"
   },
   "sftp": {
     "title": "File Manager",

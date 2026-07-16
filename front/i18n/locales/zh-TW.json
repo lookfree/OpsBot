@@ -222,7 +222,11 @@
     "saveLog": "儲存日誌",
     "startLogging": "開始記錄日誌",
     "stopLogging": "停止記錄日誌",
-    "selectLogPath": "選擇日誌儲存路徑"
+    "selectLogPath": "選擇日誌儲存路徑",
+    "connectionClosed": "連線已關閉",
+    "reconnecting": "正在重新連線...",
+    "reconnected": "已重新連線",
+    "reconnectFailed": "重新連線失敗：{{error}}"
   },
   "sftp": {
     "title": "檔案管理",

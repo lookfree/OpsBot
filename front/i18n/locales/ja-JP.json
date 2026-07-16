@@ -222,7 +222,11 @@
     "saveLog": "ログを保存",
     "startLogging": "ログ記録開始",
     "stopLogging": "ログ記録停止",
-    "selectLogPath": "ログ保存先を選択"
+    "selectLogPath": "ログ保存先を選択",
+    "connectionClosed": "接続が切断されました",
+    "reconnecting": "再接続中...",
+    "reconnected": "再接続しました",
+    "reconnectFailed": "再接続に失敗しました: {{error}}"
   },
   "sftp": {
     "title": "ファイル管理",
