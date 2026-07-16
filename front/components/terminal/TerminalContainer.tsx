@@ -84,14 +84,33 @@ const lightTheme = {
 }
 
 // UTF-8 safe base64 encoding/decoding
-function utf8ToBase64(str: string): string {
-  const encoder = new TextEncoder()
-  const bytes = encoder.encode(str)
+function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i])
   }
   return btoa(binary)
+}
+
+function utf8ToBase64(str: string): string {
+  return bytesToBase64(new TextEncoder().encode(str))
+}
+
+const PASTE_CHUNK_SIZE = 4096
+
+// Encode the whole string first so surrogate pairs stay intact, then chunk the
+// BYTES. The remote reassembles the byte stream, so a multibyte char split
+// across a chunk boundary is harmless — whereas slicing by UTF-16 code unit
+// would corrupt an emoji/CJK character straddling the boundary.
+async function sendTextChunked(sessionId: string, text: string): Promise<void> {
+  const bytes = new TextEncoder().encode(text)
+  for (let i = 0; i < bytes.length; i += PASTE_CHUNK_SIZE) {
+    const chunk = bytes.subarray(i, i + PASTE_CHUNK_SIZE)
+    await invoke('ssh_send_data', { sessionId, data: bytesToBase64(chunk) })
+    if (i + PASTE_CHUNK_SIZE < bytes.length) {
+      await new Promise((r) => setTimeout(r, 20))
+    }
+  }
 }
 
 function base64ToBytes(base64: string): Uint8Array {
@@ -238,20 +257,7 @@ export function TerminalContainer({
       const text = e.clipboardData?.getData('text')
       if (!text || !currentSessionId.current) return
       const sid = currentSessionId.current
-      const CHUNK_SIZE = 4096
-      const sendChunks = async () => {
-        for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-          const chunk = text.slice(i, i + CHUNK_SIZE)
-          await invoke('ssh_send_data', {
-            sessionId: sid,
-            data: utf8ToBase64(chunk),
-          }).catch(() => {})
-          if (i + CHUNK_SIZE < text.length) {
-            await new Promise((r) => setTimeout(r, 20))
-          }
-        }
-      }
-      sendChunks()
+      sendTextChunked(sid, text).catch(() => {})
     }
     containerRef.current?.addEventListener('paste', handlePasteEvent)
 
@@ -271,6 +277,17 @@ export function TerminalContainer({
       terminalRef.current.refresh(0, terminalRef.current.rows - 1)
     }
   }, [isDark])
+
+  // Keep the latest parent callbacks in refs so the ssh-event listener effect
+  // can depend only on sessionId. Depending on the callbacks (a fresh identity
+  // each parent render) would tear down and re-subscribe the Tauri listeners on
+  // every render, dropping any output emitted during the async re-subscribe gap.
+  const onConnectedRef = useRef(onConnected)
+  const onDisconnectedRef = useRef(onDisconnected)
+  useEffect(() => {
+    onConnectedRef.current = onConnected
+    onDisconnectedRef.current = onDisconnected
+  })
 
   // Listen for SSH events
   useEffect(() => {
@@ -295,7 +312,7 @@ export function TerminalContainer({
       // 设置状态监听
       const statusListener = await listen<string>(`ssh-status-${sessionId}`, (event) => {
         if (event.payload === 'disconnected' && isMounted) {
-          onDisconnected?.()
+          onDisconnectedRef.current?.()
           terminalRef.current?.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n')
         }
       })
@@ -309,7 +326,7 @@ export function TerminalContainer({
 
       unlistenData = dataListener
       unlistenStatus = statusListener
-      onConnected?.()
+      onConnectedRef.current?.()
       // 连接建立后自动聚焦终端，确保键盘可以立即输入
       setTimeout(() => terminalRef.current?.focus(), 100)
     }
@@ -321,7 +338,7 @@ export function TerminalContainer({
       unlistenData?.()
       unlistenStatus?.()
     }
-  }, [sessionId, onConnected, onDisconnected])
+  }, [sessionId])
 
   // Update font size
   useEffect(() => {
@@ -363,24 +380,7 @@ export function TerminalContainer({
       const text = await readText()
       if (!text || !currentSessionId.current) return
       const sessionId = currentSessionId.current
-      const CHUNK_SIZE = 4096
-      if (text.length <= CHUNK_SIZE) {
-        await invoke('ssh_send_data', {
-          sessionId,
-          data: utf8ToBase64(text),
-        })
-      } else {
-        for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-          const chunk = text.slice(i, i + CHUNK_SIZE)
-          await invoke('ssh_send_data', {
-            sessionId,
-            data: utf8ToBase64(chunk),
-          })
-          if (i + CHUNK_SIZE < text.length) {
-            await new Promise((r) => setTimeout(r, 20))
-          }
-        }
-      }
+      await sendTextChunked(sessionId, text)
     } catch (err) {
       console.error('Paste error:', err)
       onError?.(`Failed to paste: ${err}`)
