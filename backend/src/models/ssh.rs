@@ -88,6 +88,17 @@ impl std::fmt::Debug for SshConnectRequest {
     }
 }
 
+impl Drop for SshConnectRequest {
+    /// Scrub the plaintext secrets from memory on drop so they don't linger in a
+    /// core dump or swapped-out page. jump_host's own Drop scrubs its secrets.
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.password.zeroize();
+        self.private_key.zeroize();
+        self.passphrase.zeroize();
+    }
+}
+
 /// SSH data event for streaming
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshDataEvent {

@@ -106,6 +106,22 @@ fn debug_redacts_secrets() {
     assert!(dbg.contains("<redacted>"), "expected redaction markers: {dbg}");
 }
 
+/// The zeroize mechanism the credential Drop impls rely on actually clears the
+/// underlying String buffer (not just the length). Reading is safe: `pw` still
+/// owns the (now-zeroed) allocation after zeroize(). Pure test, always runs.
+#[test]
+fn zeroize_clears_string_buffer() {
+    use zeroize::Zeroize;
+    let mut pw = String::from("SUPERSECRETPASSWORD");
+    let ptr = pw.as_ptr();
+    let cap = pw.capacity();
+    pw.zeroize();
+    assert!(pw.is_empty(), "zeroize should empty the string");
+    // The buffer is still owned by `pw`; every byte of its capacity is now zero.
+    let buf = unsafe { std::slice::from_raw_parts(ptr, cap) };
+    assert!(buf.iter().all(|&b| b == 0), "buffer bytes not zeroed");
+}
+
 /// Live regression test: with verification enabled, `test_connection` must
 /// still succeed against a real server, and it must persist the server's key
 /// on first sight (TOFU) so a later connection matches instead of re-prompting.

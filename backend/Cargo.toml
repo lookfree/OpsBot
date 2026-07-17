@@ -90,6 +90,8 @@ regex = "1.10"
 # Encryption (for storing credentials)
 ring = "0.17"
 base64 = "0.22"
+# Scrub in-memory credentials on drop (defends core dumps / swap)
+zeroize = "1"
 
 # OS keyring for secure key storage
 keyring = "3"

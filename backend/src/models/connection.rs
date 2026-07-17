@@ -64,6 +64,16 @@ impl std::fmt::Debug for JumpHostConfig {
     }
 }
 
+impl Drop for JumpHostConfig {
+    /// Scrub the plaintext secrets from memory on drop (core dump / swap defense).
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.password.zeroize();
+        self.private_key.zeroize();
+        self.passphrase.zeroize();
+    }
+}
+
 /// Proxy configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
