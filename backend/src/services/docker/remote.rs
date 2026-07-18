@@ -41,13 +41,27 @@ impl RemoteDockerDriver {
         }
     }
 
-    /// Execute a docker command via SSH
+    /// Execute a docker command via SSH. A non-zero exit status is surfaced as
+    /// Err (docker exits non-zero only on real failure), so mutating operations
+    /// no longer report success when the daemon rejected them.
     async fn exec_docker_cmd(&self, args: &str) -> Result<String, String> {
         let cmd = format!("docker {}", args);
-        self.ssh_service
-            .exec_command(&self.ssh_session_id, &cmd)
+        let (output, exit) = self
+            .ssh_service
+            .exec_command_status(&self.ssh_session_id, &cmd)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        match exit {
+            Some(code) if code != 0 => {
+                let msg = output.trim();
+                Err(if msg.is_empty() {
+                    format!("docker exited with status {}", code)
+                } else {
+                    msg.to_string()
+                })
+            }
+            _ => Ok(output),
+        }
     }
 
     /// Parse container list from docker ps --format json
@@ -1049,9 +1063,12 @@ impl DockerDriver for RemoteDockerDriver {
 
         // Run docker compose up -d
         let up_cmd = format!("cd {} && docker compose -p {} up -d", shq(&project_path), shq(&request.name));
-        self.ssh_service.exec_command(&self.ssh_session_id, &up_cmd)
+        let (up_out, up_exit) = self.ssh_service.exec_command_status(&self.ssh_session_id, &up_cmd)
             .await
             .map_err(|e| format!("docker compose up failed: {}", e))?;
+        if up_exit.unwrap_or(0) != 0 {
+            return Err(format!("docker compose up failed: {}", up_out.trim()));
+        }
 
         Ok(())
     }

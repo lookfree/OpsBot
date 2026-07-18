@@ -190,6 +190,40 @@ async fn test_connection_against_mbp_verifies_host_key() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// Live test that exec_command_status captures the remote exit code (the
+/// primitive the remote Docker driver relies on to detect failed commands).
+#[tokio::test]
+#[ignore]
+async fn exec_command_status_captures_exit_code() {
+    let request = match mbp_key_request() {
+        Some(r) => r,
+        None => return,
+    };
+    let path = temp_known_hosts_path("execstatus");
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(KnownHostsStore::new(path.clone()));
+    let service = SshService::new_with_known_hosts(store);
+
+    let (tx, _rx) = futures::channel::mpsc::channel::<Vec<u8>>(1024);
+    let id = service
+        .connect_with_key(request, tx, None)
+        .await
+        .expect("connect");
+
+    let (_o, e0) = service.exec_command_status(&id, "true").await.expect("true");
+    assert_eq!(e0, Some(0), "`true` should exit 0");
+    let (_o, e1) = service.exec_command_status(&id, "false").await.expect("false");
+    assert_eq!(e1, Some(1), "`false` should exit 1");
+    let (_o, e42) = service
+        .exec_command_status(&id, "exit 42")
+        .await
+        .expect("exit 42");
+    assert_eq!(e42, Some(42), "`exit 42` should exit 42");
+
+    service.disconnect(&id).await.expect("disconnect");
+    let _ = std::fs::remove_file(&path);
+}
+
 fn lookup_name(l: &HostKeyLookup) -> &'static str {
     match l {
         HostKeyLookup::Match => "Match",

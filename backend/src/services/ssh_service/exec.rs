@@ -45,8 +45,24 @@ impl SshService {
         Ok(channel)
     }
 
-    /// Execute a command on the remote server and return output
+    /// Execute a command and return its combined stdout+stderr. The remote exit
+    /// status is NOT surfaced; use `exec_command_status` when the caller must
+    /// distinguish success from failure (e.g. docker mutations).
     pub async fn exec_command(&self, session_id: &str, command: &str) -> Result<String> {
+        let (output, _exit) = self.exec_command_status(session_id, command).await?;
+        Ok(output)
+    }
+
+    /// Execute a command and return (combined stdout+stderr, exit_code). The
+    /// exit code is None if the server closed the channel without sending an
+    /// exit status. Callers that mutate remote state must check the exit code:
+    /// a command that failed still produces output, so treating any output as
+    /// success silently swallows errors.
+    pub async fn exec_command_status(
+        &self,
+        session_id: &str,
+        command: &str,
+    ) -> Result<(String, Option<u32>)> {
         let handle = self.connected_handle(session_id).await?;
 
         let mut channel = handle.channel_open_session().await?;
@@ -56,6 +72,7 @@ impl SshService {
 
         let mut output = Vec::new();
         let mut truncated = false;
+        let mut exit_code: Option<u32> = None;
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { data }) => {
@@ -76,7 +93,13 @@ impl SshService {
                     }
                     output.extend_from_slice(&data);
                 }
-                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                    exit_code = Some(exit_status);
+                }
+                // Do NOT break on Eof: the server sends exit-status (and then
+                // Close) AFTER Eof, so breaking on Eof loses the exit code.
+                Some(ChannelMsg::Eof) => {}
+                Some(ChannelMsg::Close) | None => break,
                 _ => {}
             }
         }
@@ -85,7 +108,7 @@ impl SshService {
         if truncated {
             result.push_str("\n\n[Output truncated: exceeded 10MB limit]");
         }
-        Ok(result)
+        Ok((result, exit_code))
     }
 
 
