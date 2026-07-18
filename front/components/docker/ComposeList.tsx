@@ -346,6 +346,7 @@ export function ComposeList({ connectionId }: ComposeListProps) {
       <div className="flex-1 overflow-hidden">
         {selectedProject ? (
           <ComposeDetail
+            key={selectedProject.name}
             connectionId={connectionId}
             project={selectedProject}
             onRefresh={loadProjects}

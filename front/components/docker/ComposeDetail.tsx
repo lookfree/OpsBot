@@ -5,7 +5,7 @@
  * Reference: 1Panel compose detail UI
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Layers,
@@ -153,12 +153,21 @@ export function ComposeDetail({
     }
   }, [connectionId, project.name, yamlContent, onRefresh])
 
+  // Load the editor YAML at most once per mount. This component is keyed by
+  // project name in ComposeList, so a project switch is a fresh mount (all state
+  // reset); reloading the YAML every time the user re-opens the editor tab would
+  // silently discard their unsaved edits.
+  const contentLoadedRef = useRef(false)
+
   // Load data when project or tab changes
   useEffect(() => {
     if (activeTab === 'containers') {
       loadContainers()
     } else if (activeTab === 'editor') {
-      loadContent()
+      if (!contentLoadedRef.current) {
+        contentLoadedRef.current = true
+        loadContent()
+      }
     } else if (activeTab === 'logs') {
       loadLogs()
     }
