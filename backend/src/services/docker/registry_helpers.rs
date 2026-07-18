@@ -35,7 +35,16 @@ fn run_curl_with_auth(
     if has_auth {
         if let (Some(user), Some(pass)) = (username, password) {
             if let Some(mut stdin) = child.stdin.take() {
-                let _ = write!(stdin, "user = \"{}:{}\"", user, pass);
+                // Escape backslash and double-quote for curl's quoted-config
+                // syntax; strip CR/LF so a credential can't inject an extra
+                // curl directive. Without this, a password containing `"` or
+                // `\` corrupts the line and auth silently fails.
+                let esc = |s: &str| {
+                    s.replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace(['\n', '\r'], "")
+                };
+                let _ = write!(stdin, "user = \"{}:{}\"", esc(user), esc(pass));
             }
         }
     }
@@ -170,7 +179,13 @@ fn test_token_auth_internal(
 ) -> Result<String, String> {
     let realm = www_auth.split("realm=\"").nth(1).and_then(|s| s.split('"').next());
 
-    if let Some(realm_url) = realm {
+    // The realm URL comes from the registry's own response header. Only send the
+    // Basic credentials to an HTTPS realm: a hostile registry could otherwise
+    // return an http:// realm on an attacker-controlled host and harvest the
+    // username/password in cleartext. Non-https realms fall through to the
+    // Harbor/base-URL checks, which only ever authenticate against the registry
+    // being tested.
+    if let Some(realm_url) = realm.filter(|u| u.starts_with("https://")) {
         let service = www_auth.split("service=\"").nth(1).and_then(|s| s.split('"').next());
         let token_url = if let Some(svc) = service {
             format!("{}?service={}", realm_url, svc)

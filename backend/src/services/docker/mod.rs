@@ -5,7 +5,7 @@
 
 mod compose_cmd;
 mod local;
-mod registry_helpers;
+pub(crate) mod registry_helpers;
 mod remote;
 mod traits;
 
