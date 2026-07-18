@@ -112,7 +112,7 @@ export function ContainerTerminal({
   const unlistenRef = useRef<UnlistenFn | null>(null)
 
   // Start exec session (shellOverride allows passing shell directly without waiting for state update)
-  const startExec = useCallback(async (term: XTerm, shellOverride?: string) => {
+  const startExec = useCallback(async (term: XTerm, shellOverride?: string, isCancelled?: () => boolean) => {
     setConnecting(true)
     setError(null)
 
@@ -125,6 +125,13 @@ export function ContainerTerminal({
         term.cols,
         term.rows
       )
+      // The terminal may have been torn down (tab switch / unmount) while the
+      // exec was starting. Close the exec so we don't leak a live shell in the
+      // container, and don't touch the now-disposed terminal.
+      if (isCancelled?.()) {
+        dockerExecClose(connectionId, execId).catch(() => {})
+        return
+      }
       execIdRef.current = execId
 
       // Set up event listener IMMEDIATELY after getting execId
@@ -230,11 +237,14 @@ export function ContainerTerminal({
       }
     })
 
-    // Start the exec session
-    startExec(terminal)
+    // Start the exec session. `active` guards against the effect being torn
+    // down while the async exec start is still in flight (see startExec).
+    let active = true
+    startExec(terminal, undefined, () => !active)
 
     // Cleanup
     return () => {
+      active = false
       // Clear resize debounce timeout
       if (resizeTimeout) {
         clearTimeout(resizeTimeout)

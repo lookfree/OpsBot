@@ -204,8 +204,8 @@ export function ContainerStatsView({
                   <div
                     className={cn(
                       'h-full transition-all duration-300',
-                      stats.memoryPercent > 80 ? 'bg-status-warning' :
-                      stats.memoryPercent > 90 ? 'bg-status-error' : 'bg-status-success'
+                      stats.memoryPercent > 90 ? 'bg-status-error' :
+                      stats.memoryPercent > 80 ? 'bg-status-warning' : 'bg-status-success'
                     )}
                     style={{ width: `${Math.min(stats.memoryPercent, 100)}%` }}
                   />

@@ -879,6 +879,7 @@ function SearchImagesDialog({ connectionId, registry, onClose, isDark }: SearchI
                           type="checkbox"
                           checked={selectedImages.has(image.name)}
                           onChange={() => toggleImage(image.name)}
+                          onClick={(e) => e.stopPropagation()}
                           className="w-4 h-4 rounded"
                         />
                       </td>

@@ -166,12 +166,19 @@ export function ContainerList({ connectionId, onViewLogs, onViewStats, onOpenTer
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
+        {error && containers.length > 0 && (
+          <div className="flex items-center gap-2 px-4 py-2 text-sm text-status-error bg-status-error/10 border-b border-status-error/20">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span className="flex-1">{error}</span>
+            <button onClick={() => setError(null)} className="opacity-70 hover:opacity-100">✕</button>
+          </div>
+        )}
         {loading && containers.length === 0 ? (
           <div className={cn('flex items-center justify-center h-32', textSecondary)}>
             <Loader2 className="w-6 h-6 animate-spin mr-2" />
             {t('common.loading')}
           </div>
-        ) : error ? (
+        ) : error && containers.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-status-error">
             <AlertCircle className="w-5 h-5 mr-2" />
             {error}
