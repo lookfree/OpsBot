@@ -17,6 +17,15 @@ use crate::models::docker::{
 use crate::services::SshService;
 use std::collections::HashMap;
 
+/// Shell-quote a value before interpolating it into a command that the remote
+/// host executes via a login shell (SshService::exec_command runs
+/// `channel.exec` = `sh -c cmd`). Wraps in single quotes and escapes embedded
+/// single quotes with the `'"'"'` idiom. EVERY user-controlled value spliced
+/// into a docker command MUST go through this to prevent shell injection.
+fn shq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
+}
+
 /// Remote Docker driver using SSH
 pub struct RemoteDockerDriver {
     ssh_service: Arc<SshService>,
@@ -255,26 +264,26 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn start_container(&self, container_id: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("start {}", container_id))
+        self.exec_docker_cmd(&format!("start {}", shq(container_id)))
             .await?;
         Ok(())
     }
 
     async fn stop_container(&self, container_id: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("stop {}", container_id))
+        self.exec_docker_cmd(&format!("stop {}", shq(container_id)))
             .await?;
         Ok(())
     }
 
     async fn restart_container(&self, container_id: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("restart {}", container_id))
+        self.exec_docker_cmd(&format!("restart {}", shq(container_id)))
             .await?;
         Ok(())
     }
 
     async fn remove_container(&self, container_id: &str, force: bool) -> Result<(), String> {
         let force_flag = if force { "-f" } else { "" };
-        self.exec_docker_cmd(&format!("rm {} {}", force_flag, container_id))
+        self.exec_docker_cmd(&format!("rm {} {}", force_flag, shq(container_id)))
             .await?;
         Ok(())
     }
@@ -285,7 +294,7 @@ impl DockerDriver for RemoteDockerDriver {
         tail: Option<u32>,
     ) -> Result<String, String> {
         let tail_arg = tail.map(|t| format!("--tail {}", t)).unwrap_or_default();
-        self.exec_docker_cmd(&format!("logs {} {}", tail_arg, container_id))
+        self.exec_docker_cmd(&format!("logs {} {}", tail_arg, shq(container_id)))
             .await
     }
 
@@ -297,13 +306,13 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn pull_image(&self, image: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("pull {}", image)).await?;
+        self.exec_docker_cmd(&format!("pull {}", shq(image))).await?;
         Ok(())
     }
 
     async fn remove_image(&self, image_id: &str, force: bool) -> Result<(), String> {
         let force_flag = if force { "-f" } else { "" };
-        self.exec_docker_cmd(&format!("rmi {} {}", force_flag, image_id))
+        self.exec_docker_cmd(&format!("rmi {} {}", force_flag, shq(image_id)))
             .await?;
         Ok(())
     }
@@ -552,7 +561,7 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn inspect_network(&self, network_id: &str) -> Result<NetworkDetail, String> {
-        let output = self.exec_docker_cmd(&format!("network inspect {}", network_id)).await?;
+        let output = self.exec_docker_cmd(&format!("network inspect {}", shq(network_id))).await?;
         let json_array: Vec<serde_json::Value> = serde_json::from_str(&output)
             .map_err(|e| format!("Failed to parse network inspect output: {}", e))?;
 
@@ -620,18 +629,18 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn create_network(&self, config: CreateNetworkRequest) -> Result<String, String> {
-        let mut cmd = format!("network create {}", config.name);
+        let mut cmd = format!("network create {}", shq(&config.name));
 
         if let Some(driver) = &config.driver {
-            cmd.push_str(&format!(" --driver {}", driver));
+            cmd.push_str(&format!(" --driver {}", shq(driver)));
         }
 
         if let Some(subnet) = &config.subnet {
-            cmd.push_str(&format!(" --subnet {}", subnet));
+            cmd.push_str(&format!(" --subnet {}", shq(subnet)));
         }
 
         if let Some(gateway) = &config.gateway {
-            cmd.push_str(&format!(" --gateway {}", gateway));
+            cmd.push_str(&format!(" --gateway {}", shq(gateway)));
         }
 
         if config.internal.unwrap_or(false) {
@@ -640,7 +649,7 @@ impl DockerDriver for RemoteDockerDriver {
 
         if let Some(labels) = &config.labels {
             for (key, value) in labels {
-                cmd.push_str(&format!(" --label {}={}", key, value));
+                cmd.push_str(&format!(" --label {}", shq(&format!("{}={}", key, value))));
             }
         }
 
@@ -649,7 +658,7 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn remove_network(&self, network_id: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("network rm {}", network_id)).await?;
+        self.exec_docker_cmd(&format!("network rm {}", shq(network_id))).await?;
         Ok(())
     }
 
@@ -658,7 +667,7 @@ impl DockerDriver for RemoteDockerDriver {
         network_id: &str,
         container_id: &str,
     ) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("network connect {} {}", network_id, container_id)).await?;
+        self.exec_docker_cmd(&format!("network connect {} {}", shq(network_id), shq(container_id))).await?;
         Ok(())
     }
 
@@ -667,7 +676,7 @@ impl DockerDriver for RemoteDockerDriver {
         network_id: &str,
         container_id: &str,
     ) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("network disconnect {} {}", network_id, container_id)).await?;
+        self.exec_docker_cmd(&format!("network disconnect {} {}", shq(network_id), shq(container_id))).await?;
         Ok(())
     }
 
@@ -721,21 +730,21 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn create_volume(&self, config: CreateVolumeRequest) -> Result<String, String> {
-        let mut cmd = format!("volume create {}", config.name);
+        let mut cmd = format!("volume create {}", shq(&config.name));
 
         if let Some(driver) = &config.driver {
-            cmd.push_str(&format!(" --driver {}", driver));
+            cmd.push_str(&format!(" --driver {}", shq(driver)));
         }
 
         if let Some(opts) = &config.driver_opts {
             for (key, value) in opts {
-                cmd.push_str(&format!(" --opt {}={}", key, value));
+                cmd.push_str(&format!(" --opt {}", shq(&format!("{}={}", key, value))));
             }
         }
 
         if let Some(labels) = &config.labels {
             for (key, value) in labels {
-                cmd.push_str(&format!(" --label {}={}", key, value));
+                cmd.push_str(&format!(" --label {}", shq(&format!("{}={}", key, value))));
             }
         }
 
@@ -745,7 +754,7 @@ impl DockerDriver for RemoteDockerDriver {
 
     async fn remove_volume(&self, volume_name: &str, force: bool) -> Result<(), String> {
         let force_flag = if force { "-f" } else { "" };
-        self.exec_docker_cmd(&format!("volume rm {} {}", force_flag, volume_name)).await?;
+        self.exec_docker_cmd(&format!("volume rm {} {}", force_flag, shq(volume_name))).await?;
         Ok(())
     }
 
@@ -779,7 +788,7 @@ impl DockerDriver for RemoteDockerDriver {
 
         // Use docker stats with --no-stream to get a single snapshot
         let format = r#"--format '{"Name":"{{.Name}}","CPUPerc":"{{.CPUPerc}}","MemUsage":"{{.MemUsage}}","MemPerc":"{{.MemPerc}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}"}'"#;
-        let output = self.exec_docker_cmd(&format!("stats {} --no-stream {}", container_id, format)).await?;
+        let output = self.exec_docker_cmd(&format!("stats {} --no-stream {}", shq(container_id), format)).await?;
 
         let line = output.lines().next().ok_or("No stats output")?;
         let json: serde_json::Value = serde_json::from_str(line)
@@ -843,7 +852,7 @@ impl DockerDriver for RemoteDockerDriver {
             .collect();
 
         let cmd_str = escaped_cmd.join(" ");
-        let docker_cmd = format!("exec {} {}", container_id, cmd_str);
+        let docker_cmd = format!("exec {} {}", shq(container_id), cmd_str);
 
         self.exec_docker_cmd(&docker_cmd).await
     }
@@ -862,7 +871,7 @@ impl DockerDriver for RemoteDockerDriver {
         // Also set COLUMNS and LINES for proper terminal size
         let docker_cmd = format!(
             "docker exec -it -e TERM=xterm-256color -e COLUMNS={} -e LINES={} {} {}",
-            cols, rows, container_id, shell
+            cols, rows, shq(container_id), shq(shell)
         );
 
         log::debug!("Starting remote docker exec: {}", docker_cmd);
@@ -944,7 +953,7 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn get_compose_containers(&self, project_name: &str) -> Result<Vec<ComposeContainer>, String> {
-        let output = self.exec_docker_cmd(&format!("compose -p {} ps --format json -a", project_name)).await?;
+        let output = self.exec_docker_cmd(&format!("compose -p {} ps --format json -a", shq(project_name))).await?;
 
         if output.trim().is_empty() {
             return Ok(Vec::new());
@@ -1007,7 +1016,7 @@ impl DockerDriver for RemoteDockerDriver {
         // Try to read compose files
         for filename in ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
             let file_path = format!("{}/{}", project.path, filename);
-            let cmd = format!("cat '{}' 2>/dev/null", file_path);
+            let cmd = format!("cat {} 2>/dev/null", shq(&file_path));
             if let Ok(content) = self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await {
                 if !content.trim().is_empty() {
                     return Ok(content);
@@ -1026,20 +1035,20 @@ impl DockerDriver for RemoteDockerDriver {
         };
 
         // Create directory
-        let mkdir_cmd = format!("mkdir -p '{}'", project_path);
+        let mkdir_cmd = format!("mkdir -p {}", shq(&project_path));
         self.ssh_service.exec_command(&self.ssh_session_id, &mkdir_cmd)
             .await
             .map_err(|e| format!("Failed to create project directory: {}", e))?;
 
         // Write docker-compose.yml
-        let escaped_content = request.content.replace("'", "'\"'\"'");
-        let write_cmd = format!("echo '{}' > '{}/docker-compose.yml'", escaped_content, project_path);
+        let compose_file = format!("{}/docker-compose.yml", project_path);
+        let write_cmd = format!("echo {} > {}", shq(&request.content), shq(&compose_file));
         self.ssh_service.exec_command(&self.ssh_session_id, &write_cmd)
             .await
             .map_err(|e| format!("Failed to write compose file: {}", e))?;
 
         // Run docker compose up -d
-        let up_cmd = format!("cd '{}' && docker compose -p '{}' up -d", project_path, request.name);
+        let up_cmd = format!("cd {} && docker compose -p {} up -d", shq(&project_path), shq(&request.name));
         self.ssh_service.exec_command(&self.ssh_session_id, &up_cmd)
             .await
             .map_err(|e| format!("docker compose up failed: {}", e))?;
@@ -1060,11 +1069,10 @@ impl DockerDriver for RemoteDockerDriver {
         // Find and update compose file
         for filename in ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
             let file_path = format!("{}/{}", project.path, filename);
-            let check_cmd = format!("test -f '{}' && echo exists", file_path);
+            let check_cmd = format!("test -f {} && echo exists", shq(&file_path));
             if let Ok(result) = self.ssh_service.exec_command(&self.ssh_session_id, &check_cmd).await {
                 if result.trim() == "exists" {
-                    let escaped_content = request.content.replace("'", "'\"'\"'");
-                    let write_cmd = format!("echo '{}' > '{}'", escaped_content, file_path);
+                    let write_cmd = format!("echo {} > {}", shq(&request.content), shq(&file_path));
                     self.ssh_service.exec_command(&self.ssh_session_id, &write_cmd)
                         .await
                         .map_err(|e| format!("Failed to write compose file: {}", e))?;
@@ -1077,30 +1085,30 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn start_compose(&self, project_name: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("compose -p {} start", project_name)).await?;
+        self.exec_docker_cmd(&format!("compose -p {} start", shq(project_name))).await?;
         Ok(())
     }
 
     async fn stop_compose(&self, project_name: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("compose -p {} stop", project_name)).await?;
+        self.exec_docker_cmd(&format!("compose -p {} stop", shq(project_name))).await?;
         Ok(())
     }
 
     async fn restart_compose(&self, project_name: &str) -> Result<(), String> {
-        self.exec_docker_cmd(&format!("compose -p {} restart", project_name)).await?;
+        self.exec_docker_cmd(&format!("compose -p {} restart", shq(project_name))).await?;
         Ok(())
     }
 
     async fn remove_compose(&self, project_name: &str, remove_volumes: bool) -> Result<(), String> {
         let volume_flag = if remove_volumes { "-v" } else { "" };
-        self.exec_docker_cmd(&format!("compose -p {} down {}", project_name, volume_flag)).await?;
+        self.exec_docker_cmd(&format!("compose -p {} down {}", shq(project_name), volume_flag)).await?;
         Ok(())
     }
 
     async fn get_compose_logs(&self, project_name: &str, tail: Option<u32>, service: Option<&str>) -> Result<String, String> {
         let tail_arg = tail.map(|t| format!("--tail {}", t)).unwrap_or_default();
-        let service_arg = service.unwrap_or("");
-        self.exec_docker_cmd(&format!("compose -p {} logs {} {}", project_name, tail_arg, service_arg)).await
+        let service_arg = service.map(shq).unwrap_or_default();
+        self.exec_docker_cmd(&format!("compose -p {} logs {} {}", shq(project_name), tail_arg, service_arg)).await
     }
 
     async fn get_compose_path(&self, project_name: &str) -> Result<String, String> {
@@ -1242,14 +1250,14 @@ impl DockerDriver for RemoteDockerDriver {
                     .trim_end_matches('/');
                 if let (Some(username), Some(password)) = (&registry.username, &registry.password) {
                     let cmd = format!(
-                        "echo '{}' | docker login -u '{}' --password-stdin {} 2>&1",
-                        password.replace("'", "'\"'\"'"),
-                        username.replace("'", "'\"'\"'"),
-                        registry_host
+                        "echo {} | docker login -u {} --password-stdin {} 2>&1",
+                        shq(password),
+                        shq(username),
+                        shq(registry_host)
                     );
                     self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await
                 } else {
-                    let cmd = format!("docker login {} 2>&1", registry_host);
+                    let cmd = format!("docker login {} 2>&1", shq(registry_host));
                     self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await
                 }
             }
@@ -1612,4 +1620,27 @@ fn save_registries(registries: &[RegistryInfo]) -> Result<(), String> {
 
     std::fs::write(&file_path, content)
         .map_err(|e| format!("Failed to write registries file: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shq;
+
+    #[test]
+    fn shq_wraps_and_neutralizes_metacharacters() {
+        assert_eq!(shq("simple"), "'simple'");
+        // Shell metacharacters are inert inside single quotes.
+        assert_eq!(shq("; rm -rf /"), "'; rm -rf /'");
+        assert_eq!(shq("$(reboot)"), "'$(reboot)'");
+        assert_eq!(shq("a && b `c`"), "'a && b `c`'");
+    }
+
+    #[test]
+    fn shq_escapes_embedded_single_quote() {
+        // a'b -> 'a'"'"'b' : closes the quote, a double-quoted quote, reopens.
+        assert_eq!(shq("a'b"), "'a'\"'\"'b'");
+        let out = shq("x'; reboot; '");
+        assert!(out.starts_with('\'') && out.ends_with('\''));
+        assert!(out.contains("'\"'\"'"));
+    }
 }
