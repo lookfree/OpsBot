@@ -53,7 +53,13 @@ export function ContainerStatsView({
   const textSecondary = isDark ? 'text-dark-text-secondary' : 'text-light-text-secondary'
   const hoverBg = isDark ? 'hover:bg-dark-bg-hover' : 'hover:bg-light-bg-hover'
 
+  const inFlightRef = useRef(false)
   const loadStats = useCallback(async () => {
+    // Don't stack requests: `docker stats` routinely takes >1-2s, so a fixed 3s
+    // interval would otherwise overlap and let responses arrive out of order,
+    // flickering the display back to older samples.
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     try {
       const data = await dockerGetContainerStats(connectionId, containerId)
       setStats(data)
@@ -62,6 +68,7 @@ export function ContainerStatsView({
       setError(String(err))
     } finally {
       setLoading(false)
+      inFlightRef.current = false
     }
   }, [connectionId, containerId])
 

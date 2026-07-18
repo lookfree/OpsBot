@@ -36,16 +36,21 @@ export function ContainerLogs({
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsContainerRef = useRef<HTMLDivElement>(null)
 
+  const reqIdRef = useRef(0)
   const loadLogs = useCallback(async () => {
+    const reqId = ++reqIdRef.current
     setLoading(true)
     setError(null)
     try {
       const data = await dockerGetLogs(connectionId, containerId, tailLines)
-      setLogs(data)
+      // Ignore a response a newer request has superseded (e.g. the user changed
+      // the tail count while this one was in flight), and don't let the stale
+      // request's finally clear the newer one's loading flag.
+      if (reqIdRef.current === reqId) setLogs(data)
     } catch (err) {
-      setError(String(err))
+      if (reqIdRef.current === reqId) setError(String(err))
     } finally {
-      setLoading(false)
+      if (reqIdRef.current === reqId) setLoading(false)
     }
   }, [connectionId, containerId, tailLines])
 
