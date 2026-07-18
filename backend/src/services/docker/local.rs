@@ -266,12 +266,15 @@ impl DockerDriver for LocalDockerDriver {
             };
 
             let mut logs_stream = self.client.logs(container_id, Some(options));
-            let mut output = String::new();
+            // Accumulate raw bytes and decode once at the end: decoding each
+            // frame independently corrupts a multibyte (e.g. CJK) character that
+            // Docker split across frame boundaries into U+FFFD.
+            let mut bytes: Vec<u8> = Vec::new();
 
             while let Some(log_result) = logs_stream.next().await {
                 match log_result {
                     Ok(log) => {
-                        output.push_str(&log.to_string());
+                        bytes.extend_from_slice(&log.into_bytes());
                     }
                     Err(e) => {
                         return Err(format!("Failed to get container logs: {}", e));
@@ -279,7 +282,7 @@ impl DockerDriver for LocalDockerDriver {
                 }
             }
 
-            Ok(output)
+            Ok(String::from_utf8_lossy(&bytes).to_string())
         }).await
     }
 
@@ -741,9 +744,13 @@ impl DockerDriver for LocalDockerDriver {
             use bollard::container::StatsOptions;
             use chrono::Utc;
 
+            // one_shot must be false: with one_shot=true the daemon skips the
+            // priming read, so precpu_stats is empty and CPU% is computed from
+            // lifetime totals (essentially always wrong). stream=false still
+            // returns a single sample, but the daemon takes two internal reads.
             let options = StatsOptions {
                 stream: false,
-                one_shot: true,
+                one_shot: false,
             };
 
             let mut stats_stream = self.client.stats(container_id, Some(options));
@@ -829,12 +836,14 @@ impl DockerDriver for LocalDockerDriver {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            let mut result = String::new();
+            // Accumulate raw bytes; decode once so a multibyte char split across
+            // exec output frames isn't corrupted into U+FFFD.
+            let mut bytes: Vec<u8> = Vec::new();
             if let StartExecResults::Attached { mut output, .. } = output {
                 while let Some(msg) = output.next().await {
                     match msg {
                         Ok(log_output) => {
-                            result.push_str(&log_output.to_string());
+                            bytes.extend_from_slice(&log_output.into_bytes());
                         }
                         Err(e) => {
                             return Err(e.to_string());
@@ -843,7 +852,7 @@ impl DockerDriver for LocalDockerDriver {
                 }
             }
 
-            Ok(result)
+            Ok(String::from_utf8_lossy(&bytes).to_string())
         }).await
     }
 
@@ -1403,13 +1412,18 @@ impl DockerDriver for LocalDockerDriver {
 
         info!("Found registry: {} ({})", registry.name, registry.url);
 
-        // Test using HTTP request (supports both Basic Auth and Token Auth)
-        let result = test_registry_connection(
-            &registry.url,
-            registry.username.as_deref(),
-            registry.password.as_deref(),
-            registry.skip_tls_verify,
-        );
+        // Test using HTTP request (supports both Basic Auth and Token Auth).
+        // test_registry_connection runs blocking curl; keep it off the async
+        // runtime so a slow registry doesn't pin a tokio worker thread.
+        let url = registry.url.clone();
+        let user = registry.username.clone();
+        let pass = registry.password.clone();
+        let skip = registry.skip_tls_verify;
+        let result = tokio::task::spawn_blocking(move || {
+            test_registry_connection(&url, user.as_deref(), pass.as_deref(), skip)
+        })
+        .await
+        .map_err(|e| format!("registry test task failed: {}", e))?;
 
         info!("test_registry_connection result: {:?}", result);
 
@@ -1454,9 +1468,10 @@ impl DockerDriver for LocalDockerDriver {
             return Err("Invalid search term: only alphanumeric characters, '.', '-', '/', ':', '_' are allowed".to_string());
         }
 
-        let output = std::process::Command::new("docker")
+        let output = tokio::process::Command::new("docker")
             .args(["search", "--limit", "25", "--format", "{{.Name}}\t{{.Description}}\t{{.StarCount}}\t{{.IsOfficial}}", search_term])
             .output()
+            .await
             .map_err(|e| format!("Failed to search: {}", e))?;
 
         if !output.status.success() {
@@ -1516,9 +1531,10 @@ impl DockerDriver for LocalDockerDriver {
                         .trim_start_matches("http://"), image)
                 };
 
-                let output = std::process::Command::new("docker")
+                let output = tokio::process::Command::new("docker")
                     .args(["pull", &full_image])
                     .output()
+                    .await
                     .map_err(|e| format!("Failed to pull {}: {}", full_image, e))?;
 
                 if !output.status.success() {

@@ -29,16 +29,48 @@ fn shq(s: &str) -> String {
 /// Remote Docker driver using SSH
 pub struct RemoteDockerDriver {
     ssh_service: Arc<SshService>,
-    ssh_session_id: String,
+    /// The SSH *connection* id (saved config id). The live session id is
+    /// resolved per call (see `sid`) so the driver survives an SSH reconnect
+    /// instead of pinning a session id that goes stale.
+    ssh_connection_id: String,
 }
 
 impl RemoteDockerDriver {
     /// Create a new remote Docker driver
-    pub fn new(ssh_service: Arc<SshService>, ssh_session_id: String) -> Self {
+    pub fn new(ssh_service: Arc<SshService>, ssh_connection_id: String) -> Self {
         Self {
             ssh_service,
-            ssh_session_id,
+            ssh_connection_id,
         }
+    }
+
+    /// Resolve the CURRENT SSH session id for this Docker connection. Resolving
+    /// per call (not pinning it at connect) keeps the driver working after the
+    /// SSH session is re-established, and fails clearly when it is gone instead
+    /// of dispatching to a dead session id while is_connected reports healthy.
+    async fn sid(&self) -> Result<String, String> {
+        self.ssh_service
+            .find_session_by_connection_id(&self.ssh_connection_id)
+            .await
+            .ok_or_else(|| "SSH session not connected; reconnect the SSH server".to_string())
+    }
+
+    /// Run a raw shell command over the current SSH session (output only).
+    async fn ssh_exec(&self, cmd: &str) -> Result<String, String> {
+        let sid = self.sid().await?;
+        self.ssh_service
+            .exec_command(&sid, cmd)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Run a raw shell command and return (output, exit_code).
+    async fn ssh_exec_status(&self, cmd: &str) -> Result<(String, Option<u32>), String> {
+        let sid = self.sid().await?;
+        self.ssh_service
+            .exec_command_status(&sid, cmd)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Execute a docker command via SSH. A non-zero exit status is surfaced as
@@ -46,11 +78,7 @@ impl RemoteDockerDriver {
     /// no longer report success when the daemon rejected them.
     async fn exec_docker_cmd(&self, args: &str) -> Result<String, String> {
         let cmd = format!("docker {}", args);
-        let (output, exit) = self
-            .ssh_service
-            .exec_command_status(&self.ssh_session_id, &cmd)
-            .await
-            .map_err(|e| e.to_string())?;
+        let (output, exit) = self.ssh_exec_status(&cmd).await?;
         match exit {
             Some(code) if code != 0 => {
                 let msg = output.trim();
@@ -223,14 +251,14 @@ impl RemoteDockerDriver {
             (size_str, 1)
         };
 
-        num_str.parse::<f64>().unwrap_or(0.0) as u64 * unit
+        (num_str.parse::<f64>().unwrap_or(0.0) * unit as f64) as u64
     }
 }
 
 #[async_trait]
 impl DockerDriver for RemoteDockerDriver {
     async fn test_connection(&self) -> Result<DockerTestResult, String> {
-        let output = self.exec_docker_cmd("version --format '{{json .}}'").await;
+        let output = self.exec_docker_cmd("version --format '{{json .}}' 2>/dev/null").await;
 
         match output {
             Ok(output) => {
@@ -335,12 +363,12 @@ impl DockerDriver for RemoteDockerDriver {
 
     async fn get_info(&self) -> Result<DockerInfo, String> {
         // Get version info
-        let version_output = self.exec_docker_cmd("version --format '{{json .}}'").await?;
+        let version_output = self.exec_docker_cmd("version --format '{{json .}}' 2>/dev/null").await?;
         let version_json: serde_json::Value = serde_json::from_str(&version_output)
             .unwrap_or_default();
 
         // Get system info
-        let info_output = self.exec_docker_cmd("info --format '{{json .}}'").await?;
+        let info_output = self.exec_docker_cmd("info --format '{{json .}}' 2>/dev/null").await?;
         let info_json: serde_json::Value = serde_json::from_str(&info_output)
             .unwrap_or_default();
 
@@ -398,7 +426,7 @@ impl DockerDriver for RemoteDockerDriver {
 
     async fn get_stats(&self) -> Result<DockerStats, String> {
         // Get system info for container counts
-        let info_output = self.exec_docker_cmd("info --format '{{json .}}'").await?;
+        let info_output = self.exec_docker_cmd("info --format '{{json .}}' 2>/dev/null").await?;
         let info_json: serde_json::Value = serde_json::from_str(&info_output)
             .unwrap_or_default();
 
@@ -429,7 +457,7 @@ impl DockerDriver for RemoteDockerDriver {
 
     async fn get_settings(&self) -> Result<DockerSettings, String> {
         // Get system info for registry settings
-        let info_output = self.exec_docker_cmd("info --format '{{json .}}'").await?;
+        let info_output = self.exec_docker_cmd("info --format '{{json .}}' 2>/dev/null").await?;
         let info_json: serde_json::Value = serde_json::from_str(&info_output)
             .unwrap_or_default();
 
@@ -478,8 +506,7 @@ impl DockerDriver for RemoteDockerDriver {
     async fn update_registry_mirrors(&self, mirrors: Vec<String>) -> Result<(), String> {
         // Read current daemon.json
         let read_cmd = "cat /etc/docker/daemon.json 2>/dev/null || echo '{}'";
-        let current_config = self.ssh_service
-            .exec_command(&self.ssh_session_id, read_cmd)
+        let current_config = self.ssh_exec(read_cmd)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -497,8 +524,7 @@ impl DockerDriver for RemoteDockerDriver {
             "echo '{}' | sudo tee /etc/docker/daemon.json > /dev/null",
             new_config.replace('\'', "'\"'\"'")
         );
-        self.ssh_service
-            .exec_command(&self.ssh_session_id, &write_cmd)
+        self.ssh_exec(&write_cmd)
             .await
             .map_err(|e| format!("Failed to write daemon.json: {}", e))?;
 
@@ -507,13 +533,11 @@ impl DockerDriver for RemoteDockerDriver {
 
     async fn stop_daemon(&self) -> Result<(), String> {
         // Try systemctl first, then service command
-        let result = self.ssh_service
-            .exec_command(&self.ssh_session_id, "sudo systemctl stop docker")
+        let result = self.ssh_exec("sudo systemctl stop docker")
             .await;
 
         if result.is_err() {
-            self.ssh_service
-                .exec_command(&self.ssh_session_id, "sudo service docker stop")
+            self.ssh_exec("sudo service docker stop")
                 .await
                 .map_err(|e| format!("Failed to stop Docker daemon: {}", e))?;
         }
@@ -523,13 +547,11 @@ impl DockerDriver for RemoteDockerDriver {
 
     async fn restart_daemon(&self) -> Result<(), String> {
         // Try systemctl first, then service command
-        let result = self.ssh_service
-            .exec_command(&self.ssh_session_id, "sudo systemctl restart docker")
+        let result = self.ssh_exec("sudo systemctl restart docker")
             .await;
 
         if result.is_err() {
-            self.ssh_service
-                .exec_command(&self.ssh_session_id, "sudo service docker restart")
+            self.ssh_exec("sudo service docker restart")
                 .await
                 .map_err(|e| format!("Failed to restart Docker daemon: {}", e))?;
         }
@@ -891,8 +913,9 @@ impl DockerDriver for RemoteDockerDriver {
         log::debug!("Starting remote docker exec: {}", docker_cmd);
 
         // Use SSH interactive exec
+        let sid = self.sid().await?;
         self.ssh_service
-            .exec_interactive_start(&self.ssh_session_id, &docker_cmd, cols, rows, output_tx)
+            .exec_interactive_start(&sid, &docker_cmd, cols, rows, output_tx)
             .await
             .map_err(|e| e.to_string())
     }
@@ -1031,7 +1054,7 @@ impl DockerDriver for RemoteDockerDriver {
         for filename in ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
             let file_path = format!("{}/{}", project.path, filename);
             let cmd = format!("cat {} 2>/dev/null", shq(&file_path));
-            if let Ok(content) = self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await {
+            if let Ok(content) = self.ssh_exec(&cmd).await {
                 if !content.trim().is_empty() {
                     return Ok(content);
                 }
@@ -1050,20 +1073,20 @@ impl DockerDriver for RemoteDockerDriver {
 
         // Create directory
         let mkdir_cmd = format!("mkdir -p {}", shq(&project_path));
-        self.ssh_service.exec_command(&self.ssh_session_id, &mkdir_cmd)
+        self.ssh_exec(&mkdir_cmd)
             .await
             .map_err(|e| format!("Failed to create project directory: {}", e))?;
 
         // Write docker-compose.yml
         let compose_file = format!("{}/docker-compose.yml", project_path);
         let write_cmd = format!("echo {} > {}", shq(&request.content), shq(&compose_file));
-        self.ssh_service.exec_command(&self.ssh_session_id, &write_cmd)
+        self.ssh_exec(&write_cmd)
             .await
             .map_err(|e| format!("Failed to write compose file: {}", e))?;
 
         // Run docker compose up -d
         let up_cmd = format!("cd {} && docker compose -p {} up -d", shq(&project_path), shq(&request.name));
-        let (up_out, up_exit) = self.ssh_service.exec_command_status(&self.ssh_session_id, &up_cmd)
+        let (up_out, up_exit) = self.ssh_exec_status(&up_cmd)
             .await
             .map_err(|e| format!("docker compose up failed: {}", e))?;
         if up_exit.unwrap_or(0) != 0 {
@@ -1087,10 +1110,10 @@ impl DockerDriver for RemoteDockerDriver {
         for filename in ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
             let file_path = format!("{}/{}", project.path, filename);
             let check_cmd = format!("test -f {} && echo exists", shq(&file_path));
-            if let Ok(result) = self.ssh_service.exec_command(&self.ssh_session_id, &check_cmd).await {
+            if let Ok(result) = self.ssh_exec(&check_cmd).await {
                 if result.trim() == "exists" {
                     let write_cmd = format!("echo {} > {}", shq(&request.content), shq(&file_path));
-                    self.ssh_service.exec_command(&self.ssh_session_id, &write_cmd)
+                    self.ssh_exec(&write_cmd)
                         .await
                         .map_err(|e| format!("Failed to write compose file: {}", e))?;
                     return Ok(());
@@ -1250,11 +1273,10 @@ impl DockerDriver for RemoteDockerDriver {
                         password.replace("'", "'\"'\"'"),
                         username.replace("'", "'\"'\"'")
                     );
-                    self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await
+                    self.ssh_exec(&cmd).await
                 } else {
                     // Anonymous access - just ping the registry
-                    self.ssh_service
-                        .exec_command(&self.ssh_session_id, "docker info 2>&1 | grep -i registry")
+                    self.ssh_exec("docker info 2>&1 | grep -i registry")
                         .await
                 }
             }
@@ -1272,10 +1294,10 @@ impl DockerDriver for RemoteDockerDriver {
                         shq(username),
                         shq(registry_host)
                     );
-                    self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await
+                    self.ssh_exec(&cmd).await
                 } else {
                     let cmd = format!("docker login {} 2>&1", shq(registry_host));
-                    self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await
+                    self.ssh_exec(&cmd).await
                 }
             }
         };
@@ -1329,7 +1351,7 @@ impl DockerDriver for RemoteDockerDriver {
                     "docker search --limit 50 --format '{{{{json .}}}}' '{}'",
                     search_term.replace("'", "'\"'\"'")
                 );
-                let output = self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await
+                let output = self.ssh_exec(&cmd).await
                     .map_err(|e| format!("Search failed: {}", e))?;
 
                 for line in output.lines() {
@@ -1403,7 +1425,7 @@ impl DockerDriver for RemoteDockerDriver {
 
             // Pull the image via SSH
             let cmd = format!("docker pull '{}'", full_image.replace("'", "'\"'\"'"));
-            if let Err(e) = self.ssh_service.exec_command(&self.ssh_session_id, &cmd).await {
+            if let Err(e) = self.ssh_exec(&cmd).await {
                 errors.push(format!("{}: {}", image, e));
             }
         }
@@ -1528,7 +1550,7 @@ impl RemoteDockerDriver {
             (size_str, 1)
         };
 
-        num_str.trim().parse::<f64>().unwrap_or(0.0) as u64 * multiplier
+        (num_str.trim().parse::<f64>().unwrap_or(0.0) * multiplier as f64) as u64
     }
 }
 

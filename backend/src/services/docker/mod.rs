@@ -63,20 +63,19 @@ impl DockerService {
                     .as_ref()
                     .ok_or("SSH connection ID is required for remote Docker")?;
 
-                // Find active SSH session by connection_id (saved config ID)
-                let ssh_session_id = self
-                    .ssh_service
+                // Verify an SSH session exists now; the driver re-resolves the
+                // live session id per call, so it survives an SSH reconnect.
+                self.ssh_service
                     .find_session_by_connection_id(ssh_connection_id)
                     .await
                     .ok_or_else(|| {
-                        format!(
-                            "No active SSH session found. Please connect to the SSH server first."
-                        )
+                        "No active SSH session found. Please connect to the SSH server first."
+                            .to_string()
                     })?;
 
                 let driver = RemoteDockerDriver::new(
                     self.ssh_service.clone(),
-                    ssh_session_id,
+                    ssh_connection_id.clone(),
                 );
                 Arc::new(driver)
             }
@@ -93,9 +92,13 @@ impl DockerService {
                 driver,
             });
 
-            self.sessions
-                .write()
-                .insert(request.connection_id, session);
+            // Replace any existing session for this id, closing the old one
+            // (outside the lock) so its interactive exec sessions and streaming
+            // tasks are not leaked.
+            let old = self.sessions.write().insert(request.connection_id, session);
+            if let Some(old) = old {
+                old.driver.close().await;
+            }
         }
 
         Ok(test_result)
@@ -114,20 +117,19 @@ impl DockerService {
                     .as_ref()
                     .ok_or("SSH connection ID is required for remote Docker")?;
 
-                // Find active SSH session by connection_id (saved config ID)
-                let ssh_session_id = self
-                    .ssh_service
+                // Verify an SSH session exists now; the driver re-resolves the
+                // live session id per call, so it survives an SSH reconnect.
+                self.ssh_service
                     .find_session_by_connection_id(ssh_connection_id)
                     .await
                     .ok_or_else(|| {
-                        format!(
-                            "No active SSH session found. Please connect to the SSH server first."
-                        )
+                        "No active SSH session found. Please connect to the SSH server first."
+                            .to_string()
                     })?;
 
                 let driver = RemoteDockerDriver::new(
                     self.ssh_service.clone(),
-                    ssh_session_id,
+                    ssh_connection_id.clone(),
                 );
                 driver.test_connection().await
             }
