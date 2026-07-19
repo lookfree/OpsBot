@@ -3,10 +3,9 @@
 //! This module provides AI service management on remote servers via SSH,
 //! including environment detection, Ollama model synchronization, and GPU monitoring.
 
-use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::models::{GpuInfo, OllamaModel, OllamaModelDetails, RemoteAiEnvironment};
+use crate::models::{GpuInfo, OllamaModel, RemoteAiEnvironment};
 use crate::services::SshService;
 
 /// Single-quote a token for safe interpolation into a remote shell command.
@@ -111,16 +110,12 @@ impl RemoteAiManager {
         &self,
         ssh_connection_id: &str,
     ) -> Result<Vec<OllamaModel>, String> {
+        // `ollama list` prints a text table; it has no --format json flag, so
+        // parse the table directly.
         let output = self
-            .execute_command(ssh_connection_id, "ollama list --format json 2>/dev/null || ollama list")
+            .execute_command(ssh_connection_id, "ollama list")
             .await?;
 
-        // Try to parse as JSON first
-        if let Ok(models) = serde_json::from_str::<Vec<OllamaListItem>>(&output) {
-            return Ok(models.into_iter().map(|m| m.into()).collect());
-        }
-
-        // Fall back to parsing text output
         self.parse_ollama_list_text(&output)
     }
 
@@ -282,18 +277,21 @@ impl RemoteAiManager {
         let mut models = Vec::new();
 
         for line in output.lines().skip(1) {
-            // Skip header line
+            // ollama list columns: NAME  ID  SIZE  MODIFIED. SIZE prints as two
+            // whitespace-separated tokens ("3.8 GB") and MODIFIED as several
+            // ("2 days ago"), so join the size number with its unit and take the
+            // rest as modified. (The old code read only parts[2]="3.8", dropping
+            // the unit → ~3 bytes, and left "GB" prefixing modified_at.)
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 4 {
                 let name = parts[0].to_string();
-                let size_str = parts.get(2).unwrap_or(&"0");
-                let size = Self::parse_size_string(size_str);
+                let size = Self::parse_size_string(&format!("{} {}", parts[2], parts[3]));
 
                 models.push(OllamaModel {
                     name,
                     size,
                     digest: parts.get(1).unwrap_or(&"").to_string(),
-                    modified_at: parts.get(3..).map(|p| p.join(" ")).unwrap_or_default(),
+                    modified_at: parts.get(4..).map(|p| p.join(" ")).unwrap_or_default(),
                     details: None,
                 });
             }
@@ -358,45 +356,6 @@ impl RemoteAiManager {
             power_limit: parts[11].parse().ok(),
             fan_speed: parts[12].parse().ok(),
         })
-    }
-}
-
-/// Ollama list JSON item
-#[derive(Debug, Clone, Deserialize)]
-struct OllamaListItem {
-    name: String,
-    #[serde(default)]
-    size: u64,
-    #[serde(default)]
-    digest: String,
-    #[serde(default)]
-    modified_at: String,
-    #[serde(default)]
-    details: Option<OllamaListItemDetails>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct OllamaListItemDetails {
-    format: Option<String>,
-    family: Option<String>,
-    parameter_size: Option<String>,
-    quantization_level: Option<String>,
-}
-
-impl From<OllamaListItem> for OllamaModel {
-    fn from(item: OllamaListItem) -> Self {
-        Self {
-            name: item.name,
-            size: item.size,
-            digest: item.digest,
-            modified_at: item.modified_at,
-            details: item.details.map(|d| OllamaModelDetails {
-                format: d.format,
-                family: d.family,
-                parameter_size: d.parameter_size,
-                quantization_level: d.quantization_level,
-            }),
-        }
     }
 }
 

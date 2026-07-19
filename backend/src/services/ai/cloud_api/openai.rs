@@ -18,6 +18,10 @@ pub struct OpenAiClient {
     api_key: String,
     base_url: String,
     organization: Option<String>,
+    /// OpenAI proper vs a Custom OpenAI-compatible endpoint. Custom endpoints
+    /// serve arbitrary model ids (llama3, qwen2, deepseek-chat), so the gpt-*
+    /// filter must not be applied to them.
+    provider: CloudApiProvider,
 }
 
 impl OpenAiClient {
@@ -35,6 +39,20 @@ impl OpenAiClient {
             .base_url
             .clone()
             .unwrap_or_else(|| Self::DEFAULT_BASE_URL.to_string());
+        // The official OpenAI API needs the /v1 segment (we append "models"
+        // etc. directly). Custom OpenAI-compatible endpoints are left exactly as
+        // entered — some serve at the root, some at /v1 — so we don't rewrite
+        // them.
+        let base_url = if config.provider == CloudApiProvider::OpenAI {
+            let trimmed = base_url.trim_end_matches('/');
+            if trimmed.ends_with("/v1") {
+                trimmed.to_string()
+            } else {
+                format!("{}/v1", trimmed)
+            }
+        } else {
+            base_url.trim_end_matches('/').to_string()
+        };
 
         let client = Self::build_http_client(&config.proxy)?;
 
@@ -43,6 +61,7 @@ impl OpenAiClient {
             api_key,
             base_url,
             organization: config.organization.clone(),
+            provider: config.provider,
         })
     }
 
@@ -117,7 +136,7 @@ impl OpenAiClient {
 #[async_trait]
 impl CloudApiClient for OpenAiClient {
     fn provider(&self) -> CloudApiProvider {
-        CloudApiProvider::OpenAI
+        self.provider
     }
 
     async fn test_connection(&self) -> Result<CloudApiTestResult, String> {
@@ -138,13 +157,18 @@ impl CloudApiClient for OpenAiClient {
 
     async fn list_models(&self) -> Result<Vec<CloudApiModel>, String> {
         let response: OpenAiModelsResponse = self.request("models").await?;
+        let is_custom = self.provider == CloudApiProvider::Custom;
 
         let models = response
             .data
             .into_iter()
             .filter(|m| {
-                // Filter to only show GPT models and embeddings
-                m.id.starts_with("gpt-")
+                // The official OpenAI /models returns hundreds of ids, so keep
+                // only the usable families. A Custom OpenAI-compatible endpoint
+                // serves exactly the models the user runs (llama3, qwen2, …), so
+                // never filter those out.
+                is_custom
+                    || m.id.starts_with("gpt-")
                     || m.id.starts_with("text-embedding-")
                     || m.id.starts_with("dall-e")
                     || m.id.starts_with("whisper")
@@ -153,7 +177,7 @@ impl CloudApiClient for OpenAiClient {
             .map(|m| CloudApiModel {
                 id: m.id.clone(),
                 name: m.id,
-                provider: CloudApiProvider::OpenAI,
+                provider: self.provider,
                 description: None,
                 context_length: None,
                 pricing: None,

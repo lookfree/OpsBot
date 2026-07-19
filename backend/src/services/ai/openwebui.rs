@@ -189,23 +189,34 @@ impl OpenWebUIService {
 
         match self.client.get(&api_url).send().await {
             Ok(response) if response.status().is_success() => {
-                // Try to parse version from response
+                // OpenWebUI's /api/version returns {"version":"x.y.z"}. Require
+                // that exact shape — otherwise a SPA / dev server that answers
+                // 200 (its index.html) for any path is misdetected as OpenWebUI.
                 let version = response
                     .json::<serde_json::Value>()
                     .await
                     .ok()
                     .and_then(|v| v.get("version").and_then(|v| v.as_str()).map(String::from));
 
-                Ok(OpenWebUIStatus {
-                    available: true,
-                    url: Some(url.to_string()),
-                    version,
-                    source: OpenWebUISource::Local,
-                })
+                match version {
+                    Some(version) => Ok(OpenWebUIStatus {
+                        available: true,
+                        url: Some(url.to_string()),
+                        version: Some(version),
+                        source: OpenWebUISource::Local,
+                    }),
+                    None => Ok(OpenWebUIStatus {
+                        available: false,
+                        url: None,
+                        version: None,
+                        source: OpenWebUISource::NotFound,
+                    }),
+                }
             }
             Ok(_) => {
-                // Response received but not success - might still be OpenWebUI
-                // Try the main page
+                // Non-2xx at /api/version: only trust an explicit OpenWebUI
+                // Server header, NOT a generic 200 at the root (which Grafana,
+                // a React dev server, or any web app returns).
                 match self.client.get(url).send().await {
                     Ok(response) => {
                         let is_openwebui = response
@@ -215,7 +226,7 @@ impl OpenWebUIService {
                             .map(|s| s.to_lowercase().contains("openwebui"))
                             .unwrap_or(false);
 
-                        if is_openwebui || response.status().is_success() {
+                        if is_openwebui {
                             Ok(OpenWebUIStatus {
                                 available: true,
                                 url: Some(url.to_string()),
@@ -293,8 +304,13 @@ impl OpenWebUIService {
 
         #[cfg(target_os = "windows")]
         {
-            Command::new("cmd")
-                .args(["/C", "start", "", url])
+            // Use explorer rather than `cmd /C start`: the latter runs the URL
+            // through cmd.exe, which treats '&' as a command separator and
+            // truncates any URL containing query parameters (e.g. ?a=1&b=2).
+            // explorer receives the URL as a single argument and opens it in the
+            // default browser intact.
+            Command::new("explorer")
+                .arg(url)
                 .spawn()
                 .map_err(|e| format!("Failed to open browser: {}", e))?;
         }

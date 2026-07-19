@@ -108,17 +108,25 @@ impl TensorRTDriver {
             });
         }
 
-        // Parse model list to get running models count
-        let models: Vec<serde_json::Value> = response
-            .json()
+        // The OpenAI-compatible /v1/models returns an object {"data":[...]},
+        // not a bare array — decode it the same way list_models does so the
+        // running-model count isn't always 0.
+        #[derive(serde::Deserialize)]
+        struct ModelsList {
+            #[serde(default)]
+            data: Vec<serde_json::Value>,
+        }
+        let running_models = response
+            .json::<ModelsList>()
             .await
-            .unwrap_or_default();
+            .map(|m| m.data.len())
+            .unwrap_or(0);
 
         Ok(TensorRTStatus {
             installed: true,
             version: Some("TensorRT-LLM".to_string()),
             cuda_version: None,
-            running_models: models.len(),
+            running_models,
         })
     }
 

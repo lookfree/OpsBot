@@ -37,6 +37,13 @@ impl ClaudeClient {
             .base_url
             .clone()
             .unwrap_or_else(|| Self::DEFAULT_BASE_URL.to_string());
+        // Claude appends the "/v1/..." path itself; strip a trailing "/v1" the
+        // user may have pasted (e.g. copied from an OpenAI config) so we don't
+        // build ".../v1/v1/messages" and 404.
+        let base_url = base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .to_string();
 
         let client = Self::build_http_client(&config.proxy)?;
 
@@ -77,26 +84,17 @@ impl ClaudeClient {
             .map_err(|e| format!("Failed to build HTTP client: {}", e))
     }
 
-    /// Test connection by making a simple API call
+    /// Test connection with a free models-list GET rather than a billable
+    /// inference request. Anthropic exposes GET /v1/models; it returns 401/403
+    /// on a bad key just like /v1/messages but costs nothing and is faster.
     async fn test_api(&self) -> Result<(), String> {
-        // Claude doesn't have a models endpoint, so we test with a minimal message request
-        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
-
-        let request_body = serde_json::json!({
-            "model": "claude-3-haiku-20240307",
-            "max_tokens": 1,
-            "messages": [
-                {"role": "user", "content": "Hi"}
-            ]
-        });
+        let url = format!("{}/v1/models", self.base_url.trim_end_matches('/'));
 
         let response = self
             .client
-            .post(&url)
+            .get(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", Self::API_VERSION)
-            .header("Content-Type", "application/json")
-            .json(&request_body)
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?;

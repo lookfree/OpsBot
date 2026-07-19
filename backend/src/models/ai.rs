@@ -197,7 +197,13 @@ pub struct OllamaRunningModel {
     pub model: String,
     pub size: u64,
     pub digest: String,
+    // This struct is serialized to the frontend as camelCase but ALSO
+    // deserialized from Ollama's /api/ps, which returns snake_case. The aliases
+    // let deserialization accept the snake_case keys (otherwise these Options
+    // silently stayed None) while serialization still emits camelCase.
+    #[serde(alias = "expires_at")]
     pub expires_at: Option<String>,
+    #[serde(alias = "size_vram")]
     pub size_vram: Option<u64>,
 }
 

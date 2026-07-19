@@ -34,6 +34,14 @@ impl QwenClient {
             .base_url
             .clone()
             .unwrap_or_else(|| Self::DEFAULT_BASE_URL.to_string());
+        // Qwen appends "/services/..." to a base that must carry the "/api/v1"
+        // segment; add it if the user entered only the host so we don't 404.
+        let trimmed = base_url.trim_end_matches('/');
+        let base_url = if trimmed.ends_with("/api/v1") {
+            trimmed.to_string()
+        } else {
+            format!("{}/api/v1", trimmed)
+        };
 
         let client = Self::build_http_client(&config.proxy)?;
 
