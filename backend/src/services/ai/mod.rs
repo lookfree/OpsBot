@@ -310,19 +310,10 @@ impl AiService {
     pub async fn detect_openwebui(
         custom_url: Option<String>,
     ) -> Result<crate::models::OpenWebUIStatus, String> {
+        // detect() now returns the shared crate::models::OpenWebUIStatus, so no
+        // field-for-field remapping is needed.
         let service = OpenWebUIService::new(custom_url);
-        let status = service.detect().await?;
-
-        Ok(crate::models::OpenWebUIStatus {
-            available: status.available,
-            url: status.url,
-            version: status.version,
-            source: match status.source {
-                openwebui::OpenWebUISource::Local => crate::models::OpenWebUISource::Local,
-                openwebui::OpenWebUISource::Docker => crate::models::OpenWebUISource::Docker,
-                openwebui::OpenWebUISource::NotFound => crate::models::OpenWebUISource::NotFound,
-            },
-        })
+        service.detect().await
     }
 
     /// Open OpenWebUI in browser

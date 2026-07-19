@@ -2,6 +2,8 @@
  * AI 模块类型定义
  */
 
+import { formatFileSize } from '@/lib/utils'
+
 // ============ AI 连接类型 ============
 
 /** AI 服务提供商类型 */
@@ -346,10 +348,9 @@ export interface RemoteAiEnvironment {
 
 /** 格式化文件大小 */
 export function formatModelSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  // Reuse the shared byte formatter (which also handles TB — the old inline
+  // version capped at GB and mislabeled >1TB models).
+  return formatFileSize(bytes)
 }
 
 /** 格式化模型修改时间 */

@@ -4,31 +4,12 @@
 //! It supports detection of local and Docker installations, and opening the UI.
 
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::time::Duration;
 
-/// OpenWebUI source type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum OpenWebUISource {
-    /// Local installation (e.g., pip install)
-    Local,
-    /// Docker container
-    Docker,
-    /// Not found
-    NotFound,
-}
-
-/// OpenWebUI status information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenWebUIStatus {
-    pub available: bool,
-    pub url: Option<String>,
-    pub version: Option<String>,
-    pub source: OpenWebUISource,
-}
+// Use the shared model types directly instead of redeclaring identical twins
+// (which forced AiService::detect_openwebui to hand-map field-for-field).
+use crate::models::{OpenWebUISource, OpenWebUIStatus};
 
 /// Common ports for OpenWebUI
 const COMMON_PORTS: [u16; 4] = [3000, 8080, 8000, 5000];
