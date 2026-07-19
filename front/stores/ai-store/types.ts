@@ -69,6 +69,7 @@ export interface RemoteState {
 export interface RemoteActions {
   setRemoteMode: (isRemote: boolean) => void
   setRemoteSshConnection: (connectionId: string | null) => void
+  setRemoteEnvironment: (env: RemoteAiEnvironment | null) => void
   detectRemoteEnvironment: (sshConnectionId: string) => Promise<RemoteAiEnvironment>
   executeRemoteOllamaCommand: (command: string) => Promise<string>
   syncRemoteModels: () => Promise<void>

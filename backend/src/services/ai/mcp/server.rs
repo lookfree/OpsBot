@@ -93,11 +93,17 @@ impl McpServerInstance {
             McpTransport::Stdio { command, args } => {
                 validate_mcp_command(command, args)?;
 
+                // stdout/stderr go to null: nothing in this module drains them,
+                // and a chatty server would otherwise fill the OS pipe buffer
+                // (~64KB) and block forever on write. stdin stays piped so the
+                // child does not see EOF and exit. (When real MCP stdio protocol
+                // wiring is added, replace null with reader tasks that drain the
+                // pipes continuously.)
                 let child = Command::new(command)
                     .args(args)
                     .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .spawn()
                     .map_err(|e| format!("Failed to start MCP server: {}", e))?;
 
@@ -117,13 +123,39 @@ impl McpServerInstance {
     pub fn stop(&mut self) -> Result<(), String> {
         if let Some(mut child) = self.process.take() {
             child.kill().map_err(|e| format!("Failed to stop MCP server: {}", e))?;
+            // Reap the child so it does not linger as a zombie <defunct>.
+            let _ = child.wait();
         }
         self.status = McpServerStatus::Stopped;
         Ok(())
     }
 
-    /// Check if server is running
-    pub fn is_running(&self) -> bool {
+    /// Reconcile the cached status with the child's real state. A spawned stdio
+    /// child can exit on its own (bad package, crash); without this the status
+    /// enum stays Running forever, the UI shows a dead server as up, and
+    /// start_server refuses to restart it ("already running"). try_wait also
+    /// reaps the child, avoiding a zombie.
+    pub fn reconcile_status(&mut self) {
+        if let Some(child) = self.process.as_mut() {
+            match child.try_wait() {
+                Ok(Some(exit)) => {
+                    self.process = None;
+                    self.status = if exit.success() {
+                        McpServerStatus::Stopped
+                    } else {
+                        McpServerStatus::Error(format!("process exited: {}", exit))
+                    };
+                }
+                Ok(None) => {} // still running
+                Err(_) => {}   // can't tell; leave status unchanged
+            }
+        }
+    }
+
+    /// Check if server is running (reconciles first so a child that already
+    /// exited is not reported as running).
+    pub fn is_running(&mut self) -> bool {
+        self.reconcile_status();
         matches!(self.status, McpServerStatus::Running)
     }
 
@@ -142,9 +174,11 @@ impl McpServerInstance {
 
 impl Drop for McpServerInstance {
     fn drop(&mut self) {
-        // Ensure process is killed when instance is dropped
+        // Ensure the process is killed AND reaped when the instance is dropped,
+        // so it does not linger as a zombie <defunct> for the app's lifetime.
         if let Some(mut child) = self.process.take() {
             let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
@@ -218,8 +252,12 @@ impl McpServerManager {
 
     /// Get server status
     pub async fn get_server_status(&self, server_id: &str) -> Option<McpServerStatus> {
-        let servers = self.servers.read().await;
-        servers.get(server_id).map(|s| s.status.clone())
+        // Write lock so we can reconcile against the child's real state first.
+        let mut servers = self.servers.write().await;
+        servers.get_mut(server_id).map(|s| {
+            s.reconcile_status();
+            s.status.clone()
+        })
     }
 
     /// Get server info
@@ -230,8 +268,16 @@ impl McpServerManager {
 
     /// List all servers
     pub async fn list_servers(&self) -> Vec<McpServerInfo> {
-        let servers = self.servers.read().await;
-        servers.values().map(|s| s.get_info()).collect()
+        // Write lock so each instance's status reflects whether its child is
+        // still alive (a crashed stdio child otherwise shows Running forever).
+        let mut servers = self.servers.write().await;
+        servers
+            .values_mut()
+            .map(|s| {
+                s.reconcile_status();
+                s.get_info()
+            })
+            .collect()
     }
 
     /// Bind a tool to a server

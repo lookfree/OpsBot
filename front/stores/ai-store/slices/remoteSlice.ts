@@ -43,6 +43,12 @@ export const createRemoteSlice: StateCreator<RemoteState & RemoteActions> = (set
     })
   },
 
+  // Store the environment detected by RemoteConnectionSelector so the panel's
+  // render gates (which read remoteEnvironment from the store) actually reflect
+  // it. Without this the detected env lived only in the selector's local state
+  // and the store field stayed null forever.
+  setRemoteEnvironment: (env) => set({ remoteEnvironment: env }),
+
   detectRemoteEnvironment: async (sshConnectionId) => {
     set({ isRemoteDetecting: true, remoteError: null })
 

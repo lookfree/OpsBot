@@ -180,8 +180,17 @@ impl AiService {
             &None,
         )?;
 
-        // Test connection by getting status
+        // Test connection by getting status. get_status maps an unreachable /
+        // erroring endpoint to installed:false (it never returns Err), so gate
+        // on that explicitly — otherwise a wrong host/port would be stored as a
+        // live driver and the UI would show "connected" for a dead endpoint.
         let status = driver.get_status().await?;
+        if !status.installed {
+            return Err(format!(
+                "TensorRT-LLM endpoint not reachable at {}",
+                driver.base_url()
+            ));
+        }
 
         // Store driver
         let mut drivers = self.tensorrt_drivers.write().await;

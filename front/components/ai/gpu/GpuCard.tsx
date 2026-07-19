@@ -93,8 +93,9 @@ export function GpuCard({ gpu, className }: GpuCardProps) {
           </span>
         </div>
 
-        {/* Power */}
-        {gpu.powerDraw !== undefined && (
+        {/* Power (backend sends Rust None as JSON null for [N/A] cards, so
+            guard with != null to cover both null and undefined) */}
+        {gpu.powerDraw != null && (
           <div className="flex flex-col items-center">
             <Zap className="w-5 h-5 mb-1 text-yellow-500" />
             <span className={cn('text-sm font-medium', styles.textPrimary)}>
@@ -107,7 +108,7 @@ export function GpuCard({ gpu, className }: GpuCardProps) {
         )}
 
         {/* Fan Speed */}
-        {gpu.fanSpeed !== undefined && (
+        {gpu.fanSpeed != null && (
           <div className="flex flex-col items-center">
             <Fan className="w-5 h-5 mb-1 text-blue-500" />
             <span className={cn('text-sm font-medium', styles.textPrimary)}>

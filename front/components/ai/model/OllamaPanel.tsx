@@ -64,6 +64,7 @@ export function OllamaPanel() {
     remoteError,
     setRemoteMode,
     setRemoteSshConnection,
+    setRemoteEnvironment,
     syncRemoteModels,
     clearRemoteError,
   } = useAiStore()
@@ -84,12 +85,15 @@ export function OllamaPanel() {
   // Handle remote environment detected
   const handleRemoteEnvironmentDetected = useCallback(
     (env: RemoteAiEnvironment | null) => {
+      // Publish to the store so the panel's render gates (which read
+      // remoteEnvironment from the store) actually show the remote model list.
+      setRemoteEnvironment(env)
       // If environment is detected and has Ollama, sync models
       if (env?.ollamaInstalled && remoteSshConnectionId) {
         syncRemoteModels()
       }
     },
-    [remoteSshConnectionId, syncRemoteModels]
+    [setRemoteEnvironment, remoteSshConnectionId, syncRemoteModels]
   )
 
   const handleConnect = useCallback(

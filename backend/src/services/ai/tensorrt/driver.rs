@@ -68,7 +68,7 @@ impl TensorRTDriver {
     }
 
     /// Get the base URL for the TensorRT-LLM API
-    fn base_url(&self) -> String {
+    pub(crate) fn base_url(&self) -> String {
         format!("http://{}:{}", self.host, self.port)
     }
 

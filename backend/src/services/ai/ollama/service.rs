@@ -45,15 +45,23 @@ impl OllamaServiceController {
             }
 
             // Fallback: start ollama directly in background
-            let output = Command::new("ollama")
-                .args(["serve"])
-                .spawn();
-
-            match output {
-                Ok(_) => Ok(ServiceOperationResult {
-                    success: true,
-                    message: "Ollama service started directly".to_string(),
-                }),
+            match Command::new("ollama").args(["serve"]).spawn() {
+                Ok(mut child) => {
+                    // spawn() only means the process launched; it can exit
+                    // immediately (e.g. port 11434 already in use). Wait briefly
+                    // and verify it is still alive before claiming success.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            let _ = child.wait();
+                            Err(format!("Ollama exited immediately (status {})", status))
+                        }
+                        _ => Ok(ServiceOperationResult {
+                            success: true,
+                            message: "Ollama service started directly".to_string(),
+                        }),
+                    }
+                }
                 Err(e) => Err(format!("Failed to start Ollama: {}", e)),
             }
         }
@@ -75,15 +83,23 @@ impl OllamaServiceController {
             }
 
             // Fallback: start ollama directly
-            let output = Command::new("ollama")
-                .args(["serve"])
-                .spawn();
-
-            match output {
-                Ok(_) => Ok(ServiceOperationResult {
-                    success: true,
-                    message: "Ollama service started directly".to_string(),
-                }),
+            match Command::new("ollama").args(["serve"]).spawn() {
+                Ok(mut child) => {
+                    // spawn() only means the process launched; it can exit
+                    // immediately (e.g. port 11434 already in use). Wait briefly
+                    // and verify it is still alive before claiming success.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            let _ = child.wait();
+                            Err(format!("Ollama exited immediately (status {})", status))
+                        }
+                        _ => Ok(ServiceOperationResult {
+                            success: true,
+                            message: "Ollama service started directly".to_string(),
+                        }),
+                    }
+                }
                 Err(e) => Err(format!("Failed to start Ollama: {}", e)),
             }
         }
@@ -91,15 +107,21 @@ impl OllamaServiceController {
         #[cfg(target_os = "windows")]
         {
             // On Windows, try to start ollama directly
-            let output = Command::new("ollama")
-                .args(["serve"])
-                .spawn();
-
-            match output {
-                Ok(_) => Ok(ServiceOperationResult {
-                    success: true,
-                    message: "Ollama service started".to_string(),
-                }),
+            match Command::new("ollama").args(["serve"]).spawn() {
+                Ok(mut child) => {
+                    // Verify it stayed alive rather than exiting instantly.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            let _ = child.wait();
+                            Err(format!("Ollama exited immediately (status {})", status))
+                        }
+                        _ => Ok(ServiceOperationResult {
+                            success: true,
+                            message: "Ollama service started".to_string(),
+                        }),
+                    }
+                }
                 Err(e) => Err(format!("Failed to start Ollama: {}", e)),
             }
         }
@@ -130,13 +152,19 @@ impl OllamaServiceController {
 
             // Fallback: kill ollama process
             let output = Command::new("pkill")
-                .args(["-f", "ollama"])
+                .args(["-x", "ollama"])
                 .output();
 
             match output {
-                Ok(_) => Ok(ServiceOperationResult {
+                Ok(output) if output.status.success() => Ok(ServiceOperationResult {
                     success: true,
                     message: "Ollama process terminated".to_string(),
+                }),
+                // pkill exits 1 when nothing matched: report honestly instead
+                // of claiming a process was terminated.
+                Ok(_) => Ok(ServiceOperationResult {
+                    success: false,
+                    message: "No running Ollama process found".to_string(),
                 }),
                 Err(e) => Err(format!("Failed to stop Ollama: {}", e)),
             }
@@ -160,13 +188,19 @@ impl OllamaServiceController {
 
             // Fallback: kill ollama process
             let output = Command::new("pkill")
-                .args(["-f", "ollama"])
+                .args(["-x", "ollama"])
                 .output();
 
             match output {
-                Ok(_) => Ok(ServiceOperationResult {
+                Ok(output) if output.status.success() => Ok(ServiceOperationResult {
                     success: true,
                     message: "Ollama process terminated".to_string(),
+                }),
+                // pkill exits 1 when nothing matched: report honestly instead
+                // of claiming a process was terminated.
+                Ok(_) => Ok(ServiceOperationResult {
+                    success: false,
+                    message: "No running Ollama process found".to_string(),
                 }),
                 Err(e) => Err(format!("Failed to stop Ollama: {}", e)),
             }
@@ -261,7 +295,7 @@ impl OllamaServiceController {
         {
             // Check if ollama process is running
             let output = Command::new("pgrep")
-                .args(["-f", "ollama"])
+                .args(["-x", "ollama"])
                 .output();
 
             matches!(output, Ok(output) if output.status.success())
@@ -270,7 +304,7 @@ impl OllamaServiceController {
         #[cfg(target_os = "linux")]
         {
             let output = Command::new("pgrep")
-                .args(["-f", "ollama"])
+                .args(["-x", "ollama"])
                 .output();
 
             matches!(output, Ok(output) if output.status.success())

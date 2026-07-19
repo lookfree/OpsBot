@@ -4,7 +4,7 @@
  * Allows selecting SSH connections for remote AI management.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { cn } from '@/lib/utils'
@@ -44,6 +44,9 @@ export function RemoteConnectionSelector({
   const [isDetecting, setIsDetecting] = useState(false)
   const [environment, setEnvironment] = useState<RemoteAiEnvironment | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Connection id we've already run detection for (success OR failure), so a
+  // failed detection doesn't re-trigger the effect in an endless loop.
+  const detectedForRef = useRef<string | null>(null)
 
   // Filter SSH connections
   const sshConnections = useMemo(() => {
@@ -67,6 +70,8 @@ export function RemoteConnectionSelector({
 
   // Detect AI environment when connection changes
   const detectEnvironment = useCallback(async (connectionId: string) => {
+    // Mark this connection as attempted up front so a failure doesn't re-fire.
+    detectedForRef.current = connectionId
     setIsDetecting(true)
     setError(null)
     setEnvironment(null)
@@ -115,18 +120,23 @@ export function RemoteConnectionSelector({
 
   // Re-detect when connection status changes
   useEffect(() => {
-    if (value) {
-      const status = getStatus(value)
-      if (status === 'connected' && !environment && !isDetecting) {
+    if (!value) return
+    const status = getStatus(value)
+    if (status === 'connected') {
+      // Detect once per connection; detectedForRef is set even on failure, so a
+      // failed detection no longer loops (previously !environment stayed true).
+      if (detectedForRef.current !== value && !isDetecting) {
         detectEnvironment(value)
-      } else if (status !== 'connected') {
-        setEnvironment(null)
-        if (!error) {
-          setError(t('ai.remote.notConnected', 'SSH connection is not active'))
-        }
+      }
+    } else {
+      // Not connected: reset so a later reconnect re-detects.
+      detectedForRef.current = null
+      setEnvironment(null)
+      if (!error) {
+        setError(t('ai.remote.notConnected', 'SSH connection is not active'))
       }
     }
-  }, [value, getStatus, environment, isDetecting, detectEnvironment, error, t])
+  }, [value, getStatus, isDetecting, detectEnvironment, error, t])
 
   return (
     <div className={cn('space-y-3', className)}>
