@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use super::compose_cmd::validate_project_name;
 use super::traits::DockerDriver;
 use crate::models::docker::{
     ComposeContainer, ComposeProject, ComposeSource, ContainerInfo, ContainerStats,
@@ -990,6 +991,7 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn get_compose_containers(&self, project_name: &str) -> Result<Vec<ComposeContainer>, String> {
+        validate_project_name(project_name)?;
         let output = self.exec_docker_cmd(&format!("compose -p {} ps --format json -a", shq(project_name))).await?;
 
         if output.trim().is_empty() {
@@ -1065,6 +1067,7 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn create_compose_project(&self, request: CreateComposeRequest) -> Result<(), String> {
+        validate_project_name(&request.name)?;
         let project_path = if let Some(path) = &request.path {
             path.clone()
         } else {
@@ -1125,27 +1128,32 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn start_compose(&self, project_name: &str) -> Result<(), String> {
+        validate_project_name(project_name)?;
         self.exec_docker_cmd(&format!("compose -p {} start", shq(project_name))).await?;
         Ok(())
     }
 
     async fn stop_compose(&self, project_name: &str) -> Result<(), String> {
+        validate_project_name(project_name)?;
         self.exec_docker_cmd(&format!("compose -p {} stop", shq(project_name))).await?;
         Ok(())
     }
 
     async fn restart_compose(&self, project_name: &str) -> Result<(), String> {
+        validate_project_name(project_name)?;
         self.exec_docker_cmd(&format!("compose -p {} restart", shq(project_name))).await?;
         Ok(())
     }
 
     async fn remove_compose(&self, project_name: &str, remove_volumes: bool) -> Result<(), String> {
+        validate_project_name(project_name)?;
         let volume_flag = if remove_volumes { "-v" } else { "" };
         self.exec_docker_cmd(&format!("compose -p {} down {}", shq(project_name), volume_flag)).await?;
         Ok(())
     }
 
     async fn get_compose_logs(&self, project_name: &str, tail: Option<u32>, service: Option<&str>) -> Result<String, String> {
+        validate_project_name(project_name)?;
         let tail_arg = tail.map(|t| format!("--tail {}", t)).unwrap_or_default();
         let service_arg = service.map(shq).unwrap_or_default();
         self.exec_docker_cmd(&format!("compose -p {} logs {} {}", shq(project_name), tail_arg, service_arg)).await
