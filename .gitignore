@@ -31,8 +31,5 @@ npm-debug.log*
 backend/target/
 node_modules
 
-# Spec documents
-spec/
-
 # Test files
 *.db
