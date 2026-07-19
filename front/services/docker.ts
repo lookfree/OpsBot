@@ -482,9 +482,20 @@ export async function dockerExecStart(
   containerId: string,
   cmd: string[],
   cols: number,
-  rows: number
+  rows: number,
+  channelId: string
 ): Promise<string> {
-  return invoke<string>('docker_exec_start', { connectionId, containerId, cmd, cols, rows })
+  // channelId names the output/exit event stream. The caller registers its
+  // listeners on it BEFORE calling this, so no early output (shell prompt,
+  // MOTD) is dropped in the window before the exec id is known.
+  return invoke<string>('docker_exec_start', {
+    connectionId,
+    containerId,
+    cmd,
+    cols,
+    rows,
+    channelId,
+  })
 }
 
 /**

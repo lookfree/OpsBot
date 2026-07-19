@@ -1038,6 +1038,7 @@
     "enterCommand": "コマンドを入力...",
     "execute": "実行",
     "terminalError": "ターミナルエラー",
+    "sessionEnded": "セッションが終了しました",
     "compose": "コンポーズ",
     "noComposeProjects": "コンポーズプロジェクトがありません",
     "selectComposeProject": "コンポーズプロジェクトを選択してください",

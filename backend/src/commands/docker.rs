@@ -351,6 +351,7 @@ pub async fn docker_exec_start(
     cmd: Vec<String>,
     cols: u16,
     rows: u16,
+    channel_id: String,
 ) -> Result<String, String> {
     use futures::channel::mpsc;
     use futures::StreamExt;
@@ -364,14 +365,20 @@ pub async fn docker_exec_start(
         .exec_start_interactive(&connection_id, &container_id, cmd, cols, rows, output_tx)
         .await?;
 
-    // Spawn task to forward output to frontend via events
-    let exec_id_clone = exec_id.clone();
+    // Forward output over the caller-provided channel id. The frontend has
+    // already registered its listeners on this id before calling us, so the
+    // shell's initial prompt/MOTD is not dropped in a subscribe-after-start race.
+    let data_event = format!("docker-exec-data-{}", channel_id);
+    let exit_event = format!("docker-exec-exit-{}", channel_id);
     let app_handle_clone = app_handle.clone();
     tokio::spawn(async move {
         while let Some(data) = output_rx.next().await {
-            let event_name = format!("docker-exec-data-{}", exec_id_clone);
-            let _ = app_handle_clone.emit(&event_name, data);
+            let _ = app_handle_clone.emit(&data_event, data);
         }
+        // The sender was dropped: the exec process exited or the session was
+        // closed. Signal the frontend so it can stop the session instead of
+        // leaving a silent, seemingly-hung terminal.
+        let _ = app_handle_clone.emit(&exit_event, ());
     });
 
     Ok(exec_id)

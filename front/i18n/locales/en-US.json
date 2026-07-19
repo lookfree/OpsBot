@@ -1047,6 +1047,7 @@
     "enterCommand": "Enter command...",
     "execute": "Execute",
     "terminalError": "Terminal Error",
+    "sessionEnded": "session ended",
     "compose": "Compose",
     "noComposeProjects": "No compose projects",
     "selectComposeProject": "Select a compose project",

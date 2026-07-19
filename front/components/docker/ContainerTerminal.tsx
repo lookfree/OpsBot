@@ -117,36 +117,48 @@ export function ContainerTerminal({
     setError(null)
 
     const shellToUse = shellOverride ?? shell
+
+    // Register the output/exit listeners on a client-generated channel id
+    // BEFORE starting the exec, so the shell's initial prompt/MOTD is never
+    // dropped in the window before the exec id is known.
+    const channelId = crypto.randomUUID()
+    const unlistenData = await listen<number[]>(`docker-exec-data-${channelId}`, (event) => {
+      if (terminalRef.current) {
+        // Write raw bytes directly - xterm handles UTF-8 decoding internally
+        terminalRef.current.write(new Uint8Array(event.payload))
+      }
+    })
+    const unlistenExit = await listen(`docker-exec-exit-${channelId}`, () => {
+      execIdRef.current = null
+      if (terminalRef.current) {
+        terminalRef.current.write(`\r\n\x1b[33m[${t('docker.sessionEnded')}]\x1b[0m\r\n`)
+      }
+    })
+    const unlisten = () => {
+      unlistenData()
+      unlistenExit()
+    }
+
     try {
       const execId = await dockerExecStart(
         connectionId,
         containerId,
         [shellToUse],
         term.cols,
-        term.rows
+        term.rows,
+        channelId
       )
       // The terminal may have been torn down (tab switch / unmount) while the
       // exec was starting. Close the exec so we don't leak a live shell in the
       // container, and don't touch the now-disposed terminal.
       if (isCancelled?.()) {
+        unlisten()
         dockerExecClose(connectionId, execId).catch(() => {})
         return
       }
       execIdRef.current = execId
 
-      // Set up event listener IMMEDIATELY after getting execId
-      // This ensures we don't miss any data from the backend
-      const eventName = `docker-exec-data-${execId}`
-      console.log('Setting up listener for:', eventName)
-
-      const unlisten = await listen<number[]>(eventName, (event) => {
-        if (terminalRef.current) {
-          // Write raw bytes directly - xterm handles UTF-8 decoding internally
-          terminalRef.current.write(new Uint8Array(event.payload))
-        }
-      })
-
-      // Store for cleanup
+      // Store for cleanup; drop any listener from a previous session.
       if (unlistenRef.current) {
         unlistenRef.current()
       }
@@ -154,6 +166,7 @@ export function ContainerTerminal({
 
       setConnecting(false)
     } catch (err) {
+      unlisten()
       setError(String(err))
       setConnecting(false)
       term.write(`\r\n\x1b[31m${t('docker.terminalError')}: ${err}\x1b[0m\r\n`)

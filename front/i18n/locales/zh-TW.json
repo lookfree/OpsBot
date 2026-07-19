@@ -1038,6 +1038,7 @@
     "enterCommand": "輸入指令...",
     "execute": "執行",
     "terminalError": "終端錯誤",
+    "sessionEnded": "工作階段已結束",
     "compose": "編排",
     "noComposeProjects": "暫無編排專案",
     "selectComposeProject": "請選擇一個編排專案",

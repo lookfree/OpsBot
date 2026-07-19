@@ -1047,6 +1047,7 @@
     "enterCommand": "输入命令...",
     "execute": "执行",
     "terminalError": "终端错误",
+    "sessionEnded": "会话已结束",
     "compose": "编排",
     "noComposeProjects": "暂无编排项目",
     "selectComposeProject": "请选择一个编排项目",
