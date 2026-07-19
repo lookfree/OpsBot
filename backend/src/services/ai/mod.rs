@@ -285,6 +285,11 @@ impl AiService {
 
     // ============ MCP Operations ============
 
+    /// Stop and remove every MCP server (for app-exit cleanup).
+    pub async fn stop_all_mcp_servers(&self) {
+        self.mcp_manager.stop_all().await;
+    }
+
     /// Create a new MCP server
     pub async fn create_mcp_server(&self, config: McpServerConfig) -> Result<String, String> {
         self.mcp_manager.create_server(config).await

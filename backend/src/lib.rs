@@ -413,6 +413,17 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // On exit, stop MCP stdio children explicitly. tao terminates the
+            // process via process::exit(), which skips Drop, so without this the
+            // spawned MCP servers would be orphaned and accumulate across app
+            // sessions.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(ai) = app_handle.try_state::<AiServiceState>() {
+                    tauri::async_runtime::block_on(ai.0.stop_all_mcp_servers());
+                }
+            }
+        });
 }

@@ -2,7 +2,7 @@
 //!
 //! This module provides functionality to monitor NVIDIA GPUs using nvidia-smi.
 
-use std::process::Command;
+use tokio::process::Command;
 
 use crate::models::{GpuInfo, GpuProcess};
 
@@ -71,6 +71,7 @@ impl NvidiaGpuMonitor {
         let output = Command::new(&nvidia_smi_path)
             .args(args)
             .output()
+            .await
             .map_err(|e| format!("Failed to execute nvidia-smi: {}", e))?;
 
         if output.status.success() {

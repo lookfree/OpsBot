@@ -250,6 +250,16 @@ impl McpServerManager {
         }
     }
 
+    /// Stop and remove every server. Called on app exit so spawned stdio
+    /// children are killed and reaped (via McpServerInstance::stop) instead of
+    /// being orphaned when the process exits without running Drop.
+    pub async fn stop_all(&self) {
+        let mut servers = self.servers.write().await;
+        for (_, mut instance) in servers.drain() {
+            let _ = instance.stop();
+        }
+    }
+
     /// Get server status
     pub async fn get_server_status(&self, server_id: &str) -> Option<McpServerStatus> {
         // Write lock so we can reconcile against the child's real state first.

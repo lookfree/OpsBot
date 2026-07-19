@@ -59,6 +59,19 @@ impl GpuHistoryService {
         }
     }
 
+    /// Stable on-disk location for the history database: a per-user path under
+    /// the home directory, NOT the OS temp dir (which gets purged on reboot and
+    /// loses all history).
+    pub fn default_db_path() -> Result<PathBuf, String> {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map_err(|_| "Cannot determine home directory".to_string())?;
+        let dir = PathBuf::from(home).join(".zwd-opsbot").join("ai");
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create AI data directory: {}", e))?;
+        Ok(dir.join("gpu-history.db"))
+    }
+
     /// Initialize the database
     pub fn init(&mut self) -> Result<(), String> {
         let conn = rusqlite::Connection::open(&self.db_path)
@@ -160,7 +173,10 @@ impl GpuHistoryService {
                     timestamp: row.get(0)?,
                     gpu_index: row.get(1)?,
                     utilization: row.get(2)?,
-                    memory_used: row.get(3)?,
+                    // AVG(memory_used) is a SQLite REAL even over an INTEGER
+                    // column; read it as f64 then narrow, else rusqlite errors
+                    // with InvalidColumnType on any non-empty result.
+                    memory_used: row.get::<_, f64>(3)? as u64,
                     temperature: row.get(4)?,
                 })
             },

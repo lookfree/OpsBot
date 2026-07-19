@@ -165,10 +165,27 @@ pub async fn ai_detect_gpu() -> Result<bool, String> {
 /// Get GPU information
 #[tauri::command]
 pub async fn ai_get_gpu_info() -> Result<Vec<crate::models::GpuInfo>, String> {
-    use crate::services::ai::NvidiaGpuMonitor;
+    use crate::services::ai::{GpuHistoryService, NvidiaGpuMonitor};
 
     let monitor = NvidiaGpuMonitor::new_local();
-    monitor.get_gpu_info().await
+    let gpu_info = monitor.get_gpu_info().await?;
+
+    // Best-effort history sampling: this command is what the GPU monitor polls,
+    // so record a snapshot here (off the async runtime — SQLite is blocking) to
+    // give the history chart data. Previously nothing ever called save_snapshot,
+    // so the chart was permanently empty. Failures must not fail the info call.
+    let snapshot = gpu_info.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Ok(path) = GpuHistoryService::default_db_path() {
+            let mut service = GpuHistoryService::new(path);
+            if service.init().is_ok() {
+                let _ = service.save_snapshot(&snapshot);
+                let _ = service.cleanup(7); // keep 7 days of history
+            }
+        }
+    });
+
+    Ok(gpu_info)
 }
 
 /// Get GPU processes
@@ -193,12 +210,16 @@ pub async fn ai_get_gpu_history(
     let interval = HistoryInterval::from_str(&interval)
         .ok_or_else(|| format!("Invalid interval: {}", interval))?;
 
-    // Get app data directory for database
-    let db_path = std::env::temp_dir().join("zwd-opsbot-gpu-history.db");
-    let mut service = GpuHistoryService::new(db_path);
-    service.init()?;
-
-    service.get_history(gpu_index, start_time, end_time, interval)
+    // Stable per-user DB path (not temp_dir), and run the blocking SQLite work
+    // off the async runtime.
+    let db_path = GpuHistoryService::default_db_path()?;
+    tokio::task::spawn_blocking(move || {
+        let mut service = GpuHistoryService::new(db_path);
+        service.init()?;
+        service.get_history(gpu_index, start_time, end_time, interval)
+    })
+    .await
+    .map_err(|e| format!("GPU history task failed: {}", e))?
 }
 
 // ============ Cloud API Commands ============
