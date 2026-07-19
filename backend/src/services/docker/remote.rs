@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::compose_cmd::validate_project_name;
+use super::registry_helpers::{load_registries, save_registries};
 use super::traits::DockerDriver;
 use crate::models::docker::{
     ComposeContainer, ComposeProject, ComposeSource, ContainerInfo, ContainerStats,
@@ -1180,91 +1181,16 @@ impl DockerDriver for RemoteDockerDriver {
     }
 
     async fn create_registry(&self, request: CreateRegistryRequest) -> Result<RegistryInfo, String> {
-        let mut registries = load_registries()?;
-
-        // Check for duplicate name
-        if registries.iter().any(|r| r.name == request.name) {
-            return Err(format!("Registry '{}' already exists", request.name));
-        }
-
-        let now = chrono::Utc::now().timestamp();
-        let registry = RegistryInfo {
-            id: uuid::Uuid::new_v4().to_string(),
-            name: request.name,
-            registry_type: request.registry_type,
-            url: request.url,
-            username: request.username,
-            password: request.password,
-            encrypted_password: None, // Will be encrypted when saved
-            download_limit: request.download_limit,
-            skip_tls_verify: request.skip_tls_verify,
-            status: RegistryStatus::Disconnected,
-            last_sync_at: None,
-            created_at: now,
-            updated_at: now,
-        };
-
-        registries.push(registry.clone());
-        save_registries(&registries)?;
-
-        Ok(registry)
+        // Registry config lives in a local JSON store for both drivers.
+        super::registry_helpers::create_registry(request)
     }
 
     async fn update_registry(&self, request: UpdateRegistryRequest) -> Result<RegistryInfo, String> {
-        let mut registries = load_registries()?;
-
-        let registry = registries
-            .iter_mut()
-            .find(|r| r.id == request.registry_id)
-            .ok_or_else(|| format!("Registry '{}' not found", request.registry_id))?;
-
-        if let Some(name) = request.name {
-            registry.name = name;
-        }
-        if let Some(registry_type) = request.registry_type {
-            registry.registry_type = registry_type;
-        }
-        if let Some(url) = request.url {
-            registry.url = url;
-        }
-        if let Some(username) = request.username {
-            // Only update username if it's non-empty, otherwise keep existing
-            if !username.is_empty() {
-                registry.username = Some(username);
-            }
-        }
-        if let Some(password) = request.password {
-            // Only update password if it's non-empty, otherwise keep existing
-            if !password.is_empty() {
-                registry.password = Some(password);
-            }
-        }
-        if let Some(download_limit) = request.download_limit {
-            registry.download_limit = Some(download_limit);
-        }
-        if let Some(skip_tls_verify) = request.skip_tls_verify {
-            registry.skip_tls_verify = skip_tls_verify;
-        }
-
-        registry.updated_at = chrono::Utc::now().timestamp();
-        let updated = registry.clone();
-
-        save_registries(&registries)?;
-        Ok(updated)
+        super::registry_helpers::update_registry(request)
     }
 
     async fn delete_registry(&self, registry_id: &str) -> Result<(), String> {
-        let mut registries = load_registries()?;
-        let original_len = registries.len();
-
-        registries.retain(|r| r.id != registry_id);
-
-        if registries.len() == original_len {
-            return Err(format!("Registry '{}' not found", registry_id));
-        }
-
-        save_registries(&registries)?;
-        Ok(())
+        super::registry_helpers::delete_registry(registry_id)
     }
 
     async fn test_registry(&self, registry_id: &str) -> Result<bool, String> {
@@ -1597,79 +1523,6 @@ fn parse_compose_status(status_str: &str) -> (u32, u32, String) {
     };
 
     (running_count, total_count, status)
-}
-
-// ========== Registry Helper Functions (Shared with LocalDockerDriver) ==========
-
-/// Get the path to the registries configuration file
-fn get_registries_file_path() -> Result<std::path::PathBuf, String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "Cannot determine home directory".to_string())?;
-
-    let config_dir = std::path::PathBuf::from(&home)
-        .join(".zwd-opsbot")
-        .join("docker");
-
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("Failed to create config directory: {}", e))?;
-
-    Ok(config_dir.join("registries.json"))
-}
-
-/// Load registries from the configuration file
-fn load_registries() -> Result<Vec<RegistryInfo>, String> {
-    let file_path = get_registries_file_path()?;
-
-    if !file_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = std::fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read registries file: {}", e))?;
-
-    if content.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut registries: Vec<RegistryInfo> = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse registries file: {}", e))?;
-
-    // Decrypt passwords
-    let crypto = crate::services::crypto_service::CryptoService::new();
-    for reg in &mut registries {
-        if let Some(encrypted) = &reg.encrypted_password {
-            if let Ok(decrypted) = crypto.decrypt_storage(encrypted) {
-                reg.password = Some(decrypted);
-            }
-        }
-    }
-
-    Ok(registries)
-}
-
-/// Save registries to the configuration file
-fn save_registries(registries: &[RegistryInfo]) -> Result<(), String> {
-    let file_path = get_registries_file_path()?;
-
-    // Encrypt passwords before saving
-    let crypto = crate::services::crypto_service::CryptoService::new();
-    let mut registries_to_save: Vec<RegistryInfo> = registries.to_vec();
-    for reg in &mut registries_to_save {
-        if let Some(password) = &reg.password {
-            if !password.is_empty() {
-                if let Ok(encrypted) = crypto.encrypt_storage(password) {
-                    reg.encrypted_password = Some(encrypted);
-                }
-            }
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&registries_to_save)
-        .map_err(|e| format!("Failed to serialize registries: {}", e))?;
-
-    std::fs::write(&file_path, content)
-        .map_err(|e| format!("Failed to write registries file: {}", e))
 }
 
 #[cfg(test)]

@@ -4,7 +4,9 @@
 
 use std::io::Write;
 
-use crate::models::docker::RegistryInfo;
+use crate::models::docker::{
+    CreateRegistryRequest, RegistryInfo, RegistryStatus, UpdateRegistryRequest,
+};
 
 /// Run curl with optional authentication via stdin (avoids exposing credentials in process list)
 fn run_curl_with_auth(
@@ -294,6 +296,12 @@ pub fn load_registries() -> Result<Vec<RegistryInfo>, String> {
     let content = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read registries file: {}", e))?;
 
+    // An empty or whitespace-only file is a valid "no registries" state, not a
+    // parse error.
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut registries: Vec<RegistryInfo> = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse registries file: {}", e))?;
 
@@ -332,4 +340,94 @@ pub fn save_registries(registries: &[RegistryInfo]) -> Result<(), String> {
 
     std::fs::write(&path, content)
         .map_err(|e| format!("Failed to write registries file: {}", e))
+}
+
+/// Create a registry in the shared JSON store, rejecting a duplicate name.
+///
+/// Registry configuration is stored locally regardless of whether the Docker
+/// daemon is local or reached over SSH, so both drivers share this logic.
+pub fn create_registry(request: CreateRegistryRequest) -> Result<RegistryInfo, String> {
+    let mut registries = load_registries()?;
+
+    if registries.iter().any(|r| r.name == request.name) {
+        return Err(format!("Registry '{}' already exists", request.name));
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let registry = RegistryInfo {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: request.name,
+        registry_type: request.registry_type,
+        url: request.url,
+        username: request.username,
+        password: request.password,
+        encrypted_password: None, // Encrypted when saved
+        download_limit: request.download_limit,
+        skip_tls_verify: request.skip_tls_verify,
+        status: RegistryStatus::Disconnected,
+        last_sync_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    registries.push(registry.clone());
+    save_registries(&registries)?;
+    Ok(registry)
+}
+
+/// Apply an update to a registry in the shared JSON store.
+pub fn update_registry(request: UpdateRegistryRequest) -> Result<RegistryInfo, String> {
+    let mut registries = load_registries()?;
+
+    let registry = registries
+        .iter_mut()
+        .find(|r| r.id == request.registry_id)
+        .ok_or_else(|| format!("Registry '{}' not found", request.registry_id))?;
+
+    if let Some(name) = request.name {
+        registry.name = name;
+    }
+    if let Some(registry_type) = request.registry_type {
+        registry.registry_type = registry_type;
+    }
+    if let Some(url) = request.url {
+        registry.url = url;
+    }
+    if let Some(username) = request.username {
+        // Only update username if it's non-empty, otherwise keep existing
+        if !username.is_empty() {
+            registry.username = Some(username);
+        }
+    }
+    if let Some(password) = request.password {
+        // Only update password if it's non-empty, otherwise keep existing
+        if !password.is_empty() {
+            registry.password = Some(password);
+        }
+    }
+    if let Some(download_limit) = request.download_limit {
+        registry.download_limit = Some(download_limit);
+    }
+    if let Some(skip_tls_verify) = request.skip_tls_verify {
+        registry.skip_tls_verify = skip_tls_verify;
+    }
+    registry.updated_at = chrono::Utc::now().timestamp();
+
+    let updated = registry.clone();
+    save_registries(&registries)?;
+    Ok(updated)
+}
+
+/// Delete a registry from the shared JSON store.
+pub fn delete_registry(registry_id: &str) -> Result<(), String> {
+    let mut registries = load_registries()?;
+    let len_before = registries.len();
+    registries.retain(|r| r.id != registry_id);
+
+    if registries.len() == len_before {
+        return Err(format!("Registry '{}' not found", registry_id));
+    }
+
+    save_registries(&registries)?;
+    Ok(())
 }

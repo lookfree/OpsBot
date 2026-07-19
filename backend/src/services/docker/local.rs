@@ -1321,84 +1321,16 @@ impl DockerDriver for LocalDockerDriver {
     }
 
     async fn create_registry(&self, request: CreateRegistryRequest) -> Result<RegistryInfo, String> {
-        let mut registries = load_registries()?;
-
-        let now = chrono::Utc::now().timestamp();
-        let registry = RegistryInfo {
-            id: uuid::Uuid::new_v4().to_string(),
-            name: request.name,
-            registry_type: request.registry_type,
-            url: request.url,
-            username: request.username,
-            password: request.password,
-            encrypted_password: None, // Will be encrypted when saved
-            download_limit: request.download_limit,
-            skip_tls_verify: request.skip_tls_verify,
-            status: RegistryStatus::Disconnected,
-            last_sync_at: None,
-            created_at: now,
-            updated_at: now,
-        };
-
-        registries.push(registry.clone());
-        save_registries(&registries)?;
-
-        Ok(registry)
+        // Registry config lives in a local JSON store for both drivers.
+        super::registry_helpers::create_registry(request)
     }
 
     async fn update_registry(&self, request: UpdateRegistryRequest) -> Result<RegistryInfo, String> {
-        let mut registries = load_registries()?;
-
-        let registry = registries.iter_mut()
-            .find(|r| r.id == request.registry_id)
-            .ok_or_else(|| format!("Registry '{}' not found", request.registry_id))?;
-
-        if let Some(name) = request.name {
-            registry.name = name;
-        }
-        if let Some(registry_type) = request.registry_type {
-            registry.registry_type = registry_type;
-        }
-        if let Some(url) = request.url {
-            registry.url = url;
-        }
-        if let Some(username) = request.username {
-            // Only update username if it's non-empty, otherwise keep existing
-            if !username.is_empty() {
-                registry.username = Some(username);
-            }
-        }
-        if let Some(password) = request.password {
-            // Only update password if it's non-empty, otherwise keep existing
-            if !password.is_empty() {
-                registry.password = Some(password);
-            }
-        }
-        if let Some(download_limit) = request.download_limit {
-            registry.download_limit = Some(download_limit);
-        }
-        if let Some(skip_tls_verify) = request.skip_tls_verify {
-            registry.skip_tls_verify = skip_tls_verify;
-        }
-        registry.updated_at = chrono::Utc::now().timestamp();
-
-        let updated = registry.clone();
-        save_registries(&registries)?;
-
-        Ok(updated)
+        super::registry_helpers::update_registry(request)
     }
 
     async fn delete_registry(&self, registry_id: &str) -> Result<(), String> {
-        let mut registries = load_registries()?;
-        let len_before = registries.len();
-        registries.retain(|r| r.id != registry_id);
-
-        if registries.len() == len_before {
-            return Err(format!("Registry '{}' not found", registry_id));
-        }
-
-        save_registries(&registries)?;
-        Ok(())
+        super::registry_helpers::delete_registry(registry_id)
     }
 
     async fn test_registry(&self, registry_id: &str) -> Result<bool, String> {
