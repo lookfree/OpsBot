@@ -39,7 +39,10 @@
     "execute": "执行",
     "executing": "执行中...",
     "create": "创建",
-    "saving": "保存中..."
+    "saving": "保存中...",
+    "connected": "已连接",
+    "disconnected": "未连接",
+    "name": "名称"
   },
   "sidebar": {
     "connections": "连接",
@@ -1186,7 +1189,9 @@
         "quantization": "量化类型",
         "tensorParallel": "张量并行度",
         "tensorParallelHint": "使用多少块 GPU 并行推理（1-8）"
-      }
+      },
+      "nameRequired": "请输入模型名称",
+      "modelPathRequired": "请输入模型路径"
     },
     "cloudApi": {
       "description": "OpenAI/Claude",
@@ -1282,7 +1287,11 @@
       "notFound": "未检测到",
       "install": "安装指南",
       "local": "本地安装",
-      "docker": "Docker 容器"
+      "docker": "Docker 容器",
+      "sourceLocal": "本地",
+      "sourceDocker": "Docker",
+      "version": "版本",
+      "installGuide": "安装指南"
     },
     "remote": {
       "mode": "模式",

@@ -39,7 +39,10 @@
     "execute": "実行",
     "executing": "実行中...",
     "create": "作成",
-    "saving": "保存中..."
+    "saving": "保存中...",
+    "connected": "接続済み",
+    "disconnected": "未接続",
+    "name": "名前"
   },
   "sidebar": {
     "connections": "接続",
@@ -1177,7 +1180,9 @@
         "quantization": "量子化タイプ",
         "tensorParallel": "テンソル並列度",
         "tensorParallelHint": "並列推論に使用する GPU 数（1-8）"
-      }
+      },
+      "nameRequired": "モデル名を入力してください",
+      "modelPathRequired": "モデルパスを入力してください"
     },
     "cloudApi": {
       "description": "OpenAI/Claude",
@@ -1273,7 +1278,11 @@
       "notFound": "未検出",
       "install": "インストールガイド",
       "local": "ローカルインストール",
-      "docker": "Docker コンテナ"
+      "docker": "Docker コンテナ",
+      "sourceLocal": "ローカル",
+      "sourceDocker": "Docker",
+      "version": "バージョン",
+      "installGuide": "インストールガイド"
     },
     "remote": {
       "mode": "モード",

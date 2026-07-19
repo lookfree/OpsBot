@@ -39,7 +39,10 @@
     "execute": "Execute",
     "executing": "Executing...",
     "create": "Create",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "name": "Name"
   },
   "sidebar": {
     "connections": "Connections",
@@ -1186,7 +1189,9 @@
         "quantization": "Quantization",
         "tensorParallel": "Tensor Parallel Size",
         "tensorParallelHint": "Number of GPUs for parallel inference (1-8)"
-      }
+      },
+      "nameRequired": "Model name is required",
+      "modelPathRequired": "Model path is required"
     },
     "cloudApi": {
       "description": "OpenAI/Claude",
@@ -1282,7 +1287,11 @@
       "notFound": "Not Found",
       "install": "Installation Guide",
       "local": "Local Installation",
-      "docker": "Docker Container"
+      "docker": "Docker Container",
+      "sourceLocal": "Local",
+      "sourceDocker": "Docker",
+      "version": "Version",
+      "installGuide": "Installation Guide"
     },
     "remote": {
       "mode": "Mode",
