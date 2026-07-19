@@ -9,6 +9,13 @@ use std::sync::Arc;
 use crate::models::{GpuInfo, OllamaModel, OllamaModelDetails, RemoteAiEnvironment};
 use crate::services::SshService;
 
+/// Single-quote a token for safe interpolation into a remote shell command.
+/// Wraps in single quotes and escapes any embedded single quote with the
+/// `'"'"'` idiom, so shell metacharacters inside the token are inert.
+fn shq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
+}
+
 /// Remote AI manager for managing AI services on remote servers
 pub struct RemoteAiManager {
     ssh_service: Arc<SshService>,
@@ -86,7 +93,16 @@ impl RemoteAiManager {
             return Err("Invalid or unsafe Ollama command".to_string());
         }
 
-        let full_command = format!("ollama {}", command);
+        // Defense in depth: even though is_safe_ollama_command already
+        // allow-lists the characters, single-quote every token so an argument
+        // can never be interpreted by the remote login shell (execute_command
+        // runs the string via `sh -c`).
+        let quoted = command
+            .split_whitespace()
+            .map(shq)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let full_command = format!("ollama {}", quoted);
         self.execute_command(ssh_connection_id, &full_command).await
     }
 
@@ -235,26 +251,30 @@ impl RemoteAiManager {
         Ok(result)
     }
 
-    /// Check if Ollama command is safe to execute
+    /// Check if an Ollama command is safe to send to the remote login shell.
+    ///
+    /// Two gates: the first token must be a known read/model subcommand, and
+    /// EVERY character must be in an allow-list covering what a legitimate
+    /// `ollama <sub> <model-ref>` needs (model refs like `library/qwen2.5:7b`).
+    /// Anything a shell could interpret (`;`, `|`, `&`, `$`, backticks, quotes,
+    /// parentheses, redirects, newlines) is absent from the allow-list and thus
+    /// rejected — closing the injection where only the first token used to be
+    /// checked while the rest was interpolated raw.
     fn is_safe_ollama_command(command: &str) -> bool {
-        let safe_commands = [
-            "list",
-            "show",
-            "pull",
-            "rm",
-            "run",
-            "stop",
-            "ps",
-            "version",
-        ];
+        const SAFE_SUBCOMMANDS: [&str; 8] =
+            ["list", "show", "pull", "rm", "run", "stop", "ps", "version"];
 
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.is_empty() {
+        let base = match command.split_whitespace().next() {
+            Some(b) => b,
+            None => return false,
+        };
+        if !SAFE_SUBCOMMANDS.contains(&base) {
             return false;
         }
 
-        let base_command = parts[0];
-        safe_commands.contains(&base_command)
+        command
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || ":/._-@+".contains(c))
     }
 
     /// Parse Ollama list text output
@@ -386,11 +406,19 @@ mod tests {
 
     #[test]
     fn test_is_safe_ollama_command() {
+        // Legitimate subcommands and model references pass.
         assert!(RemoteAiManager::is_safe_ollama_command("list"));
         assert!(RemoteAiManager::is_safe_ollama_command("pull llama2"));
-        assert!(RemoteAiManager::is_safe_ollama_command("show llama2"));
+        assert!(RemoteAiManager::is_safe_ollama_command("show library/qwen2.5:7b"));
+        // Empty / non-whitelisted subcommand.
         assert!(!RemoteAiManager::is_safe_ollama_command(""));
-        assert!(!RemoteAiManager::is_safe_ollama_command("rm -rf /"));
+        assert!(!RemoteAiManager::is_safe_ollama_command("serve"));
+        // Shell-injection payloads: whitelisted first token, metacharacters
+        // after — these are exactly what the first-token-only check let through.
+        assert!(!RemoteAiManager::is_safe_ollama_command("list; rm -rf /"));
+        assert!(!RemoteAiManager::is_safe_ollama_command("pull $(reboot)"));
+        assert!(!RemoteAiManager::is_safe_ollama_command("run x | sh"));
+        assert!(!RemoteAiManager::is_safe_ollama_command("pull a && curl evil"));
     }
 
     #[test]
