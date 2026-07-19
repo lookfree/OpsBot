@@ -235,25 +235,41 @@ impl RemoteDockerDriver {
     }
 
     /// Parse size string like "1.23GB" to bytes
+    /// Parse a Docker size string (e.g. "1.2GB", "512MiB", "900kB") into bytes.
+    ///
+    /// Handles both IEC binary units (KiB/MiB/GiB/TiB = 1024-based) and SI
+    /// decimal units (kB/MB/GB/TB = 1000-based), matching how the Docker CLI
+    /// formats sizes across `images`, `system df`, and `stats` output.
     fn parse_size(size_str: &str) -> u64 {
         let size_str = size_str.trim();
         if size_str.is_empty() {
             return 0;
         }
 
-        let (num_str, unit) = if size_str.ends_with("GB") {
-            (&size_str[..size_str.len() - 2], 1024 * 1024 * 1024)
+        // Match size units (case insensitive), longest suffix first.
+        let (num_str, multiplier) = if size_str.ends_with("TiB") {
+            (&size_str[..size_str.len() - 3], 1024u64 * 1024 * 1024 * 1024)
+        } else if size_str.ends_with("TB") {
+            (&size_str[..size_str.len() - 2], 1000u64 * 1000 * 1000 * 1000)
+        } else if size_str.ends_with("GiB") {
+            (&size_str[..size_str.len() - 3], 1024 * 1024 * 1024)
+        } else if size_str.ends_with("GB") {
+            (&size_str[..size_str.len() - 2], 1000 * 1000 * 1000)
+        } else if size_str.ends_with("MiB") {
+            (&size_str[..size_str.len() - 3], 1024 * 1024)
         } else if size_str.ends_with("MB") {
-            (&size_str[..size_str.len() - 2], 1024 * 1024)
-        } else if size_str.ends_with("KB") || size_str.ends_with("kB") {
-            (&size_str[..size_str.len() - 2], 1024)
+            (&size_str[..size_str.len() - 2], 1000 * 1000)
+        } else if size_str.ends_with("KiB") {
+            (&size_str[..size_str.len() - 3], 1024)
+        } else if size_str.ends_with("kB") || size_str.ends_with("KB") {
+            (&size_str[..size_str.len() - 2], 1000)
         } else if size_str.ends_with('B') {
             (&size_str[..size_str.len() - 1], 1)
         } else {
             (size_str, 1)
         };
 
-        (num_str.parse::<f64>().unwrap_or(0.0) * unit as f64) as u64
+        (num_str.trim().parse::<f64>().unwrap_or(0.0) * multiplier as f64) as u64
     }
 }
 
@@ -1440,8 +1456,8 @@ impl RemoteDockerDriver {
             return (0, 0);
         }
 
-        let usage = Self::parse_size_with_unit(parts[0].trim());
-        let limit = Self::parse_size_with_unit(parts[1].trim());
+        let usage = Self::parse_size(parts[0].trim());
+        let limit = Self::parse_size(parts[1].trim());
         (usage, limit)
     }
 
@@ -1452,42 +1468,9 @@ impl RemoteDockerDriver {
             return (0, 0);
         }
 
-        let input = Self::parse_size_with_unit(parts[0].trim());
-        let output = Self::parse_size_with_unit(parts[1].trim());
+        let input = Self::parse_size(parts[0].trim());
+        let output = Self::parse_size(parts[1].trim());
         (input, output)
-    }
-
-    /// Parse size with various units (B, kB, KB, MB, MiB, GB, GiB, TB, TiB)
-    fn parse_size_with_unit(size_str: &str) -> u64 {
-        let size_str = size_str.trim();
-        if size_str.is_empty() {
-            return 0;
-        }
-
-        // Match size units (case insensitive)
-        let (num_str, multiplier) = if size_str.ends_with("TiB") {
-            (&size_str[..size_str.len() - 3], 1024u64 * 1024 * 1024 * 1024)
-        } else if size_str.ends_with("TB") {
-            (&size_str[..size_str.len() - 2], 1000u64 * 1000 * 1000 * 1000)
-        } else if size_str.ends_with("GiB") {
-            (&size_str[..size_str.len() - 3], 1024 * 1024 * 1024)
-        } else if size_str.ends_with("GB") {
-            (&size_str[..size_str.len() - 2], 1000 * 1000 * 1000)
-        } else if size_str.ends_with("MiB") {
-            (&size_str[..size_str.len() - 3], 1024 * 1024)
-        } else if size_str.ends_with("MB") {
-            (&size_str[..size_str.len() - 2], 1000 * 1000)
-        } else if size_str.ends_with("KiB") {
-            (&size_str[..size_str.len() - 3], 1024)
-        } else if size_str.ends_with("kB") || size_str.ends_with("KB") {
-            (&size_str[..size_str.len() - 2], 1000)
-        } else if size_str.ends_with('B') {
-            (&size_str[..size_str.len() - 1], 1)
-        } else {
-            (size_str, 1)
-        };
-
-        (num_str.trim().parse::<f64>().unwrap_or(0.0) * multiplier as f64) as u64
     }
 }
 
@@ -1528,6 +1511,23 @@ fn parse_compose_status(status_str: &str) -> (u32, u32, String) {
 #[cfg(test)]
 mod tests {
     use super::shq;
+    use super::RemoteDockerDriver;
+
+    #[test]
+    fn parse_size_handles_binary_and_decimal_units() {
+        // IEC binary units are 1024-based.
+        assert_eq!(RemoteDockerDriver::parse_size("1KiB"), 1024);
+        assert_eq!(RemoteDockerDriver::parse_size("1MiB"), 1024 * 1024);
+        assert_eq!(RemoteDockerDriver::parse_size("2GiB"), 2 * 1024 * 1024 * 1024);
+        // SI decimal units are 1000-based.
+        assert_eq!(RemoteDockerDriver::parse_size("1kB"), 1000);
+        assert_eq!(RemoteDockerDriver::parse_size("1MB"), 1000 * 1000);
+        assert_eq!(RemoteDockerDriver::parse_size("1.5GB"), 1_500_000_000);
+        // Plain bytes and empty/garbage input.
+        assert_eq!(RemoteDockerDriver::parse_size("512B"), 512);
+        assert_eq!(RemoteDockerDriver::parse_size(""), 0);
+        assert_eq!(RemoteDockerDriver::parse_size("N/A"), 0);
+    }
 
     #[test]
     fn shq_wraps_and_neutralizes_metacharacters() {
