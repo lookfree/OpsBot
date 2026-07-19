@@ -1213,6 +1213,9 @@ impl DockerDriver for RemoteDockerDriver {
         if let Some(name) = request.name {
             registry.name = name;
         }
+        if let Some(registry_type) = request.registry_type {
+            registry.registry_type = registry_type;
+        }
         if let Some(url) = request.url {
             registry.url = url;
         }
