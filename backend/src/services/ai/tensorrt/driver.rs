@@ -3,10 +3,9 @@
 //! Provides management of TensorRT-LLM models and inference services.
 
 use reqwest::Client;
-use std::time::Duration;
 
 use crate::models::{
-    AiProxyConfig, AiProxyType, TensorRTModel, TensorRTModelConfig, TensorRTStatus,
+    AiProxyConfig, TensorRTModel, TensorRTModelConfig, TensorRTStatus,
 };
 
 /// TensorRT-LLM driver for model management
@@ -28,7 +27,7 @@ impl TensorRTDriver {
         ssh_connection_id: Option<String>,
         proxy: &Option<AiProxyConfig>,
     ) -> Result<Self, String> {
-        let client = Self::build_http_client(proxy)?;
+        let client = crate::services::ai::cloud_api::build_http_client(proxy)?;
 
         Ok(Self {
             host,
@@ -36,35 +35,6 @@ impl TensorRTDriver {
             client,
             ssh_connection_id,
         })
-    }
-
-    /// Build HTTP client with optional proxy
-    fn build_http_client(proxy_config: &Option<AiProxyConfig>) -> Result<Client, String> {
-        let mut builder = Client::builder().timeout(Duration::from_secs(30));
-
-        if let Some(proxy) = proxy_config {
-            let proxy_url = match proxy.proxy_type {
-                AiProxyType::Http | AiProxyType::Https => {
-                    format!("http://{}:{}", proxy.host, proxy.port)
-                }
-                AiProxyType::Socks5 => {
-                    format!("socks5://{}:{}", proxy.host, proxy.port)
-                }
-            };
-
-            let mut proxy_builder =
-                reqwest::Proxy::all(&proxy_url).map_err(|e| format!("Invalid proxy URL: {}", e))?;
-
-            if let (Some(username), Some(password)) = (&proxy.username, &proxy.password) {
-                proxy_builder = proxy_builder.basic_auth(username, password);
-            }
-
-            builder = builder.proxy(proxy_builder);
-        }
-
-        builder
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))
     }
 
     /// Get the base URL for the TensorRT-LLM API
@@ -207,12 +177,6 @@ impl TensorRTDriver {
     pub async fn stop_model(&self, _model_id: &str) -> Result<(), String> {
         // TensorRT-LLM models are managed by the inference server
         Err("Stopping individual models requires server restart or SSH access.".to_string())
-    }
-
-    /// Get model logs
-    pub async fn get_model_logs(&self, _model_id: &str, _lines: usize) -> Result<String, String> {
-        // Logs are typically accessed via file system or SSH
-        Err("Log access requires SSH connection to the server.".to_string())
     }
 
     /// Get SSH connection ID if configured for remote management

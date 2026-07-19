@@ -14,7 +14,6 @@ pub mod ollama;
 pub mod openwebui;
 pub mod remote;
 pub mod tensorrt;
-pub mod traits;
 
 pub use cloud_api::{CloudApiClient, ClaudeClient, OpenAiClient, QwenClient};
 pub use gpu::{GpuHistoryService, HistoryInterval, NvidiaGpuMonitor};
@@ -22,7 +21,6 @@ pub use mcp::{McpServerInstance, McpServerManager};
 pub use openwebui::OpenWebUIService;
 pub use remote::RemoteAiManager;
 pub use tensorrt::TensorRTDriver;
-pub use traits::{AiDriver, DriverStatus, ModelManager, ServiceController, ServiceStatus};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -81,12 +79,6 @@ impl AiService {
         let mut clients = self.ollama_clients.write().await;
         clients.remove(connection_id);
         Ok(())
-    }
-
-    /// Check if Ollama is connected
-    pub async fn is_ollama_connected(&self, connection_id: &str) -> bool {
-        let clients = self.ollama_clients.read().await;
-        clients.contains_key(connection_id)
     }
 
     /// Get Ollama client
@@ -206,12 +198,6 @@ impl AiService {
         Ok(())
     }
 
-    /// Check if TensorRT is connected
-    pub async fn is_tensorrt_connected(&self, connection_id: &str) -> bool {
-        let drivers = self.tensorrt_drivers.read().await;
-        drivers.contains_key(connection_id)
-    }
-
     /// Get TensorRT driver
     async fn get_tensorrt_driver(&self, connection_id: &str) -> Result<Arc<TensorRTDriver>, String> {
         let drivers = self.tensorrt_drivers.read().await;
@@ -219,12 +205,6 @@ impl AiService {
             .get(connection_id)
             .cloned()
             .ok_or_else(|| format!("TensorRT not connected: {}", connection_id))
-    }
-
-    /// Get TensorRT status
-    pub async fn get_tensorrt_status(&self, connection_id: &str) -> Result<TensorRTStatus, String> {
-        let driver = self.get_tensorrt_driver(connection_id).await?;
-        driver.get_status().await
     }
 
     /// List TensorRT models
@@ -263,17 +243,6 @@ impl AiService {
         driver.stop_model(model_id).await
     }
 
-    /// Get TensorRT model logs
-    pub async fn get_tensorrt_logs(
-        &self,
-        connection_id: &str,
-        model_id: &str,
-        lines: usize,
-    ) -> Result<String, String> {
-        let driver = self.get_tensorrt_driver(connection_id).await?;
-        driver.get_model_logs(model_id, lines).await
-    }
-
     /// Test TensorRT connection without storing
     pub async fn test_tensorrt_connection(
         host: &str,
@@ -303,11 +272,6 @@ impl AiService {
     /// List all MCP servers
     pub async fn list_mcp_servers(&self) -> Vec<McpServerInfo> {
         self.mcp_manager.list_servers().await
-    }
-
-    /// Get MCP server info
-    pub async fn get_mcp_server(&self, server_id: &str) -> Option<McpServerInfo> {
-        self.mcp_manager.get_server_info(server_id).await
     }
 
     /// Start an MCP server

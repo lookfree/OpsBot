@@ -270,12 +270,6 @@ impl McpServerManager {
         })
     }
 
-    /// Get server info
-    pub async fn get_server_info(&self, server_id: &str) -> Option<McpServerInfo> {
-        let servers = self.servers.read().await;
-        servers.get(server_id).map(|s| s.get_info())
-    }
-
     /// List all servers
     pub async fn list_servers(&self) -> Vec<McpServerInfo> {
         // Write lock so each instance's status reflects whether its child is

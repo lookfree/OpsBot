@@ -7,33 +7,6 @@ use serde::{Deserialize, Serialize};
 
 // ============ AI Connection Types ============
 
-/// AI service provider types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum AiConnectionType {
-    Ollama,
-    TensorRT,
-    OpenAI,
-    Claude,
-    Qwen,
-    Custom,
-}
-
-/// AI connection configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiConnection {
-    pub id: String,
-    pub name: String,
-    pub connection_type: AiConnectionType,
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub api_key: Option<String>,
-    pub base_url: Option<String>,
-    pub proxy: Option<AiProxyConfig>,
-    pub ssh_connection_id: Option<String>,
-}
-
 /// Proxy configuration for AI services
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,23 +80,6 @@ pub struct OllamaConnectRequest {
     pub ssh_connection_id: Option<String>,
 }
 
-/// Pull model request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullModelRequest {
-    pub model_name: String,
-}
-
-/// Pull model progress for Ollama
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaPullProgress {
-    pub status: String,
-    pub digest: Option<String>,
-    pub total: Option<u64>,
-    pub completed: Option<u64>,
-}
-
 // ============ Ollama API Response Types ============
 
 /// Ollama API version response
@@ -172,15 +128,6 @@ impl From<OllamaApiModel> for OllamaModel {
             }),
         }
     }
-}
-
-/// Ollama pull response (streaming)
-#[derive(Debug, Clone, Deserialize)]
-pub struct OllamaPullResponse {
-    pub status: String,
-    pub digest: Option<String>,
-    pub total: Option<u64>,
-    pub completed: Option<u64>,
 }
 
 /// Ollama running models response
@@ -252,16 +199,6 @@ pub struct GpuHistory {
     pub temperature: f32,
 }
 
-/// GPU monitor configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GpuMonitorConfig {
-    pub enabled: bool,
-    pub interval_seconds: u32,            // 采集间隔
-    pub retention_days: u32,              // 数据保留天数
-    pub ssh_connection_id: Option<String>, // 远程监控
-}
-
 // ============ Cloud API Models ============
 
 /// Cloud API provider types
@@ -321,32 +258,6 @@ pub struct CloudApiTestResult {
     pub success: bool,
     pub message: String,
     pub latency_ms: Option<u64>,
-}
-
-/// Cloud API save request (for creating/updating config)
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudApiSaveRequest {
-    pub id: Option<String>,               // None for create, Some for update
-    pub name: String,
-    pub provider: CloudApiProvider,
-    pub api_key: Option<String>,
-    pub base_url: Option<String>,
-    pub organization: Option<String>,
-    pub default_model: Option<String>,
-    pub proxy: Option<AiProxyConfig>,
-    pub enabled: bool,
-}
-
-/// Cloud API test request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudApiTestRequest {
-    pub provider: CloudApiProvider,
-    pub api_key: String,
-    pub base_url: Option<String>,
-    pub organization: Option<String>,
-    pub proxy: Option<AiProxyConfig>,
 }
 
 // ============ TensorRT LLM Models ============
@@ -457,33 +368,6 @@ pub struct McpTool {
     pub input_schema: serde_json::Value,
 }
 
-/// MCP server create request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpServerCreateRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub transport: McpTransport,
-    #[serde(default)]
-    pub tools: Vec<McpTool>,
-}
-
-/// MCP tool bind request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolBindRequest {
-    pub server_id: String,
-    pub tool: McpTool,
-}
-
-/// MCP tool unbind request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolUnbindRequest {
-    pub server_id: String,
-    pub tool_name: String,
-}
-
 // ============ OpenWebUI Models ============
 
 /// OpenWebUI source type
@@ -519,26 +403,4 @@ pub struct RemoteAiEnvironment {
     pub tensorrt_installed: bool,
     pub nvidia_gpu_detected: bool,
     pub gpu_count: usize,
-}
-
-/// Remote AI detection request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteAiDetectRequest {
-    pub ssh_connection_id: String,
-}
-
-/// Remote Ollama command request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteOllamaCommandRequest {
-    pub ssh_connection_id: String,
-    pub command: String,
-}
-
-/// Remote model sync request
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteModelSyncRequest {
-    pub ssh_connection_id: String,
 }

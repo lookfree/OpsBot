@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use async_trait::async_trait;
 use crate::models::{
-    AiProxyConfig, AiProxyType, CloudApiConfig, CloudApiModel, CloudApiProvider, CloudApiTestResult,
+    CloudApiConfig, CloudApiModel, CloudApiProvider, CloudApiTestResult,
 };
 
 use super::CloudApiClient;
@@ -54,7 +54,7 @@ impl OpenAiClient {
             base_url.trim_end_matches('/').to_string()
         };
 
-        let client = Self::build_http_client(&config.proxy)?;
+        let client = super::build_http_client(&config.proxy)?;
 
         Ok(Self {
             client,
@@ -63,36 +63,6 @@ impl OpenAiClient {
             organization: config.organization.clone(),
             provider: config.provider,
         })
-    }
-
-    /// Build HTTP client with optional proxy
-    fn build_http_client(proxy_config: &Option<AiProxyConfig>) -> Result<Client, String> {
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(30));
-
-        if let Some(proxy) = proxy_config {
-            let proxy_url = match proxy.proxy_type {
-                AiProxyType::Http | AiProxyType::Https => {
-                    format!("http://{}:{}", proxy.host, proxy.port)
-                }
-                AiProxyType::Socks5 => {
-                    format!("socks5://{}:{}", proxy.host, proxy.port)
-                }
-            };
-
-            let mut proxy_builder = reqwest::Proxy::all(&proxy_url)
-                .map_err(|e| format!("Invalid proxy URL: {}", e))?;
-
-            if let (Some(username), Some(password)) = (&proxy.username, &proxy.password) {
-                proxy_builder = proxy_builder.basic_auth(username, password);
-            }
-
-            builder = builder.proxy(proxy_builder);
-        }
-
-        builder
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))
     }
 
     /// Make API request with authentication headers
