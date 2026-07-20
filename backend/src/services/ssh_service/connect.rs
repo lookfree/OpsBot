@@ -13,9 +13,10 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use super::handler::SshClientHandler;
+use super::handler::{PendingKeyVerifications, SshClientHandler};
 use super::session::{SshSession, SshTunnelHandle};
 use super::SshService;
+use crate::services::KnownHostsStore;
 use crate::models::{
     DatabaseSshTunnelConfig, JumpHostConfig, SessionStatus, SshAuthType, SshConnectRequest,
     TerminalSize,
@@ -120,6 +121,81 @@ async fn open_terminal_shell(
     Ok(channel)
 }
 
+/// Everything needed to (re)establish a database SSH tunnel's connection, so a
+/// dropped tunnel can self-heal on the next use instead of staying broken until
+/// the app restarts.
+struct TunnelConnector {
+    config: Arc<client::Config>,
+    addr: String,
+    host_port: String,
+    tunnel: DatabaseSshTunnelConfig,
+    known_hosts: Option<Arc<KnownHostsStore>>,
+    pending_verifications: PendingKeyVerifications,
+    app_handle: Option<tauri::AppHandle>,
+}
+
+impl TunnelConnector {
+    /// Open a fresh authenticated SSH connection for the tunnel.
+    async fn connect(&self) -> Result<client::Handle<SshClientHandler>> {
+        let (dummy_tx, _dummy_rx) = mpsc::channel::<Vec<u8>>(1);
+        let handler = SshClientHandler {
+            session_id: Uuid::new_v4().to_string(),
+            data_tx: dummy_tx,
+            terminal_channel_id: Arc::new(RwLock::new(None)),
+            known_hosts: self.known_hosts.clone(),
+            host_port: self.host_port.clone(),
+            app_handle: self.app_handle.clone(),
+            pending_verifications: self.pending_verifications.clone(),
+            last_activity_secs: Arc::new(AtomicU64::new(0)),
+        };
+
+        let mut handle =
+            with_connect_timeout(client::connect(self.config.clone(), self.addr.clone(), handler))
+                .await?;
+
+        match self.tunnel.auth_type {
+            SshAuthType::Password => {
+                let password = self
+                    .tunnel
+                    .password
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("SSH tunnel password is required"))?;
+                if !handle
+                    .authenticate_password(&self.tunnel.username, password)
+                    .await?
+                {
+                    return Err(anyhow!("SSH tunnel password authentication failed"));
+                }
+            }
+            SshAuthType::Key => {
+                let private_key_str = self
+                    .tunnel
+                    .private_key
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("SSH tunnel private key is required"))?;
+                let key_pair = if let Some(passphrase) = &self.tunnel.passphrase {
+                    decode_secret_key(private_key_str, Some(passphrase))?
+                } else {
+                    decode_secret_key(private_key_str, None)?
+                };
+                if !handle
+                    .authenticate_publickey(&self.tunnel.username, Arc::new(key_pair))
+                    .await?
+                {
+                    return Err(anyhow!("SSH tunnel key authentication failed"));
+                }
+            }
+            SshAuthType::Interactive => {
+                return Err(anyhow!(
+                    "Interactive auth not supported for database SSH tunnel"
+                ));
+            }
+        }
+
+        Ok(handle)
+    }
+}
+
 /// SSH session handle for managing a single SSH connection
 
 impl SshService {
@@ -131,91 +207,63 @@ impl SshService {
         target_port: u16,
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<SshTunnelHandle> {
-        let config = client::Config {
+        let config = Arc::new(client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
             keepalive_interval: Some(std::time::Duration::from_secs(15)),
             keepalive_max: 3,
             ..Default::default()
-        };
-        let config = Arc::new(config);
+        });
 
-        let (dummy_tx, _dummy_rx) = mpsc::channel::<Vec<u8>>(1);
-        let session_id = Uuid::new_v4().to_string();
         let host_port = format!("{}:{}", tunnel.host, tunnel.port);
-        let handler = SshClientHandler {
-            session_id,
-            data_tx: dummy_tx,
-            terminal_channel_id: Arc::new(RwLock::new(None)),
-            known_hosts: self.known_hosts.clone(),
+        let connector = Arc::new(TunnelConnector {
+            config,
+            addr: host_port.clone(),
             host_port,
-            app_handle,
+            tunnel: tunnel.clone(),
+            known_hosts: self.known_hosts.clone(),
             pending_verifications: self.pending_verifications.clone(),
-            last_activity_secs: Arc::new(AtomicU64::new(0)),
-        };
+            app_handle,
+        });
 
-        let addr = format!("{}:{}", tunnel.host, tunnel.port);
-        let mut handle = with_connect_timeout(client::connect(config, addr, handler)).await?;
-
-        match tunnel.auth_type {
-            SshAuthType::Password => {
-                let password = tunnel
-                    .password
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("SSH tunnel password is required"))?;
-                let auth_result = handle
-                    .authenticate_password(&tunnel.username, password)
-                    .await?;
-                if !auth_result {
-                    return Err(anyhow!("SSH tunnel password authentication failed"));
-                }
-            }
-            SshAuthType::Key => {
-                let private_key_str = tunnel
-                    .private_key
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("SSH tunnel private key is required"))?;
-                let key_pair = if let Some(passphrase) = &tunnel.passphrase {
-                    decode_secret_key(private_key_str, Some(passphrase))?
-                } else {
-                    decode_secret_key(private_key_str, None)?
-                };
-                let auth_result = handle
-                    .authenticate_publickey(&tunnel.username, Arc::new(key_pair))
-                    .await?;
-                if !auth_result {
-                    return Err(anyhow!("SSH tunnel key authentication failed"));
-                }
-            }
-            SshAuthType::Interactive => {
-                return Err(anyhow!("Interactive auth not supported for database SSH tunnel"));
-            }
-        }
+        // Establish the initial connection (surfaces auth/host errors up front).
+        let handle = Arc::new(TokioMutex::new(connector.connect().await?));
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let local_port = listener.local_addr()?.port();
         let local_host = "127.0.0.1".to_string();
-        let handle = Arc::new(TokioMutex::new(handle));
-        let tunnel_handle = handle.clone();
 
-        let task = tokio::spawn(async move {
-            loop {
-                let (local_stream, _) = match listener.accept().await {
-                    Ok(pair) => pair,
-                    Err(err) => {
-                        log::error!("SSH tunnel listener failed: {}", err);
-                        break;
-                    }
-                };
+        let task = {
+            let connector = connector.clone();
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                loop {
+                    let (local_stream, _) = match listener.accept().await {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            log::error!("SSH tunnel listener failed: {}", err);
+                            break;
+                        }
+                    };
 
-                let handle = tunnel_handle.clone();
-                let target_host = target_host.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = Self::forward_tunnel_stream(handle, local_stream, target_host, target_port).await {
-                        log::error!("SSH tunnel stream failed: {}", err);
-                    }
-                });
-            }
-        });
+                    let connector = connector.clone();
+                    let handle = handle.clone();
+                    let target_host = target_host.clone();
+                    tokio::spawn(async move {
+                        if let Err(err) = Self::forward_tunnel_stream(
+                            connector,
+                            handle,
+                            local_stream,
+                            target_host,
+                            target_port,
+                        )
+                        .await
+                        {
+                            log::error!("SSH tunnel stream failed: {}", err);
+                        }
+                    });
+                }
+            })
+        };
 
         Ok(SshTunnelHandle {
             local_host,
@@ -226,19 +274,55 @@ impl SshService {
     }
 
     async fn forward_tunnel_stream(
+        connector: Arc<TunnelConnector>,
         handle: Arc<TokioMutex<client::Handle<SshClientHandler>>>,
         mut local_stream: TcpStream,
         target_host: String,
         target_port: u16,
     ) -> Result<()> {
-        let channel = handle
-            .lock()
-            .await
-            .channel_open_direct_tcpip(&target_host, target_port as u32, "127.0.0.1", 0)
-            .await?;
+        let channel =
+            Self::open_tunnel_channel(&connector, &handle, &target_host, target_port).await?;
         let mut remote_stream = channel.into_stream();
         let _ = tokio::io::copy_bidirectional(&mut local_stream, &mut remote_stream).await?;
         Ok(())
+    }
+
+    /// Open a direct-tcpip channel through the tunnel, reconnecting the SSH
+    /// connection once if the handle is dead. This is the fix for the tunnel
+    /// staying broken (ECONNRESET on every query) until an app restart: a single
+    /// caller reconnects under the lock and concurrent callers reuse the fresh
+    /// handle. The local listener port is unchanged, so database pools recover
+    /// transparently.
+    async fn open_tunnel_channel(
+        connector: &Arc<TunnelConnector>,
+        handle: &Arc<TokioMutex<client::Handle<SshClientHandler>>>,
+        target_host: &str,
+        target_port: u16,
+    ) -> Result<Channel<client::Msg>> {
+        {
+            let guard = handle.lock().await;
+            if let Ok(channel) = guard
+                .channel_open_direct_tcpip(target_host, target_port as u32, "127.0.0.1", 0)
+                .await
+            {
+                return Ok(channel);
+            }
+        }
+        // The existing handle is likely dead — reconnect and retry once.
+        let mut guard = handle.lock().await;
+        // Another task may have already reconnected while we waited for the lock.
+        if let Ok(channel) = guard
+            .channel_open_direct_tcpip(target_host, target_port as u32, "127.0.0.1", 0)
+            .await
+        {
+            return Ok(channel);
+        }
+        log::warn!("SSH tunnel connection lost; reconnecting");
+        *guard = connector.connect().await?;
+        let channel = guard
+            .channel_open_direct_tcpip(target_host, target_port as u32, "127.0.0.1", 0)
+            .await?;
+        Ok(channel)
     }
 
 
@@ -653,4 +737,104 @@ impl SshService {
 
     // ========== Interactive Exec Methods (for docker exec, etc.) ==========
 
+}
+
+#[cfg(test)]
+mod tunnel_selfheal_tests {
+    use super::*;
+    use crate::models::{DatabaseSshTunnelConfig, SshAuthType};
+    use russh::Disconnect;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpStream;
+
+    /// Build a key-auth tunnel config from ZWD_TEST_SSH_* env vars (same ones the
+    /// other live SSH tests use). Returns None when unset so the test skips.
+    fn tunnel_config_from_env() -> Option<DatabaseSshTunnelConfig> {
+        let host = std::env::var("ZWD_TEST_SSH_HOST").ok()?;
+        let port: u16 = std::env::var("ZWD_TEST_SSH_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(22);
+        let username = std::env::var("ZWD_TEST_SSH_USER").ok()?;
+        let key_path = std::env::var("ZWD_TEST_SSH_KEY_PATH").ok()?;
+        let private_key = std::fs::read_to_string(&key_path).ok()?;
+        Some(DatabaseSshTunnelConfig {
+            enabled: true,
+            host,
+            port,
+            username,
+            auth_type: SshAuthType::Key,
+            password: None,
+            private_key: Some(private_key),
+            passphrase: std::env::var("ZWD_TEST_SSH_PASSPHRASE").ok(),
+        })
+    }
+
+    /// Connect through the tunnel's local port and read the first bytes the
+    /// target greets with — proof the forward is live.
+    async fn read_forwarded(local_host: &str, local_port: u16) -> String {
+        let mut stream = TcpStream::connect((local_host, local_port))
+            .await
+            .expect("connect to local tunnel port");
+        let mut buf = [0u8; 64];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(10), stream.read(&mut buf))
+            .await
+            .expect("banner read timed out")
+            .expect("banner read failed");
+        String::from_utf8_lossy(&buf[..n]).to_string()
+    }
+
+    /// Regression test for the idle PG-over-SSH disconnect: open a tunnel to the
+    /// SSH host's own sshd, prove forwarding works, forcibly disconnect the
+    /// tunnel's SSH connection (simulating the idle drop) while leaving the local
+    /// listener up, then verify the next connection self-heals and forwards
+    /// again — instead of failing until an app restart.
+    #[tokio::test]
+    #[ignore = "requires a live SSH host via ZWD_TEST_SSH_* env vars"]
+    async fn tunnel_reconnects_after_ssh_drop() {
+        let Some(cfg) = tunnel_config_from_env() else {
+            eprintln!("skipping: set ZWD_TEST_SSH_HOST / ZWD_TEST_SSH_USER / ZWD_TEST_SSH_KEY_PATH");
+            return;
+        };
+
+        // Target a service on the SSH host that greets on connect. Default 22
+        // (sshd banner); tests point ZWD_TEST_TUNNEL_TARGET_PORT at a plain TCP
+        // greeter since forwarding to the host's own sshd closes without data.
+        let target_port: u16 = std::env::var("ZWD_TEST_TUNNEL_TARGET_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(22);
+
+        let service = SshService::new();
+        let tunnel = service
+            .open_local_tunnel(&cfg, "127.0.0.1".to_string(), target_port, None)
+            .await
+            .expect("open tunnel");
+
+        let before = read_forwarded(&tunnel.local_host, tunnel.local_port).await;
+        assert!(
+            !before.is_empty(),
+            "fresh tunnel forwarded no data: {before:?}"
+        );
+
+        // Simulate the idle drop: kill the tunnel's SSH connection, leaving the
+        // local listener running (the exact state that used to require a restart).
+        tunnel
+            .handle
+            .lock()
+            .await
+            .disconnect(Disconnect::ByApplication, "test-induced drop", "")
+            .await
+            .ok();
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        let after = read_forwarded(&tunnel.local_host, tunnel.local_port).await;
+        assert!(
+            !after.is_empty(),
+            "tunnel did not self-heal after the SSH connection dropped (no data forwarded): {after:?}"
+        );
+        assert_eq!(before, after, "self-healed forward returned different data");
+
+        tunnel.close().await;
+    }
 }

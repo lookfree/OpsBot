@@ -39,6 +39,13 @@ impl PostgreSqlDriver {
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .idle_timeout(std::time::Duration::from_secs(300))
+            // Recover from an SSH-tunnel drop / server-side idle close without an
+            // app restart: validate a pooled connection before handing it out
+            // (discard dead ones), and cap connection lifetime so long-lived
+            // connections are periodically refreshed through the (now
+            // self-healing) tunnel.
+            .test_before_acquire(true)
+            .max_lifetime(std::time::Duration::from_secs(1800))
             .connect(&url)
             .await
             .map_err(|e| {
@@ -58,6 +65,13 @@ impl PostgreSqlDriver {
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .idle_timeout(std::time::Duration::from_secs(300))
+            // Recover from an SSH-tunnel drop / server-side idle close without an
+            // app restart: validate a pooled connection before handing it out
+            // (discard dead ones), and cap connection lifetime so long-lived
+            // connections are periodically refreshed through the (now
+            // self-healing) tunnel.
+            .test_before_acquire(true)
+            .max_lifetime(std::time::Duration::from_secs(1800))
             .connect(url)
             .await
             .map_err(|e| {
