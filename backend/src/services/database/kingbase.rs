@@ -164,7 +164,11 @@ impl KingBaseDriver {
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null),
             "BOOL" => row.try_get::<bool, _>(index).map(Value::from).unwrap_or(Value::Null),
-            "JSON" | "JSONB" => row.try_get::<serde_json::Value, _>(index).unwrap_or(Value::Null),
+            // Compact JSON text, not a raw object (which the grid shows as "[object Object]").
+            "JSON" | "JSONB" => match row.try_get::<serde_json::Value, _>(index) {
+                Ok(Value::Null) | Err(_) => Value::Null,
+                Ok(v) => Value::String(v.to_string()),
+            },
             "UUID" => row
                 .try_get::<sqlx::types::Uuid, _>(index)
                 .map(|u| Value::String(u.to_string()))

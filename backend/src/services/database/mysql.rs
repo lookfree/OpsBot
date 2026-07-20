@@ -177,9 +177,12 @@ impl MySqlDriver {
                 .try_get::<bool, _>(index)
                 .map(Value::from)
                 .unwrap_or(Value::Null),
-            "JSON" => row
-                .try_get::<serde_json::Value, _>(index)
-                .unwrap_or(Value::Null),
+            // Render JSON as compact text so the grid shows the content instead
+            // of "[object Object]" (a raw nested object stringified by JS).
+            "JSON" => match row.try_get::<serde_json::Value, _>(index) {
+                Ok(Value::Null) | Err(_) => Value::Null,
+                Ok(v) => Value::String(v.to_string()),
+            },
             "DATE" => row
                 .try_get::<chrono::NaiveDate, _>(index)
                 .map(|d| Value::String(d.to_string()))

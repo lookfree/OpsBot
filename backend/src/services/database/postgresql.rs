@@ -173,9 +173,13 @@ impl PostgreSqlDriver {
                 .try_get::<bool, _>(index)
                 .map(Value::from)
                 .unwrap_or(Value::Null),
-            "JSON" | "JSONB" => row
-                .try_get::<serde_json::Value, _>(index)
-                .unwrap_or(Value::Null),
+            // Render JSON/JSONB as its compact text, like every other column
+            // here yields a scalar. Returning the raw nested object made the
+            // grid show "[object Object]" (JS stringifying an object).
+            "JSON" | "JSONB" => match row.try_get::<serde_json::Value, _>(index) {
+                Ok(Value::Null) | Err(_) => Value::Null,
+                Ok(v) => Value::String(v.to_string()),
+            },
             "UUID" => row
                 .try_get::<sqlx::types::Uuid, _>(index)
                 .map(|u| Value::String(u.to_string()))
