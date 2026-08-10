@@ -7,6 +7,7 @@
 import { useState, useCallback, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { saveTextFile } from '@/utils/saveFile'
 import { X, Download, FileText, FileJson, FileCode } from 'lucide-react'
 import type { CommandHistoryItem } from './RedisCommandOutput'
 
@@ -262,18 +263,18 @@ export function RedisExportDialog({
   )
 
   // Handle export
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     const content = generateExportContent(history, format, options)
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `redis-history-${Date.now()}.${format}`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-    onClose()
+    try {
+      // Keep the dialog open when the user cancels the save dialog.
+      const saved = await saveTextFile(content, `redis-history-${Date.now()}.${format}`, {
+        name: format.toUpperCase(),
+        extensions: [format],
+      })
+      if (saved) onClose()
+    } catch (err) {
+      console.error('Failed to export Redis history:', err)
+    }
   }, [history, format, options, onClose])
 
   // Update single option

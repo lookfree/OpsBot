@@ -7,6 +7,7 @@
 import { useState, useCallback } from 'react'
 import { format as formatSql } from 'sql-formatter'
 import { dbExecuteSql } from '@/services/database'
+import { saveTextFile } from '@/utils/saveFile'
 import type { QueryResult } from './types'
 
 interface UseDatabaseQueryOptions {
@@ -92,7 +93,7 @@ export function useDatabaseQuery({ connectionId, selectedDatabase }: UseDatabase
   }, [sql])
 
   // Export to CSV
-  const handleExportCsv = useCallback(() => {
+  const handleExportCsv = useCallback(async () => {
     if (!queryResult?.columns || !queryResult.rows) return
 
     const headers = queryResult.columns.map((c) => c.name).join(',')
@@ -112,17 +113,15 @@ export function useDatabaseQuery({ connectionId, selectedDatabase }: UseDatabase
       .join('\n')
 
     const csv = `${headers}\n${rows}`
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `query_result_${Date.now()}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+    try {
+      await saveTextFile(csv, `query_result_${Date.now()}.csv`, { name: 'CSV', extensions: ['csv'] })
+    } catch (err) {
+      console.error('Failed to export CSV:', err)
+    }
   }, [queryResult])
 
   // Export to JSON
-  const handleExportJson = useCallback(() => {
+  const handleExportJson = useCallback(async () => {
     if (!queryResult?.columns || !queryResult.rows) return
 
     const data = queryResult.rows.map((row) => {
@@ -134,13 +133,14 @@ export function useDatabaseQuery({ connectionId, selectedDatabase }: UseDatabase
     })
 
     const json = JSON.stringify(data, null, 2)
-    const blob = new Blob([json], { type: 'application/json;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `query_result_${Date.now()}.json`
-    link.click()
-    URL.revokeObjectURL(url)
+    try {
+      await saveTextFile(json, `query_result_${Date.now()}.json`, {
+        name: 'JSON',
+        extensions: ['json'],
+      })
+    } catch (err) {
+      console.error('Failed to export JSON:', err)
+    }
   }, [queryResult])
 
   // Clear editor

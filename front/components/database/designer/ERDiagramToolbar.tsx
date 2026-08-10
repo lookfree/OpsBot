@@ -10,6 +10,7 @@ import { useDiagramStore } from '@/stores/diagramStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { DatabaseDialect } from './types'
 import { generateSQL } from '@/utils/sql-generator'
+import { saveTextFile } from '@/utils/saveFile'
 import { Undo2, Redo2 } from 'lucide-react'
 import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 
@@ -125,15 +126,16 @@ export function ERDiagramToolbar({ onClose }: ERDiagramToolbarProps) {
   }, [resetTransform])
 
   // 导出 SQL
-  const handleExportSQL = useCallback(() => {
+  const handleExportSQL = useCallback(async () => {
     const sql = generateSQL(diagram)
-    const blob = new Blob([sql], { type: 'text/sql' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${diagram.title || 'diagram'}.sql`
-    a.click()
-    URL.revokeObjectURL(url)
+    try {
+      await saveTextFile(sql, `${diagram.title || 'diagram'}.sql`, {
+        name: 'SQL',
+        extensions: ['sql'],
+      })
+    } catch (err) {
+      console.error('Failed to export SQL:', err)
+    }
   }, [diagram])
 
   // 清空图表
